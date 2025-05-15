@@ -26,6 +26,10 @@ jobs:
         ref: ${{ github.sha }}
         fetch-depth: 0
 
+    - name: merge alternate fork with master
+      run: |
+        git merge --no-commit origin/sneed
+
     - name: set up JDK
       uses: actions/setup-java@v4
       with:
