@@ -911,9 +911,20 @@ void scenes::lobby::on_focused()
 
 	imgui_ctx.emplace(physical_device, device, queue_family_index, queue, imgui_inputs, swapchain_imgui, vps);
 
+	std::string image;
+	/* Could be used for more patriotics logos
+	
 	auto t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
 	auto tm = std::localtime(&t);
-	std::string image = tm->tm_mon == 5 ? "wivrn-pride" : "wivrn";
+	
+	switch (tm->tm_mon)
+	{
+		default:
+			image = "wivrn";
+			break;
+	}
+	*/
+	image = "wivrn";
 	try
 	{
 		about_picture = imgui_ctx->load_texture(image + ".ktx2");
