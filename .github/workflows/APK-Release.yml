@@ -25,11 +25,17 @@ jobs:
         repository: 'Vindicus999/WiVRn'
         ref: ${{ github.sha }}
         fetch-depth: 0
-    #
-    # - uses: actions/checkout@v4
-    #   with:
-    #     repository: 'Vindicus999/WiVRn'
-    #     ref: sneed
+
+    - name: merge alternate fork with master
+      run: |
+        git merge --no-commit origin/sneed
+
+    - name: Prepare Vulkan SDK
+      uses: humbletim/setup-vulkan-sdk@286ed76c72de45dbf50c515779cf4ca2f6aa3944
+      with:
+        vulkan-query-version: 1.3.296.0
+        vulkan-components: Glslang, SPIRV-Tools
+        vulkan-use-cache: true
 
     - name: set up JDK
       uses: actions/setup-java@v4
