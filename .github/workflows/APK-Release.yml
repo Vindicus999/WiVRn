@@ -106,6 +106,7 @@ jobs:
         path: apk
         pattern: 'apk-*'
         merge-multiple: true
+      run: ls -R
 
     - name: Rename APK artifacts
       run: |
