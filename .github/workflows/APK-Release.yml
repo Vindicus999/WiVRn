@@ -28,7 +28,7 @@ jobs:
 
     - name: merge alternate fork with master
       run: |
-        git fetch origin/sneed
+        git fetch origin sneed
 
     - name: set up JDK
       uses: actions/setup-java@v4
