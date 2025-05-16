@@ -28,6 +28,7 @@ jobs:
 
     - name: merge alternate fork with master
       run: |
+        cd ~/work/WiVRn/WiVRn
         git fetch origin sneed
 
     - name: set up JDK
