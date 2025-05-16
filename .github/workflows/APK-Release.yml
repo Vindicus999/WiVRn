@@ -115,7 +115,6 @@ jobs:
         path: apk
         pattern: 'apk-*'
         merge-multiple: true
-      run: ls -R
 
     # - name: Rename APK artifacts
     #   run: |
@@ -155,4 +154,6 @@ jobs:
         fail_on_unmatched_files: true
         files: |
           apk/*.apk
+          apk/*.zip
+          apk/*
           debug-symbols.zip
