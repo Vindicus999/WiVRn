@@ -30,11 +30,6 @@ jobs:
       with:
         repository: 'Vindicus999/WiVRn'
         ref: sneed
-        path: sneed
-
-    - name: where is everything stored
-      run: |
-        ls
 
     - name: set up JDK
       uses: actions/setup-java@v4
