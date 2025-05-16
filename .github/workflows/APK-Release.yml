@@ -28,8 +28,7 @@ jobs:
 
     - name: merge alternate fork with master
       run: |
-        cd ~/work/WiVRn/WiVRn
-        git merge --no-commit origin/sneed
+        git fetch origin/sneed
 
     - name: Prepare Vulkan SDK
       uses: humbletim/setup-vulkan-sdk@286ed76c72de45dbf50c515779cf4ca2f6aa3944
