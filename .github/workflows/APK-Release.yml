@@ -109,15 +109,15 @@ jobs:
         pattern: 'apk-*'
         merge-multiple: true
 
-    - name: Rename APK artifacts
-      run: |
-        cd apk
-        ls
-        for f in *.apk; do
-          BASENAME=`echo ${f}|awk -F '-APK-' '{print $2}'`
-          mv "${f}" "org.meumeu.wivrn-${BASENAME}"
-        done
-        ls
+    # - name: Rename APK artifacts
+    #   run: |
+    #     cd apk
+    #     ls
+    #     for f in *.apk; do
+    #       BASENAME=`echo ${f}|awk -F '-APK-' '{print $2}'`
+    #       mv "${f}" "org.meumeu.wivrn-${BASENAME}"
+    #     done
+    #     ls
 
     - name: Download APK debug artifacts
       uses: actions/download-artifact@v4
@@ -146,5 +146,5 @@ jobs:
         prerelease: false
         fail_on_unmatched_files: true
         files: |
-          apk/*
+          apk/*.apk
           debug-symbols.zip
