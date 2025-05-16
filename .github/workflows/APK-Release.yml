@@ -73,7 +73,9 @@ jobs:
     - name: Prepare before archiving artifacts
       run: |
         mkdir apk
+        ls build/outputs/apk/
         mv $(find build/outputs/apk/ -name "*.apk") apk/
+        ls apk/
         mkdir debug
         mv build/intermediates/merged_native_libs/*/*/out/lib/* debug/
         find debug -name libopenxr_loader.so -delete
@@ -110,6 +112,7 @@ jobs:
     - name: Rename APK artifacts
       run: |
         cd apk
+        ls
         for f in *.apk; do
           BASENAME=`echo ${f}|awk -F '-APK-' '{print $2}'`
           mv "${f}" "org.meumeu.wivrn-${BASENAME}"
