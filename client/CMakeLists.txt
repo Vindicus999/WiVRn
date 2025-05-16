@@ -237,7 +237,7 @@ add_custom_command(OUTPUT ${ASSETS_DIR}/wivrn.png
     DEPENDS ${IMG_SRC_DIR}/wivrn.svg ${WIVRN_CSS_ABS})
 
 add_custom_target(assets ALL DEPENDS
-        ${ASSETS_DIR}/wivrn.png
+        ${ASSETS_DIR}/wivrn.png)
 
 add_dependencies(wivrn assets)
 
