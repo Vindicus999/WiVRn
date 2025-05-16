@@ -28,7 +28,7 @@ jobs:
 
     - name: merge alternate fork with master
       run: |
-        git fetch origin/sneed
+        git fetch origin sneed
 
     - name: Prepare Vulkan SDK
       uses: humbletim/setup-vulkan-sdk@286ed76c72de45dbf50c515779cf4ca2f6aa3944
