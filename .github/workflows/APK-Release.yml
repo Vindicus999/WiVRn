@@ -29,8 +29,12 @@ jobs:
     - uses: actions/checkout@v4
       with:
         repository: 'Vindicus999/WiVRn'
-        ref: 'sneed'
-        fetch-depth: 1
+        ref: sneed
+        path: sneed
+
+    - name: where is everything stored
+      run: |
+        ls
 
     - name: Prepare Vulkan SDK
       uses: humbletim/setup-vulkan-sdk@286ed76c72de45dbf50c515779cf4ca2f6aa3944
