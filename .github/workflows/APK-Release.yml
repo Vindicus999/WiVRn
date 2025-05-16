@@ -153,5 +153,5 @@ jobs:
         prerelease: false
         fail_on_unmatched_files: true
         files: |
-          apk/*
+          apk/*.apk
           debug-symbols.zip
