@@ -29,8 +29,12 @@ jobs:
     - uses: actions/checkout@v4
       with:
         repository: 'Vindicus999/WiVRn'
-        ref: 'sneed'
-        fetch-depth: 1
+        ref: sneed
+        path: sneed
+
+    - name: where is everything stored
+      run: |
+        ls
 
     - name: set up JDK
       uses: actions/setup-java@v4
