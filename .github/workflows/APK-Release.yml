@@ -117,6 +117,7 @@ jobs:
           BASENAME=`echo ${f}|awk -F '-APK-' '{print $2}'`
           mv "${f}" "org.meumeu.wivrn-${BASENAME}"
         done
+        ls
 
     - name: Download APK debug artifacts
       uses: actions/download-artifact@v4
@@ -129,6 +130,11 @@ jobs:
       run: |
         cd symbols
         zip -r ../debug-symbols.zip .
+
+    - name: How the hell doesnt it work
+      run: |
+        ls apk
+        ls
 
     - name: APK Release
       uses: softprops/action-gh-release@v2
