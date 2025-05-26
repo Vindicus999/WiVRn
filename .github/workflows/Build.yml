@@ -150,6 +150,18 @@ jobs:
         include-hidden-files: true
         retention-days: 1
 
+  nix-test:
+    name: Test Nix package and devshell
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - uses: cachix/install-nix-action@v31
+    - run: nix flake check
+    - run: nix build
+
   build-test-client:
     name: Linux client
     runs-on: ubuntu-24.04
@@ -462,7 +474,7 @@ jobs:
 
     - name: Download monado
       run: |
-        MONADO_COMMIT=$(grep -zo "FetchContent_Declare(monado[^)]*)" wivrn/CMakeLists.txt | sed -ze "s/^.*GIT_TAG *\([^ )]*\).*$/\1/" | tr -d '\0')
+        MONADO_COMMIT=$(cat wivrn/monado-rev)
         wget https://gitlab.freedesktop.org/monado/monado/-/archive/$MONADO_COMMIT/monado-$MONADO_COMMIT.tar.gz
 
         mkdir wivrn/monado-src
@@ -470,7 +482,10 @@ jobs:
 
     - name: Patch monado
       working-directory: wivrn/monado-src
-      run: ../patches/apply.sh ../patches/monado/*
+      run: >
+        for p in ../patches/monado/*; do
+          patch -p1 --fuzz=0 --forward < "$p"
+        done
 
     - name: Edit changelog
       working-directory: wivrn
@@ -510,10 +525,21 @@ jobs:
         fetch-depth: 0
         path: wivrn
 
+    - name: Check for FLATHUB_TOKEN
+      id: flathub-token-check
+      shell: bash
+      run: |
+        if [[ "${{ secrets.FLATHUB_TOKEN}}" != '' ]]; then
+          echo "available=true" >> $GITHUB_OUTPUT;
+        else
+          echo "available=false" >> $GITHUB_OUTPUT;
+        fi
+
     - uses: actions/checkout@v4
+      if: ${{ steps.flathub-token-check.outputs.available == 'true' }}
       with:
         fetch-depth: 0
-        repository: WiVRn/io.github.wivrn.wivrn
+        repository: ${{ github.repository_owner }}/io.github.wivrn.wivrn
         path: flathub
         token: ${{ secrets.FLATHUB_TOKEN }}
 
@@ -541,13 +567,14 @@ jobs:
           flatpak/*.flatpak
 
     - name: Update flatpak manifest for flathub
+      if: ${{ steps.flathub-token-check.outputs.available == 'true' }}
       run: |
         WIVRN_TAG=$(echo $GITHUB_REF | sed -E -e "s,refs/[^/]*/v?,,")
 
         git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git config --global user.name "github-actions[bot]"
 
-        apt install python-toml python-aiohttp
+        sudo apt-get install python-toml python-aiohttp
 
         cd flathub
         git remote add upstream https://github.com/flathub/io.github.wivrn.wivrn.git
@@ -568,8 +595,9 @@ jobs:
     - name: Update release branch
       run: |
         cd wivrn
-        git fetch origin release
-        git push origin HEAD:release
+        if git fetch origin release; then
+          git push origin HEAD:release
+        fi
 
   sync_fork_downstream:
     name: Sync fork downstream
