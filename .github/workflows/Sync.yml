@@ -16,7 +16,18 @@ jobs:
     steps:
       - name: GitHub Sync to Upstream Repository
         uses: dabreadman/sync-upstream-repo@v1.3.0
-        with: 
+        with:
           upstream_repo: ${{ env.UPSTREAM_URL }}
           upstream_branch: ${{ env.UPSTREAM_BRANCH }}
           token: ${{ env.WORKFLOW_TOKEN }}
+
+        - uses: actions/checkout@master
+
+        - name: Merge sneed -> master
+          uses: devmasx/merge-branch@master
+          with:
+            type: now
+            from_branch: sneed
+            target_branch: master
+            github_token: ${{ env.WORKFLOW_TOKEN }}
+
