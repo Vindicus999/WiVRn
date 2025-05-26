@@ -21,13 +21,14 @@ jobs:
           upstream_branch: ${{ env.UPSTREAM_BRANCH }}
           token: ${{ env.WORKFLOW_TOKEN }}
 
-        - uses: actions/checkout@master
+      - name: Checkout stuff
+        uses: actions/checkout@master
 
-        - name: Merge sneed -> master
-          uses: devmasx/merge-branch@master
-          with:
-            type: now
-            from_branch: sneed
-            target_branch: master
-            github_token: ${{ env.WORKFLOW_TOKEN }}
+      - name: Merge sneed -> master
+        uses: devmasx/merge-branch@master
+        with:
+          type: now
+          from_branch: sneed
+          target_branch: master
+          github_token: ${{ env.WORKFLOW_TOKEN }}
 
