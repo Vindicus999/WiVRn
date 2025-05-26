@@ -31,4 +31,3 @@ jobs:
           from_branch: sneed
           target_branch: master
           github_token: ${{ env.WORKFLOW_TOKEN }}
-
