@@ -19,6 +19,7 @@
 
 #include "application.h"
 #include "asset.h"
+#include "hardware.h"
 #include "openxr/openxr.h"
 #include "scene.h"
 #include "spdlog/common.h"
@@ -30,6 +31,7 @@
 #include "wifi_lock.h"
 #include "xr/actionset.h"
 #include "xr/check.h"
+#include "xr/pico_eye_types.h"
 #include "xr/xr.h"
 #include <algorithm>
 #include <boost/locale.hpp>
@@ -1103,6 +1105,24 @@ void application::initialize()
 		XrSystemEyeGazeInteractionPropertiesEXT eye_gaze_properties = xr_system_id.eye_gaze_interaction_properties();
 		spdlog::info("    Eye gaze support: {}", (bool)eye_gaze_properties.supportsEyeGazeInteraction);
 		eye_gaze_supported = eye_gaze_properties.supportsEyeGazeInteraction;
+
+		if (eye_gaze_supported)
+		{
+			switch (guess_model())
+			{
+				case model::pico_4_pro:
+				case model::pico_4_enterprise:
+					pico_face_tracking_supported = true;
+					break;
+				default:
+					pico_face_tracking_supported = false;
+					break;
+			}
+		}
+		else
+			pico_face_tracking_supported = false;
+
+		spdlog::info("    PICO face tracking support: {}", (bool)pico_face_tracking_supported);
 	}
 
 	if (utils::contains(xr_extensions, XR_FB_FACE_TRACKING2_EXTENSION_NAME))
@@ -1178,6 +1198,11 @@ void application::initialize()
 	if (htc_face_tracking_lip_supported)
 	{
 		htc_face_tracker_lip = xr_session.create_htc_face_tracker(XR_FACIAL_TRACKING_TYPE_LIP_DEFAULT_HTC);
+	}
+
+	if (pico_face_tracking_supported)
+	{
+		pico_face_tracker = xr_session.create_pico_face_tracker();
 	}
 
 	vk::CommandPoolCreateInfo cmdpool_create_info;
