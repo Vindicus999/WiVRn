@@ -232,9 +232,11 @@ void scenes::stream::tracking()
 
 	XrTime t0 = instance.now();
 	XrTime last_hand_sample = t0;
+	XrTime last_body_sample = t0;
 	std::vector<from_headset::tracking> tracking;
 	std::vector<from_headset::tracking> tracking_pool; // pre-allocated objects
 	std::vector<from_headset::hand_tracking> hands;
+	std::vector<from_headset::body_tracking> body;
 	std::vector<XrView> views;
 
 	std::vector<from_headset::trackings> merged_tracking;
@@ -258,6 +260,27 @@ void scenes::stream::tracking()
 		}
 	}
 
+	enum
+	{
+		body_none,
+		body_fb,
+		body_pico,
+	} body_tracking = body_none;
+
+	if (config.check_feature(feature::body_tracking))
+	{
+		if (application::get_fb_body_tracking_supported())
+		{
+			body_tracking = body_fb;
+			// We start the tracker on connection because there are toggleable settings.
+			// TODO maybe handle reconnection better, if the settings are changed the tracker count will mismatch and stuff might break
+			application::get_fb_body_tracker().stop();
+			application::get_fb_body_tracker().start(config.fb_lower_body, config.fb_hip);
+		}
+		else if (application::get_pico_body_tracking_supported())
+			body_tracking = body_pico;
+	}
+
 	on_interaction_profile_changed({});
 
 	while (not exiting)
@@ -266,6 +289,7 @@ void scenes::stream::tracking()
 		{
 			tracking.clear();
 			hands.clear();
+			body.clear();
 
 			XrTime now = instance.now();
 			if (now < t0)
@@ -333,6 +357,30 @@ void scenes::stream::tracking()
 							        t0 + Δt,
 							        from_headset::hand_tracking::right,
 							        locate_hands(application::get_right_hand(), world_space, t0 + Δt));
+					}
+
+					if (body_tracking != body_none and t0 >= last_body_sample + period and
+					    (Δt == 0 or Δt >= prediction - 2 * period))
+					{
+						last_body_sample = t0;
+						if (control.enabled[size_t(tid::generic_tracker)])
+						{
+							auto & body_packet = body.emplace_back(from_headset::body_tracking{
+							        .production_timestamp = t0,
+							        .timestamp = t0 + Δt,
+							});
+							switch (body_tracking)
+							{
+								case body_none:
+									__builtin_unreachable();
+								case body_fb:
+									body_packet.poses = application::get_fb_body_tracker().locate_spaces(t0 + Δt, world_space);
+									break;
+								case body_pico:
+									body_packet.poses = application::get_pico_body_tracker().locate_spaces(t0 + Δt, world_space);
+									break;
+							}
+						}
 					}
 
 					if (control.enabled[size_t(tid::face)])
@@ -408,7 +456,7 @@ void scenes::stream::tracking()
 				merged_tracking.back().items.emplace_back(std::move(item));
 			}
 
-			packets.resize(std::max(packets.size(), merged_tracking.size() + hands.size()));
+			packets.resize(std::max(packets.size(), merged_tracking.size() + hands.size() + body.size()));
 			size_t packet_count = 0;
 			for (const auto & i: merged_tracking)
 			{
@@ -419,6 +467,15 @@ void scenes::stream::tracking()
 			for (const auto & i: hands)
 			{
 				if (i.joints)
+				{
+					auto & packet = packets[packet_count++];
+					packet.clear();
+					wivrn_session::stream_socket_t::serialize(packet, i);
+				}
+			}
+			for (const auto & i: body)
+			{
+				if (i.poses)
 				{
 					auto & packet = packets[packet_count++];
 					packet.clear();
