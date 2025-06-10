@@ -73,9 +73,11 @@ wivrn_hmd::wivrn_hmd(wivrn::wivrn_session * cnx,
                 .tracking_origin = &tracking_origin,
                 .input_count = 1,
                 .inputs = &pose_input,
-                .orientation_tracking_supported = true,
-                .position_tracking_supported = true,
-                .battery_status_supported = true,
+                .supported = {
+                        .orientation_tracking = true,
+                        .position_tracking = true,
+                        .battery_status = true,
+                },
                 .update_inputs = [](xrt_device *) { return XRT_SUCCESS; },
                 .get_tracked_pose = method_pointer<&wivrn_hmd::get_tracked_pose>,
                 .get_view_poses = method_pointer<&wivrn_hmd::get_view_poses>,
@@ -145,12 +147,12 @@ void wivrn_hmd::update_battery(const from_headset::battery & new_battery)
 	battery = new_battery;
 }
 
-void wivrn_hmd::get_view_poses(const xrt_vec3 * default_eye_relation,
-                               int64_t at_timestamp_ns,
-                               uint32_t view_count,
-                               xrt_space_relation * out_head_relation,
-                               xrt_fov * out_fovs,
-                               xrt_pose * out_poses)
+xrt_result_t wivrn_hmd::get_view_poses(const xrt_vec3 * default_eye_relation,
+                                       int64_t at_timestamp_ns,
+                                       uint32_t view_count,
+                                       xrt_space_relation * out_head_relation,
+                                       xrt_fov * out_fovs,
+                                       xrt_pose * out_poses)
 {
 	auto [extrapolation_time, view] = views.get_at(at_timestamp_ns);
 	cnx->add_predict_offset(extrapolation_time);
@@ -178,6 +180,7 @@ void wivrn_hmd::get_view_poses(const xrt_vec3 * default_eye_relation,
 		out_fovs[eye] = view.fovs[eye];
 		out_poses[eye] = view.poses[eye];
 	}
+	return XRT_SUCCESS;
 }
 
 xrt_result_t wivrn_hmd::get_battery_status(bool * out_present,
