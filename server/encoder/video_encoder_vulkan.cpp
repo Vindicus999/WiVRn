@@ -165,6 +165,7 @@ void wivrn::video_encoder_vulkan::init(const vk::VideoCapabilitiesKHR & video_ca
 		        {
 		                .usage = VMA_MEMORY_USAGE_AUTO,
 		        });
+		vk.name(vk::Image(dpb_image), "vulkan encoder DPB image");
 	}
 
 	// Output buffer
@@ -183,6 +184,7 @@ void wivrn::video_encoder_vulkan::init(const vk::VideoCapabilitiesKHR & video_ca
 		                .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT,
 		                .usage = VMA_MEMORY_USAGE_AUTO,
 		        });
+		vk.name(vk::Buffer(item.output_buffer), "vulkan encode output buffer");
 
 		if (not(item.output_buffer.properties() & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
 		{
@@ -195,6 +197,7 @@ void wivrn::video_encoder_vulkan::init(const vk::VideoCapabilitiesKHR & video_ca
 			                .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
 			                .usage = VMA_MEMORY_USAGE_AUTO,
 			        });
+			vk.name(vk::Buffer(item.host_buffer), "vulkan encode host buffer");
 		}
 	}
 
@@ -278,8 +281,10 @@ void wivrn::video_encoder_vulkan::init(const vk::VideoCapabilitiesKHR & video_ca
 			        {
 			                .usage = VMA_MEMORY_USAGE_AUTO,
 			        });
+			vk.name(vk::Image(slot_data[i].tmp_image), "vulkan encoder temporary image");
 			image_view_template.image = vk::Image(slot_data[i].tmp_image);
 			slot_data[i].view = vk.device.createImageView(image_view_template);
+			vk.name(slot_data[i].view, "vulkan encoder temporary image view");
 		}
 	}
 
@@ -317,6 +322,7 @@ void wivrn::video_encoder_vulkan::init(const vk::VideoCapabilitiesKHR & video_ca
 			                .image_view = vk.device.createImageView(img_view_create_info),
 			                .info = dpb_info[i],
 			        });
+			vk.name(dpb.back().image_view, "vulkan encoder dpb view");
 		}
 	}
 
@@ -344,6 +350,8 @@ void wivrn::video_encoder_vulkan::init(const vk::VideoCapabilitiesKHR & video_ca
 	{
 		item.fence = vk.device.createFence({.flags = vk::FenceCreateFlagBits::eSignaled});
 		item.wait_sem = vk.device.createSemaphore({});
+		vk.name(item.fence, "vulkan encoder fence");
+		vk.name(item.fence, "vulkan encoder semaphore");
 	}
 
 	// query pool
@@ -363,6 +371,7 @@ void wivrn::video_encoder_vulkan::init(const vk::VideoCapabilitiesKHR & video_ca
 		};
 
 		query_pool = vk.device.createQueryPool(query_pool_create.get());
+		vk.name(query_pool, "vulkan encoder query pool");
 	}
 
 	// command pools
@@ -372,13 +381,17 @@ void wivrn::video_encoder_vulkan::init(const vk::VideoCapabilitiesKHR & video_ca
 		                .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
 		                .queueFamilyIndex = vk.encode_queue_family_index,
 		        });
+		vk.name(query_pool, "vulkan encoder video command pool");
 
 		auto command_buffers = vk.device.allocateCommandBuffers(
 		        {.commandPool = *video_command_pool,
 		         .commandBufferCount = num_slots});
 
 		for (size_t i = 0; i < num_slots; ++i)
+		{
 			slot_data[i].video_cmd_buf = std::move(command_buffers[i]);
+			vk.name(slot_data[i].video_cmd_buf, "vulkan encoder video command buffer");
+		}
 
 		auto properties = vk.physical_device.getQueueFamilyProperties().at(vk.encode_queue_family_index);
 		if (not(properties.queueFlags & vk::QueueFlagBits::eTransfer))
@@ -388,6 +401,7 @@ void wivrn::video_encoder_vulkan::init(const vk::VideoCapabilitiesKHR & video_ca
 			                .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
 			                .queueFamilyIndex = vk.queue_family_index,
 			        });
+			vk.name(transfer_command_pool, "vulkan encoder transfer command pool");
 
 			auto command_buffers = vk.device.allocateCommandBuffers(
 			        {.commandPool = *transfer_command_pool,
@@ -396,6 +410,8 @@ void wivrn::video_encoder_vulkan::init(const vk::VideoCapabilitiesKHR & video_ca
 			{
 				slot_data[i].sem = vk.device.createSemaphore({});
 				slot_data[i].transfer_cmd_buf = std::move(command_buffers[i]);
+				vk.name(slot_data[i].sem, "vulkan encoder transfer semaphore");
+				vk.name(slot_data[i].transfer_cmd_buf, "vulkan encoder transfer command buffer");
 			}
 		}
 	}
@@ -416,9 +432,11 @@ std::vector<uint8_t> wivrn::video_encoder_vulkan::get_encoded_parameters(void * 
 
 std::optional<wivrn::video_encoder::data> wivrn::video_encoder_vulkan::encode(bool idr, std::chrono::steady_clock::time_point target_timestamp, uint8_t encode_slot)
 {
-	if (idr)
-		send_idr_data();
+	// we manage idrs ourselves
+	(void)idr;
 	auto & slot_item = slot_data[encode_slot];
+	if (slot_item.idr)
+		send_idr_data();
 
 	if (auto res = vk.device.waitForFences(*slot_item.fence, true, 1'000'000'000);
 	    res != vk::Result::eSuccess)
@@ -438,6 +456,7 @@ std::optional<wivrn::video_encoder::data> wivrn::video_encoder_vulkan::encode(bo
 	return data{
 	        .encoder = this,
 	        .span = std::span(((uint8_t *)mapped) + feedback[0], feedback[1]),
+	        .prefer_control = slot_item.idr,
 	};
 }
 
@@ -611,28 +630,12 @@ std::pair<bool, vk::Semaphore> wivrn::video_encoder_vulkan::present_image(vk::Im
 
 	auto last_ack = this->last_ack.load();
 	dpb_item * ref_slot = nullptr;
-	for (size_t i = 0; i < dpb.size(); ++i)
+	for (auto & i: dpb)
 	{
-		if (dpb[i].frame_index == last_ack and dpb[i].info.slotIndex != -1)
+		if (i.frame_index == last_ack and i.info.slotIndex != -1)
 		{
-			ref_slot = &dpb[i];
+			ref_slot = &i;
 			break;
-		}
-	}
-
-	// Avoid sending many IDR in a row
-	if (frame_num < 100 and not ref_slot)
-	{
-		for (size_t i = 0; i < dpb.size(); ++i)
-		{
-			if (dpb[i].info.slotIndex != -1)
-			{
-				if (not ref_slot or ref_slot->frame_index < dpb[i].frame_index)
-				{
-					ref_slot = &dpb[i];
-					break;
-				}
-			}
 		}
 	}
 
@@ -645,6 +648,12 @@ std::pair<bool, vk::Semaphore> wivrn::video_encoder_vulkan::present_image(vk::Im
 			slot.info.pPictureResource = nullptr;
 			slot.frame_index = -1;
 		}
+		slot_item.idr = true;
+		last_ack = frame_index;
+	}
+	else
+	{
+		slot_item.idr = false;
 	}
 	slot->frame_index = frame_index;
 	slot->info.pPictureResource = &slot->resource;
