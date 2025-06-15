@@ -259,7 +259,7 @@ wivrn_foveation::wivrn_foveation(wivrn_vk_bundle & bundle, const xrt_hmd_parts &
         foveated_height(hmd.screens[0].h_pixels),
         command_pool(bundle.device, vk::CommandPoolCreateInfo{.queueFamilyIndex = bundle.queue_family_index}),
         cmd(std::move(bundle.device.allocateCommandBuffers({
-                .commandPool = command_pool,
+                .commandPool = *command_pool,
                 .commandBufferCount = 1,
         })[0])),
         host_buffer(
@@ -408,6 +408,6 @@ vk::CommandBuffer wivrn_foveation::update_foveation_buffer(
 		fill_ubo(ubo->x + view * RENDER_FOVEATION_BUFFER_DIMENSIONS, params[view].x, false, source[view].offset.w, source[view].extent.w, foveated_width);
 		fill_ubo(ubo->y + view * RENDER_FOVEATION_BUFFER_DIMENSIONS, params[view].y, flip_y, source[view].offset.h, source[view].extent.h, foveated_height);
 	}
-	return cmd;
+	return *cmd;
 }
 } // namespace wivrn
