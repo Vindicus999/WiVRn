@@ -19,6 +19,7 @@
 
 #include "application.h"
 #include "asset.h"
+#include "hardware.h"
 #include "openxr/openxr.h"
 #include "scene.h"
 #include "spdlog/common.h"
@@ -30,6 +31,7 @@
 #include "wifi_lock.h"
 #include "xr/actionset.h"
 #include "xr/check.h"
+#include "xr/meta_body_tracking_fidelity.h"
 #include "xr/xr.h"
 #include <algorithm>
 #include <boost/locale.hpp>
@@ -1039,6 +1041,10 @@ void application::initialize()
 	opt_extensions.push_back(XR_HTC_PASSTHROUGH_EXTENSION_NAME);
 	opt_extensions.push_back(XR_HTC_FACIAL_TRACKING_EXTENSION_NAME);
 	opt_extensions.push_back(XR_FB_FACE_TRACKING2_EXTENSION_NAME);
+	opt_extensions.push_back(XR_FB_BODY_TRACKING_EXTENSION_NAME);
+	opt_extensions.push_back(XR_META_BODY_TRACKING_FULL_BODY_EXTENSION_NAME);
+	opt_extensions.push_back(XR_META_BODY_TRACKING_FIDELITY_EXTENSION_NAME);
+	opt_extensions.push_back(XR_BD_BODY_TRACKING_EXTENSION_NAME);
 	opt_extensions.push_back(XR_EXT_PALM_POSE_EXTENSION_NAME);
 	opt_extensions.push_back(XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME);
 	opt_extensions.push_back(XR_FB_COMPOSITION_LAYER_DEPTH_TEST_EXTENSION_NAME);
@@ -1103,6 +1109,24 @@ void application::initialize()
 		XrSystemEyeGazeInteractionPropertiesEXT eye_gaze_properties = xr_system_id.eye_gaze_interaction_properties();
 		spdlog::info("    Eye gaze support: {}", (bool)eye_gaze_properties.supportsEyeGazeInteraction);
 		eye_gaze_supported = eye_gaze_properties.supportsEyeGazeInteraction;
+
+		if (eye_gaze_supported)
+		{
+			switch (guess_model())
+			{
+				case model::pico_4_pro:
+				case model::pico_4_enterprise:
+					pico_face_tracking_supported = true;
+					break;
+				default:
+					pico_face_tracking_supported = false;
+					break;
+			}
+		}
+		else
+			pico_face_tracking_supported = false;
+
+		spdlog::info("    PICO face tracking support: {}", (bool)pico_face_tracking_supported);
 	}
 
 	if (utils::contains(xr_extensions, XR_FB_FACE_TRACKING2_EXTENSION_NAME))
@@ -1119,6 +1143,20 @@ void application::initialize()
 		spdlog::info("    HTC lip tracking support: {}", (bool)htc_face_properties.supportLipFacialTracking);
 		htc_face_tracking_eye_supported = htc_face_properties.supportEyeFacialTracking;
 		htc_face_tracking_lip_supported = htc_face_properties.supportLipFacialTracking;
+	}
+
+	if (utils::contains_all(xr_extensions, std::array{XR_FB_BODY_TRACKING_EXTENSION_NAME, XR_META_BODY_TRACKING_FULL_BODY_EXTENSION_NAME, XR_META_BODY_TRACKING_FIDELITY_EXTENSION_NAME}))
+	{
+		XrSystemBodyTrackingPropertiesFB fb_body_properties = xr_system_id.fb_body_tracking_properties();
+		spdlog::info("    FB body tracking support: {}", (bool)fb_body_properties.supportsBodyTracking);
+		fb_body_tracking_supported = fb_body_properties.supportsBodyTracking;
+	}
+
+	if (utils::contains(xr_extensions, XR_BD_BODY_TRACKING_EXTENSION_NAME))
+	{
+		XrSystemBodyTrackingPropertiesBD bd_body_properties = xr_system_id.bd_body_tracking_properties();
+		spdlog::info("    PICO body tracking support: {}", (bool)bd_body_properties.supportsBodyTracking);
+		pico_body_tracking_supported = bd_body_properties.supportsBodyTracking;
 	}
 
 	if (utils::contains(xr_extensions, XR_FB_COMPOSITION_LAYER_SETTINGS_EXTENSION_NAME))
@@ -1178,6 +1216,21 @@ void application::initialize()
 	if (htc_face_tracking_lip_supported)
 	{
 		htc_face_tracker_lip = xr_session.create_htc_face_tracker(XR_FACIAL_TRACKING_TYPE_LIP_DEFAULT_HTC);
+	}
+
+	if (pico_face_tracking_supported)
+	{
+		pico_face_tracker = xr_session.create_pico_face_tracker();
+	}
+
+	if (fb_body_tracking_supported)
+	{
+		fb_body_tracker = xr_session.create_fb_body_tracker();
+	}
+
+	if (pico_body_tracking_supported)
+	{
+		pico_body_tracker = xr_session.create_pico_body_tracker();
 	}
 
 	vk::CommandPoolCreateInfo cmdpool_create_info;
@@ -1356,11 +1409,7 @@ application::application(application_info info) :
 		}
 	};
 
-#ifdef __ANDROID__
 	wifi = wifi_lock::make_wifi_lock(app_info.native_app->activity->clazz);
-#else
-	wifi = std::make_shared<wifi_lock>();
-#endif
 
 	// Initialize the loader for this platform
 	PFN_xrInitializeLoaderKHR initializeLoader = nullptr;
@@ -1376,6 +1425,7 @@ application::application(application_info info) :
 	}
 
 #else
+	wifi = std::make_shared<wifi_lock>();
 	config_path = xdg_config_home() / "wivrn";
 	cache_path = xdg_cache_home() / "wivrn";
 #endif

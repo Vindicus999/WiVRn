@@ -17,6 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "utils/overloaded.h"
+#include "xr/fb_body_tracker.h"
 #define GLM_FORCE_RADIANS
 
 #include "stream.h"
@@ -220,6 +221,17 @@ std::shared_ptr<scenes::stream> scenes::stream::create(std::unique_ptr<wivrn_ses
 				info.face_tracking = from_headset::face_type::fb2;
 			else if (application::get_htc_face_tracking_eye_supported() or application::get_htc_face_tracking_lip_supported())
 				info.face_tracking = from_headset::face_type::htc;
+			else if (application::get_pico_face_tracking_supported())
+				info.face_tracking = from_headset::face_type::pico;
+		}
+
+		info.num_generic_trackers = 0;
+		if (config.check_feature(feature::body_tracking))
+		{
+			if (application::get_fb_body_tracking_supported())
+				info.num_generic_trackers = xr::fb_body_tracker::get_whitelisted_joints(config.fb_lower_body, config.fb_hip).size();
+			else if (application::get_pico_body_tracking_supported())
+				info.num_generic_trackers = xr::pico_body_tracker::joint_whitelist.size();
 		}
 
 		info.palm_pose = application::space(xr::spaces::palm_left) or application::space(xr::spaces::palm_right);
@@ -858,10 +870,16 @@ void scenes::stream::render(const XrFrameState & frame_state)
 	}
 
 	command_buffer.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, *query_pool, 1);
-	reprojector->set_foveation(foveation);
 
-	// Unfoveate the image to the real pose
-	reprojector->reproject(command_buffer, image_index);
+	// defoveate the image
+	auto extents = reprojector->reproject(command_buffer, foveation, image_index);
+	for (size_t i = 0; i < view_count; ++i)
+	{
+		extents[i] = {
+		        .width = std::min(extents[i].width, swapchain.width()),
+		        .height = std::min(extents[i].height, swapchain.height()),
+		};
+	}
 
 	command_buffer.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, *query_pool, 2);
 
@@ -906,10 +924,7 @@ void scenes::stream::render(const XrFrameState & frame_state)
 		                        .swapchain = swapchain,
 		                        .imageRect = {
 		                                .offset = {0, 0},
-		                                .extent = {
-		                                        swapchain.width(),
-		                                        swapchain.height(),
-		                                },
+		                                .extent = extents[view],
 		                        },
 		                        .imageArrayIndex = view,
 		                },
@@ -1159,8 +1174,8 @@ void scenes::stream::setup_reprojection_swapchain()
 
 	const uint32_t video_width = video_stream_description->width / view_count;
 	const uint32_t video_height = video_stream_description->height;
-	uint32_t swapchain_width = video_width / video_stream_description->foveation[0].x.scale;
-	uint32_t swapchain_height = video_height / video_stream_description->foveation[0].y.scale;
+	uint32_t swapchain_width = video_stream_description->defoveated_width / view_count;
+	uint32_t swapchain_height = video_stream_description->defoveated_height;
 
 	const configuration::sgsr_settings sgsr = application::get_config().sgsr;
 	if (sgsr.enabled)
@@ -1187,7 +1202,15 @@ void scenes::stream::setup_reprojection_swapchain()
 	for (auto & image: swapchain.images())
 		swapchain_images.push_back(image.image);
 
-	reprojector.emplace(device, physical_device, decoder_out_image, 2, swapchain_images, extent, swapchain.format(), *video_stream_description);
+	reprojector.emplace(
+	        device,
+	        physical_device,
+	        decoder_out_image,
+	        vk::Extent2D{.width = video_width, .height = video_height},
+	        2,
+	        swapchain_images,
+	        extent,
+	        swapchain.format());
 }
 
 scene::meta & scenes::stream::get_meta_scene()

@@ -32,6 +32,7 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <thread>
 
 struct u_system;
@@ -44,8 +45,7 @@ namespace wivrn
 class wivrn_eye_tracker;
 class wivrn_fb_face2_tracker;
 class wivrn_htc_face_tracker;
-class wivrn_foveation;
-class wivrn_foveation_renderer;
+class wivrn_generic_tracker;
 struct audio_device;
 struct wivrn_comp_target;
 struct wivrn_comp_target_factory;
@@ -82,6 +82,7 @@ public:
 	}
 	void send(wivrn_connection & connection, bool now = false);
 
+	bool get_enabled(to_headset::tracking_control::id id);
 	// Return true if value changed
 	bool set_enabled(to_headset::tracking_control::id id, bool enabled);
 };
@@ -109,7 +110,11 @@ class wivrn_session : public xrt_system_devices
 	std::unique_ptr<wivrn_eye_tracker> eye_tracker;
 	std::unique_ptr<wivrn_fb_face2_tracker> fb_face2_tracker;
 	std::unique_ptr<wivrn_htc_face_tracker> htc_face_tracker;
-	std::unique_ptr<wivrn_foveation> foveation;
+	uint32_t num_generic_trackers;
+	std::array<std::unique_ptr<wivrn_generic_tracker>, from_headset::body_tracking::max_tracked_poses> generic_trackers;
+	std::array<bool, from_headset::body_tracking::max_tracked_poses> enabled_trackers;
+
+	std::shared_mutex comp_target_mutex;
 	wivrn_comp_target * comp_target;
 
 	clock_offset_estimator offset_est;
@@ -143,6 +148,13 @@ public:
 		return connection->info();
 	};
 
+	void unset_comp_target();
+
+	wivrn_hmd & get_hmd()
+	{
+		return hmd;
+	}
+
 	void add_predict_offset(std::chrono::nanoseconds off)
 	{
 		tracking_control.add(off);
@@ -150,6 +162,7 @@ public:
 
 	void set_enabled(to_headset::tracking_control::id id, bool enabled);
 	void set_enabled(device_id id, bool enabled);
+	void set_tracker_enabled(int index, bool enabled);
 
 	void operator()(from_headset::crypto_handshake &&) {}
 	void operator()(from_headset::pin_check_1 &&) {}
@@ -160,6 +173,7 @@ public:
 	void operator()(const from_headset::tracking &);
 	void operator()(from_headset::derived_pose &&);
 	void operator()(from_headset::hand_tracking &&);
+	void operator()(from_headset::body_tracking &&);
 	void operator()(from_headset::inputs &&);
 	void operator()(from_headset::timesync_response &&);
 	void operator()(from_headset::feedback &&);
@@ -185,13 +199,7 @@ public:
 
 	xrt_result_t push_event(const xrt_session_event &);
 
-	std::array<to_headset::foveation_parameter, 2> set_foveated_size(uint32_t width, uint32_t height);
-	std::array<to_headset::foveation_parameter, 2> get_foveation_parameters();
-	bool apply_dynamic_foveation();
-	bool has_dynamic_foveation()
-	{
-		return (bool)foveation;
-	}
+	void set_foveated_size(uint32_t width, uint32_t height);
 
 	void dump_time(const std::string & event, uint64_t frame, int64_t time, uint8_t stream = -1, const char * extra = "");
 

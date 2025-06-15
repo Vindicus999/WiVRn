@@ -301,7 +301,6 @@ Kirigami.ScrollablePage {
                 onCurrentIndexChanged: partitionner.codec = model[currentIndex].name
 
                 delegate: Controls.ItemDelegate {
-                    required property int index
                     required property string label
                     required property string name
 
@@ -314,6 +313,27 @@ Kirigami.ScrollablePage {
 
             Kirigami.Separator {
                 Kirigami.FormData.isSection: true
+            }
+
+            Kirigami.Heading {
+                text: i18n("Advanced options")
+                level: 1
+                type: Kirigami.Heading.Type.Primary
+            }
+            Controls.CheckBox {
+                id: debug_gui
+                text: i18n("Enable debug window")
+                visible: config.debug_gui_supported
+            }
+            RowLayout {
+                visible: config.steamvr_lh_supported
+                Controls.CheckBox {
+                    id: steamvr_lh
+                    text: i18n("Enable SteamVR tracked devices support")
+                }
+                Kirigami.ContextualHelpButton {
+                    toolTipText: i18n("Allows the use of lighthouse-based controllers and trackers.\nRequires SteamVR to be installed.\nDevices must be be powered on before connecting to WiVRn.\nAn external tool such as motoc is needed for calibration.")
+                }
             }
 
             Controls.CheckBox {
@@ -452,6 +472,9 @@ Kirigami.ScrollablePage {
         settings.adb_custom = adb_custom.checked;
         settings.adb_location = adb_location.text;
         Adb.setPath(adb_custom.checked ? adb_location.text : "adb");
+
+        config.debugGui = debug_gui.checked;
+        config.steamVrLh = steamvr_lh.checked;
     }
 
     function load() {
@@ -471,6 +494,10 @@ Kirigami.ScrollablePage {
             // auto_encoders.checked = true;
             encoder_layout.currentIndex = 0;
         }
+
+        debug_gui.checked = config.debugGui;
+        steamvr_lh.checked = config.steamVrLh;
+
         openvr_combobox.load()
 
         adb_custom.checked = settings.adb_custom;

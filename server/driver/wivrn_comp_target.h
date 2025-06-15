@@ -98,7 +98,7 @@ struct wivrn_comp_target : public comp_target
 	std::vector<std::shared_ptr<video_encoder>> encoders;
 
 	wivrn::wivrn_session & cnx;
-	std::unique_ptr<wivrn_foveation_renderer> foveation_renderer = nullptr;
+	std::optional<wivrn_foveation> foveation;
 
 	std::atomic<float> requested_refresh_rate;
 
@@ -108,8 +108,6 @@ struct wivrn_comp_target : public comp_target
 	void on_feedback(const from_headset::feedback &, const clock_offset &);
 	void reset_encoders();
 	void set_bitrate(int bitrate_bps);
-
-	void render_dynamic_foveation(std::array<to_headset::foveation_parameter, 2> foveation);
 
 	void set_refresh_rate(float);
 };

@@ -34,20 +34,22 @@
 #include "wivrn_config.h"
 #include "wivrn_eye_tracker.h"
 #include "wivrn_fb_face2_tracker.h"
-#include "wivrn_foveation.h"
+#include "wivrn_generic_tracker.h"
 #include "wivrn_htc_face_tracker.h"
 #include "wivrn_ipc.h"
 
 #include "wivrn_packets.h"
 #include "xrt/xrt_device.h"
 #include "xrt/xrt_session.h"
-#include <cmath>
+#include <algorithm>
+#include <chrono>
 #include <magic_enum.hpp>
 #include <stdexcept>
 #include <string.h>
 #include <vulkan/vulkan.h>
 
 #if WIVRN_FEATURE_STEAMVR_LIGHTHOUSE
+#include "configuration.h"
 #include "steamvr_lh_interface.h"
 #endif
 
@@ -116,12 +118,19 @@ void wivrn::tracking_control_t::send(wivrn_connection & connection, bool now)
 		next_sample += std::chrono::seconds(1);
 }
 
+bool wivrn::tracking_control_t::get_enabled(to_headset::tracking_control::id id)
+{
+	std::lock_guard lock(mutex);
+	return this->enabled[size_t(id)];
+}
 bool wivrn::tracking_control_t::set_enabled(to_headset::tracking_control::id id, bool enabled)
 {
 	std::lock_guard lock(mutex);
 	bool changed = enabled != this->enabled[size_t(id)];
-	if (changed)
-		U_LOG_I("%s tracking: %s", std::string(magic_enum::enum_name(id)).c_str(), enabled ? "enabled" : "disabled");
+	if (!changed)
+		return false;
+
+	U_LOG_I("%s tracking: %s", std::string(magic_enum::enum_name(id)).c_str(), enabled ? "enabled" : "disabled");
 	this->enabled[size_t(id)] = enabled;
 	return changed;
 }
@@ -159,7 +168,7 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 
 	static_roles.head = xdevs[xdev_count++] = &hmd;
 
-	if (hmd.face_tracking_supported)
+	if (hmd.supported.face_tracking)
 		static_roles.face = &hmd;
 
 	roles.left = xdev_count;
@@ -169,7 +178,7 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 	static_roles.hand_tracking.right = xdevs[xdev_count++] = &right_hand;
 
 #if WIVRN_FEATURE_STEAMVR_LIGHTHOUSE
-	auto use_steamvr_lh = std::getenv("WIVRN_USE_STEAMVR_LH");
+	auto use_steamvr_lh = configuration::read_user_configuration().use_steamvr_lh || std::getenv("WIVRN_USE_STEAMVR_LH");
 	xrt_system_devices * lhdevs = NULL;
 
 	if (use_steamvr_lh && steamvr_lh_create_devices(&lhdevs) == XRT_SUCCESS)
@@ -197,21 +206,37 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 	if (get_info().eye_gaze || is_forced_extension("EXT_eye_gaze_interaction"))
 	{
 		eye_tracker = std::make_unique<wivrn_eye_tracker>(&hmd);
-		foveation = std::make_unique<wivrn_foveation>();
 		static_roles.eyes = eye_tracker.get();
 		xdevs[xdev_count++] = eye_tracker.get();
 	}
-	if (get_info().face_tracking == wivrn::from_headset::face_type::fb2 || is_forced_extension("FB_face_tracking2"))
+
+	auto face = get_info().face_tracking;
+	if (face == from_headset::face_type::fb2 || face == from_headset::face_type::pico || is_forced_extension("FB_face_tracking2"))
 	{
 		fb_face2_tracker = std::make_unique<wivrn_fb_face2_tracker>(&hmd, *this);
 		static_roles.face = fb_face2_tracker.get();
 		xdevs[xdev_count++] = fb_face2_tracker.get();
 	}
-	if (get_info().face_tracking == wivrn::from_headset::face_type::htc || is_forced_extension("HTC_facial_tracking"))
+	if (face == wivrn::from_headset::face_type::htc || is_forced_extension("HTC_facial_tracking"))
 	{
 		htc_face_tracker = std::make_unique<wivrn_htc_face_tracker>(&hmd, *this);
 		static_roles.face = htc_face_tracker.get();
 		xdevs[xdev_count++] = htc_face_tracker.get();
+	}
+
+	num_generic_trackers = get_info().num_generic_trackers;
+	enabled_trackers.fill(false);
+	if (num_generic_trackers > 0)
+	{
+		U_LOG_I("Creating %d generic trackers", num_generic_trackers);
+
+		for (int i = 0; i < num_generic_trackers; ++i)
+		{
+			auto dev = std::make_unique<wivrn_generic_tracker>(i, &hmd, *this);
+			xdevs[xdev_count++] = dev.get();
+			generic_trackers[i] = std::move(dev);
+			enabled_trackers[i] = true;
+		}
 	}
 
 #if WIVRN_FEATURE_SOLARXR
@@ -312,6 +337,12 @@ bool wivrn_session::connected()
 	return connection->is_active();
 }
 
+void wivrn_session::unset_comp_target()
+{
+	std::lock_guard lock(comp_target_mutex);
+	comp_target = nullptr;
+}
+
 void wivrn_session::operator()(from_headset::headset_info_packet &&)
 {
 	U_LOG_W("unexpected headset info packet, ignoring");
@@ -405,8 +436,11 @@ void wivrn_session::operator()(const from_headset::tracking & tracking)
 	right_hand.update_tracking(tracking, offset);
 	if (eye_tracker)
 		eye_tracker->update_tracking(tracking, offset);
-	if (foveation)
-		foveation->update_tracking(tracking, offset);
+	{
+		std::shared_lock lock(comp_target_mutex);
+		if (comp_target)
+			comp_target->foveation->update_tracking(tracking, offset);
+	}
 
 	if (fb_face2_tracker)
 		fb_face2_tracker->update_tracking(tracking, offset);
@@ -426,6 +460,19 @@ void wivrn_session::operator()(from_headset::hand_tracking && hand_tracking)
 
 	left_hand.update_hand_tracking(hand_tracking, offset);
 	right_hand.update_hand_tracking(hand_tracking, offset);
+}
+void wivrn_session::operator()(from_headset::body_tracking && body_tracking)
+{
+	auto offset = offset_est.get_offset();
+
+	for (int i = 0; i < num_generic_trackers; i++)
+	{
+		auto pose = body_tracking.poses ? body_tracking.poses->at(i) : from_headset::body_tracking::pose{
+		                                                                       .pose = {},
+		                                                                       .flags = 0,
+		                                                               };
+		generic_trackers[i]->update_tracking(body_tracking, pose, offset);
+	}
 }
 void wivrn_session::operator()(from_headset::inputs && inputs)
 {
@@ -473,14 +520,25 @@ void wivrn_session::set_enabled(device_id id, bool enabled)
 	if (tracking_control.set_enabled(to_tracking_control(id), enabled) and enabled)
 		tracking_control.send(*connection, true);
 }
+void wivrn_session::set_tracker_enabled(int index, bool enabled)
+{
+	assert(index < std::size(enabled_trackers));
+	enabled_trackers[index] = enabled;
+	bool keep_active = std::ranges::any_of(enabled_trackers, [](bool b) { return b; });
+	if (tracking_control.set_enabled(to_headset::tracking_control::id::generic_tracker, keep_active))
+		tracking_control.send(*connection, true);
+}
 
 void wivrn_session::operator()(from_headset::feedback && feedback)
 {
-	assert(comp_target);
 	clock_offset o = offset_est.get_offset();
 	if (not o)
 		return;
-	comp_target->on_feedback(feedback, o);
+	{
+		std::shared_lock lock(comp_target_mutex);
+		if (comp_target)
+			comp_target->on_feedback(feedback, o);
+	}
 
 	if (feedback.received_first_packet)
 		dump_time("receive_begin", feedback.frame_index, o.from_headset(feedback.received_first_packet), feedback.stream_index);
@@ -515,7 +573,11 @@ void wivrn_session::operator()(from_headset::visibility_mask_changed && mask)
 
 void wivrn_session::operator()(from_headset::refresh_rate_changed && event)
 {
-	comp_target->set_refresh_rate(event.to);
+	{
+		std::shared_lock lock(comp_target_mutex);
+		if (comp_target)
+			comp_target->set_refresh_rate(event.to);
+	}
 	push_event(
 	        {
 	                .display = {
@@ -539,7 +601,9 @@ void wivrn_session::operator()(to_monado::disconnect &&)
 
 void wivrn_session::operator()(to_monado::set_bitrate && data)
 {
-	comp_target->set_bitrate(data.bitrate_bps);
+	std::shared_lock lock(comp_target_mutex);
+	if (comp_target)
+		comp_target->set_bitrate(data.bitrate_bps);
 }
 
 struct refresh_rate_adjuster
@@ -599,8 +663,14 @@ void wivrn_session::run(std::stop_token stop)
 		{
 			offset_est.request_sample(*connection);
 			tracking_control.send(*connection);
-			if (comp_target->requested_refresh_rate == 0)
-				refresh.adjust(*connection);
+			{
+				std::shared_lock lock(comp_target_mutex);
+				if (comp_target)
+				{
+					if (comp_target->requested_refresh_rate == 0)
+						refresh.adjust(*connection);
+				}
+			}
 			connection->poll(*this, 20);
 		}
 		catch (const std::exception & e)
@@ -617,29 +687,9 @@ xrt_result_t wivrn_session::push_event(const xrt_session_event & event)
 	return xrt_session_event_sink_push(&xrt_system.broadcast, &event);
 }
 
-std::array<to_headset::foveation_parameter, 2> wivrn_session::set_foveated_size(uint32_t width, uint32_t height)
+void wivrn_session::set_foveated_size(uint32_t width, uint32_t height)
 {
-	auto p = hmd.set_foveated_size(width, height);
-
-	if (foveation)
-		foveation->set_initial_parameters(p);
-
-	return p;
-}
-
-bool wivrn_session::apply_dynamic_foveation()
-{
-	if (!foveation)
-		return false;
-
-	hmd.set_foveation_center(foveation->get_center());
-	comp_target->render_dynamic_foveation(hmd.get_foveation_parameters());
-	return true;
-}
-
-std::array<to_headset::foveation_parameter, 2> wivrn_session::get_foveation_parameters()
-{
-	return hmd.get_foveation_parameters();
+	hmd.set_foveated_size(width, height);
 }
 
 void wivrn_session::dump_time(const std::string & event, uint64_t frame, int64_t time, uint8_t stream, const char * extra)
@@ -697,7 +747,11 @@ void wivrn_session::reconnect()
 		// const auto & info = connection->info();
 		// FIXME: ensure new client is compatible
 
-		comp_target->reset_encoders();
+		{
+			std::shared_lock lock(comp_target_mutex);
+			if (comp_target)
+				comp_target->reset_encoders();
+		}
 		if (audio_handle)
 			send_control(audio_handle->description());
 

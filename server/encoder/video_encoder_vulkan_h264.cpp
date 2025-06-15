@@ -71,11 +71,12 @@ static StdVideoH264LevelIdc compute_level(const StdVideoH264SequenceParameterSet
 wivrn::video_encoder_vulkan_h264::video_encoder_vulkan_h264(
         wivrn_vk_bundle & vk,
         vk::Rect2D rect,
-        vk::VideoEncodeCapabilitiesKHR encode_caps,
+        const vk::VideoCapabilitiesKHR & video_caps,
+        const vk::VideoEncodeCapabilitiesKHR & encode_caps,
         float fps,
         uint8_t stream_idx,
         const encoder_settings & settings) :
-        video_encoder_vulkan(vk, rect, encode_caps, fps, stream_idx, settings),
+        video_encoder_vulkan(vk, rect, video_caps, encode_caps, fps, stream_idx, settings),
         sps{
                 .flags =
                         {
@@ -191,7 +192,7 @@ std::unique_ptr<wivrn::video_encoder_vulkan_h264> wivrn::video_encoder_vulkan_h2
 	                vk::VideoEncodeCapabilitiesKHR,
 	                vk::VideoEncodeH264CapabilitiesKHR>(video_profile_info.get());
 
-	std::unique_ptr<video_encoder_vulkan_h264> self(new video_encoder_vulkan_h264(vk, rect, encode_caps, fps, stream_idx, settings));
+	std::unique_ptr<video_encoder_vulkan_h264> self(new video_encoder_vulkan_h264(vk, rect, video_caps, encode_caps, fps, stream_idx, settings));
 
 	vk::VideoEncodeH264SessionParametersAddInfoKHR h264_add_info{};
 	h264_add_info.setStdSPSs(self->sps);
@@ -240,7 +241,7 @@ std::vector<uint8_t> wivrn::video_encoder_vulkan_h264::get_sps_pps()
 void wivrn::video_encoder_vulkan_h264::send_idr_data()
 {
 	auto data = get_sps_pps();
-	SendData(data, false);
+	SendData(data, false, true);
 }
 
 void * wivrn::video_encoder_vulkan_h264::encode_info_next(uint32_t frame_num, size_t slot, std::optional<int32_t> ref_slot)

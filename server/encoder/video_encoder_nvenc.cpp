@@ -248,6 +248,7 @@ video_encoder_nvenc::video_encoder_nvenc(
 	for (auto & i: in)
 	{
 		i.yuv = vk::raii::Buffer(vk.device, buffer_create_info.get());
+		vk.name(i.yuv, "nvenc yuv buffer");
 		auto memory_req = i.yuv.getMemoryRequirements();
 
 		vk::StructureChain mem_info{
@@ -263,6 +264,7 @@ video_encoder_nvenc::video_encoder_nvenc(
 		        },
 		};
 		i.mem = vk.device.allocateMemory(mem_info.get());
+		vk.name(i.mem, "nvenc memory");
 		i.yuv.bindMemory(*i.mem, 0);
 
 		int fd = vk.device.getMemoryFdKHR({
@@ -310,6 +312,8 @@ video_encoder_nvenc::~video_encoder_nvenc()
 {
 	if (session_handle)
 		fn.nvEncDestroyEncoder(session_handle);
+	if (cuda)
+		cuda_fn->cuCtxDestroy(cuda);
 }
 
 std::pair<bool, vk::Semaphore> video_encoder_nvenc::present_image(vk::Image y_cbcr, vk::raii::CommandBuffer & cmd_buf, uint8_t slot, uint64_t)

@@ -232,9 +232,11 @@ void scenes::stream::tracking()
 
 	XrTime t0 = instance.now();
 	XrTime last_hand_sample = t0;
+	XrTime last_body_sample = t0;
 	std::vector<from_headset::tracking> tracking;
 	std::vector<from_headset::tracking> tracking_pool; // pre-allocated objects
 	std::vector<from_headset::hand_tracking> hands;
+	std::vector<from_headset::body_tracking> body;
 	std::vector<XrView> views;
 
 	std::vector<from_headset::trackings> merged_tracking;
@@ -248,6 +250,36 @@ void scenes::stream::tracking()
 			face_tracking = from_headset::face_type::fb2;
 		else if (application::get_htc_face_tracking_eye_supported() or application::get_htc_face_tracking_lip_supported())
 			face_tracking = from_headset::face_type::htc;
+		else if (application::get_pico_face_tracking_supported())
+		{
+			face_tracking = from_headset::face_type::pico;
+			// We can't start the face tracking on application initialisation like we do for
+			// other face trackers due to a Pico runtime bug where face tracking freezes when
+			// the headset is taken off or the application is quit.
+			application::get_pico_face_tracker().start();
+		}
+	}
+
+	enum
+	{
+		body_none,
+		body_fb,
+		body_pico,
+	} body_tracking = body_none;
+
+	if (config.check_feature(feature::body_tracking))
+	{
+		if (application::get_fb_body_tracking_supported())
+		{
+			body_tracking = body_fb;
+			// TODO maybe handle reconnection better, if the settings are changed since
+			// last connection to running server, the tracker count will mismatch and
+			// stuff might break
+			application::get_fb_body_tracker().stop();
+			application::get_fb_body_tracker().start(config.fb_lower_body, config.fb_hip);
+		}
+		else if (application::get_pico_body_tracking_supported())
+			body_tracking = body_pico;
 	}
 
 	on_interaction_profile_changed({});
@@ -258,6 +290,7 @@ void scenes::stream::tracking()
 		{
 			tracking.clear();
 			hands.clear();
+			body.clear();
 
 			XrTime now = instance.now();
 			if (now < t0)
@@ -327,6 +360,30 @@ void scenes::stream::tracking()
 							        locate_hands(application::get_right_hand(), world_space, t0 + Δt));
 					}
 
+					if (body_tracking != body_none and t0 >= last_body_sample + period and
+					    (Δt == 0 or Δt >= prediction - 2 * period))
+					{
+						last_body_sample = t0;
+						if (control.enabled[size_t(tid::generic_tracker)])
+						{
+							auto & body_packet = body.emplace_back(from_headset::body_tracking{
+							        .production_timestamp = t0,
+							        .timestamp = t0 + Δt,
+							});
+							switch (body_tracking)
+							{
+								case body_none:
+									__builtin_unreachable();
+								case body_fb:
+									body_packet.poses = application::get_fb_body_tracker().locate_spaces(t0 + Δt, world_space);
+									break;
+								case body_pico:
+									body_packet.poses = application::get_pico_body_tracker().locate_spaces(t0 + Δt, world_space);
+									break;
+							}
+						}
+					}
+
 					if (control.enabled[size_t(tid::face)])
 					{
 						switch (face_tracking)
@@ -334,16 +391,20 @@ void scenes::stream::tracking()
 							case wivrn::from_headset::face_type::none:
 								break;
 							case wivrn::from_headset::face_type::fb2:
-								application::get_fb_face_tracker2().get_weights(t0 + Δt, packet.face.emplace());
+								application::get_fb_face_tracker2().get_weights(t0 + Δt, packet.face.emplace<wivrn::from_headset::tracking::fb_face2>());
 								break;
-							case wivrn::from_headset::face_type::htc:
-								auto & face_htc = packet.face_htc.emplace();
+							case wivrn::from_headset::face_type::htc: {
+								auto & face_htc = packet.face.emplace<wivrn::from_headset::tracking::htc_face>();
 								face_htc.eye_active = false;
 								face_htc.lip_active = false;
 								if (application::get_htc_face_tracking_eye_supported())
 									application::get_htc_face_tracker_eye().get_weights(t0 + Δt, face_htc);
 								if (application::get_htc_face_tracking_lip_supported())
 									application::get_htc_face_tracker_lip().get_weights(t0 + Δt, face_htc);
+								break;
+							}
+							case wivrn::from_headset::face_type::pico:
+								application::get_pico_face_tracker().get_weights(t0 + Δt, packet.face.emplace<wivrn::from_headset::tracking::fb_face2>());
 								break;
 						}
 					}
@@ -396,7 +457,7 @@ void scenes::stream::tracking()
 				merged_tracking.back().items.emplace_back(std::move(item));
 			}
 
-			packets.resize(std::max(packets.size(), merged_tracking.size() + hands.size()));
+			packets.resize(std::max(packets.size(), merged_tracking.size() + hands.size() + body.size()));
 			size_t packet_count = 0;
 			for (const auto & i: merged_tracking)
 			{
@@ -407,6 +468,15 @@ void scenes::stream::tracking()
 			for (const auto & i: hands)
 			{
 				if (i.joints)
+				{
+					auto & packet = packets[packet_count++];
+					packet.clear();
+					wivrn_session::stream_socket_t::serialize(packet, i);
+				}
+			}
+			for (const auto & i: body)
+			{
+				if (i.poses)
 				{
 					auto & packet = packets[packet_count++];
 					packet.clear();
@@ -438,6 +508,9 @@ void scenes::stream::tracking()
 			exit();
 		}
 	}
+
+	if (face_tracking == from_headset::face_type::pico)
+		application::get_pico_face_tracker().stop();
 }
 
 void scenes::stream::operator()(to_headset::tracking_control && packet)

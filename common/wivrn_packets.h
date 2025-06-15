@@ -34,6 +34,7 @@
 
 #include "smp.h"
 #include "wivrn_serialization_types.h"
+#include "xr/pico_eye_types.h"
 
 namespace wivrn
 {
@@ -197,6 +198,7 @@ enum face_type : uint8_t
 	none,
 	fb2,
 	htc,
+	pico,
 };
 
 struct headset_info_packet
@@ -218,6 +220,7 @@ struct headset_info_packet
 	bool palm_pose;
 	bool passthrough;
 	face_type face_tracking;
+	uint32_t num_generic_trackers;
 	std::vector<video_codec> supported_codecs; // from preferred to least preferred
 	std::string system_name;
 };
@@ -276,7 +279,6 @@ struct tracking
 		bool is_valid;
 		bool is_eye_following_blendshapes_valid;
 	};
-	std::optional<fb_face2> face;
 
 	struct htc_face
 	{
@@ -285,7 +287,8 @@ struct tracking
 		bool eye_active;
 		bool lip_active;
 	};
-	std::optional<htc_face> face_htc;
+
+	std::variant<std::monostate, fb_face2, htc_face> face;
 };
 
 struct trackings
@@ -333,6 +336,28 @@ struct hand_tracking
 	XrTime timestamp;
 	hand_id hand;
 	std::optional<std::array<pose, XR_HAND_JOINT_COUNT_EXT>> joints;
+};
+
+struct body_tracking
+{
+	inline static const size_t max_tracked_poses = 16;
+	enum flags : uint8_t
+	{
+		orientation_valid = 1 << 0,
+		position_valid = 1 << 1,
+		orientation_tracked = 1 << 2,
+		position_tracked = 1 << 3,
+	};
+	struct pose
+	{
+		XrPosef pose{};
+		// maybe add velocity?
+		uint8_t flags{0};
+	};
+
+	XrTime production_timestamp;
+	XrTime timestamp;
+	std::optional<std::array<pose, max_tracked_poses>> poses;
 };
 
 struct inputs
@@ -397,6 +422,7 @@ using packets = std::variant<
         trackings,
         derived_pose,
         hand_tracking,
+        body_tracking,
         inputs,
         timesync_response,
         battery,
@@ -437,18 +463,20 @@ struct handshake
 	int stream_port;
 };
 
-struct foveation_parameter_item
-{
-	float center;
-	float scale;
-	float a;
-	float b;
-};
-
 struct foveation_parameter
 {
-	foveation_parameter_item x;
-	foveation_parameter_item y;
+	// The number of source pixels for each ratio,
+	// the middle one is 1:1
+	//
+	// how to read it:
+	// 1, 4, 5, 3, 1 means:
+	// the first output pixel has 3 source pixels
+	// the 4 that come after have 2 source pixels
+	// then 5 with 1 source pixel
+	// 3 with 2 source pixels
+	// 1 with 3 source pixels
+	std::vector<uint16_t> x;
+	std::vector<uint16_t> y;
 };
 
 struct audio_stream_description
@@ -488,7 +516,8 @@ struct video_stream_description
 	uint16_t width;
 	uint16_t height;
 	float fps;
-	std::array<foveation_parameter, 2> foveation;
+	uint16_t defoveated_width;
+	uint16_t defoveated_height;
 	std::vector<item> items;
 };
 
@@ -566,6 +595,7 @@ struct tracking_control
 		left_hand,
 		right_hand,
 		face,
+		generic_tracker,
 		battery,
 		microphone,
 
