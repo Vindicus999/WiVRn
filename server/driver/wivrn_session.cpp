@@ -315,6 +315,7 @@ xrt_result_t wivrn::wivrn_session::create_session(std::unique_ptr<wivrn_connecti
 	        &self->hmd,
 	        &self->left_hand,
 	        &self->right_hand,
+	        nullptr,
 	        self->xdevs,
 	        self->xdev_count,
 	        false,
@@ -575,6 +576,18 @@ void wivrn_session::operator()(from_headset::visibility_mask_changed && mask)
 	        },
 	};
 	auto result = xrt_session_event_sink_push(&xrt_system.broadcast, &event);
+}
+
+void wivrn_session::operator()(from_headset::user_presence_changed && event)
+{
+	hmd.update_presence(event.present);
+	push_event(
+	        {
+	                .presence_change = {
+	                        .type = XRT_SESSION_EVENT_USER_PRESENCE_CHANGE,
+	                        .is_user_present = event.present,
+	                },
+	        });
 }
 
 void wivrn_session::operator()(from_headset::refresh_rate_changed && event)
