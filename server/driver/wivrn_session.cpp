@@ -660,6 +660,7 @@ void wivrn_session::operator()(audio_data && data)
 
 void wivrn_session::operator()(to_monado::disconnect &&)
 {
+	connection->shutdown();
 	throw std::runtime_error("Disconnecting as requested by main loop");
 }
 
