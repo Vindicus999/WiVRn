@@ -234,31 +234,6 @@ static std::optional<std::array<from_headset::hand_tracking::pose, XR_HAND_JOINT
 		return std::nullopt;
 }
 
-static bool enabled(const to_headset::tracking_control & control, device_id id)
-{
-	switch (id)
-	{
-		case device_id::HEAD:
-		case device_id::EYE_GAZE:
-			return true;
-		case device_id::LEFT_AIM:
-			return control.enabled[size_t(tid::left_aim)];
-		case device_id::LEFT_GRIP:
-			return control.enabled[size_t(tid::left_grip)];
-		case device_id::LEFT_PALM:
-			return control.enabled[size_t(tid::left_palm)];
-		case device_id::RIGHT_AIM:
-			return control.enabled[size_t(tid::right_aim)];
-		case device_id::RIGHT_GRIP:
-			return control.enabled[size_t(tid::right_grip)];
-		case device_id::RIGHT_PALM:
-			return control.enabled[size_t(tid::right_palm)];
-		default:
-			break;
-	}
-	__builtin_unreachable();
-}
-
 template <typename T>
 static T & from_pool(std::vector<T> & container, std::vector<T> & pool)
 {
@@ -283,12 +258,20 @@ static xr::spaces device_to_space(device_id id)
 			return xr::spaces::grip_left;
 		case device_id::LEFT_PALM:
 			return xr::spaces::palm_left;
+		case device_id::LEFT_PINCH_POSE:
+			return xr::spaces::pinch_left;
+		case device_id::LEFT_POKE:
+			return xr::spaces::poke_left;
 		case device_id::RIGHT_AIM:
 			return xr::spaces::aim_right;
 		case device_id::RIGHT_GRIP:
 			return xr::spaces::grip_right;
 		case device_id::RIGHT_PALM:
 			return xr::spaces::palm_right;
+		case device_id::RIGHT_PINCH_POSE:
+			return xr::spaces::pinch_right;
+		case device_id::RIGHT_POKE:
+			return xr::spaces::poke_right;
 		default:
 			assert(false);
 			__builtin_unreachable();
@@ -306,19 +289,65 @@ void scenes::stream::tracking()
 #endif
 
 	std::vector<std::pair<device_id, XrSpace>> spaces;
-	for (auto id: {
-	             device_id::HEAD,
-	             device_id::LEFT_AIM,
-	             device_id::LEFT_GRIP,
-	             device_id::LEFT_PALM,
-	             device_id::RIGHT_AIM,
-	             device_id::RIGHT_GRIP,
-	             device_id::RIGHT_PALM,
-	     })
+
 	{
-		if (XrSpace space = application::space(device_to_space(id)))
-			spaces.emplace_back(id, space);
+		std::vector ids{
+		        device_id::HEAD,
+		        device_id::LEFT_AIM,
+		        device_id::LEFT_GRIP,
+		        device_id::LEFT_PALM,
+		        device_id::RIGHT_AIM,
+		        device_id::RIGHT_GRIP,
+		        device_id::RIGHT_PALM,
+		};
+		if (instance.has_extension("XR_EXT_hand_interaction"))
+		{
+			spdlog::info("Adding hand_interaction poses to device list");
+			ids.insert(ids.end(), {device_id::LEFT_PINCH_POSE, device_id::LEFT_POKE, device_id::RIGHT_PINCH_POSE, device_id::RIGHT_POKE});
+		}
+
+		for (auto id: ids)
+		{
+			if (XrSpace space = application::space(device_to_space(id)))
+				spaces.emplace_back(id, space);
+			else
+				spdlog::warn("Missing space for device {}", magic_enum::enum_name(id));
+		}
 	}
+
+	auto enabled = [](const to_headset::tracking_control & control, device_id id) -> bool {
+		switch (id)
+		{
+			case device_id::HEAD:
+			case device_id::EYE_GAZE:
+				return true;
+			case device_id::LEFT_AIM:
+				return control.enabled[size_t(tid::left_aim)];
+			case device_id::LEFT_GRIP:
+				return control.enabled[size_t(tid::left_grip)];
+			case device_id::LEFT_PALM:
+				return control.enabled[size_t(tid::left_palm)];
+			case device_id::LEFT_PINCH_POSE:
+			case device_id::LEFT_POKE: {
+				const auto tracking_id = id == device_id::LEFT_PINCH_POSE ? tid::left_pinch : tid::left_poke;
+				return control.enabled[size_t(tracking_id)];
+			}
+			case device_id::RIGHT_AIM:
+				return control.enabled[size_t(tid::right_aim)];
+			case device_id::RIGHT_GRIP:
+				return control.enabled[size_t(tid::right_grip)];
+			case device_id::RIGHT_PALM:
+				return control.enabled[size_t(tid::right_palm)];
+			case device_id::RIGHT_PINCH_POSE:
+			case device_id::RIGHT_POKE: {
+				const auto tracking_id = id == device_id::RIGHT_PINCH_POSE ? tid::right_pinch : tid::right_poke;
+				return control.enabled[size_t(tracking_id)];
+			}
+			default:
+				break;
+		}
+		throw std::runtime_error("enabled called on unhandled device " + std::string(magic_enum::enum_name(id)));
+	};
 
 	const auto & config = application::get_config();
 
@@ -623,6 +652,55 @@ static device_id derived_from(device_id target)
 
 void scenes::stream::on_interaction_profile_changed(const XrEventDataInteractionProfileChanged &)
 {
+	std::array path = {
+	        "/user/hand/left",
+	        "/user/hand/right",
+	};
+#define DO_PROFILE(vendor, name)                                                \
+	if (profile == "/interaction_profiles/" #vendor "/" #name)              \
+	{                                                                       \
+		interaction_profiles[i] = interaction_profile::vendor##_##name; \
+		continue;                                                       \
+	}
+
+	for (size_t i = 0; i < 2; ++i)
+	{
+		try
+		{
+			auto profile = session.get_current_interaction_profile(path[i]);
+			spdlog::info("interaction profile for {}: {}", path[i], profile);
+			DO_PROFILE(khr, simple_controller)
+			DO_PROFILE(ext, hand_interaction_ext)
+			DO_PROFILE(bytedance, pico_neo3_controller)
+			DO_PROFILE(bytedance, pico4_controller)
+			DO_PROFILE(bytedance, pico4s_controller)
+			DO_PROFILE(bytedance, pico_g3_controller)
+			DO_PROFILE(google, daydream_controller)
+			DO_PROFILE(hp, mixed_reality_controller)
+			DO_PROFILE(htc, vive_controller)
+			DO_PROFILE(htc, vive_cosmos_controller)
+			DO_PROFILE(htc, vive_focus3_controller)
+			DO_PROFILE(htc, vive_pro)
+			DO_PROFILE(ml, ml2_controller)
+			DO_PROFILE(microsoft, motion_controller)
+			DO_PROFILE(microsoft, xbox_controller)
+			DO_PROFILE(oculus, go_controller)
+			DO_PROFILE(oculus, touch_controller)
+			DO_PROFILE(meta, touch_pro_controller)
+			DO_PROFILE(meta, touch_plus_controller)
+			DO_PROFILE(meta, touch_controller_rift_cv1)
+			DO_PROFILE(meta, touch_controller_quest_1_rift_s)
+			DO_PROFILE(meta, touch_controller_quest_2)
+			DO_PROFILE(samsung, odyssey_controller)
+			DO_PROFILE(valve, index_controller)
+		}
+		catch (std::exception & e)
+		{
+			spdlog::warn("Failed to get current interaction profile: {}", e.what());
+		}
+		interaction_profiles[i] = interaction_profile::none;
+	}
+
 	auto now = instance.now();
 	for (device_id target: {
 	             device_id::LEFT_AIM,
@@ -631,6 +709,17 @@ void scenes::stream::on_interaction_profile_changed(const XrEventDataInteraction
 	             device_id::RIGHT_PALM,
 	     })
 	{
+		// don't do derived poses for hand interaction
+		const bool right = target >= device_id::RIGHT_GRIP && target <= device_id::RIGHT_PALM;
+		if (interaction_profiles[right].load() == interaction_profile::ext_hand_interaction_ext)
+		{
+			network_session->send_control(from_headset::derived_pose{
+			        .source = target,
+			        .target = target,
+			});
+			continue;
+		}
+
 		auto source = derived_from(target);
 		auto source_space = application::space(device_to_space(source));
 		auto target_space = application::space(device_to_space(target));
@@ -692,53 +781,5 @@ void scenes::stream::on_interaction_profile_changed(const XrEventDataInteraction
 				});
 			}
 		}
-	}
-
-	std::array path = {
-	        "/user/hand/left",
-	        "/user/hand/right",
-	};
-#define DO_PROFILE(vendor, name)                                                \
-	if (profile == "/interaction_profiles/" #vendor "/" #name)              \
-	{                                                                       \
-		interaction_profiles[i] = interaction_profile::vendor##_##name; \
-		continue;                                                       \
-	}
-
-	for (size_t i = 0; i < 2; ++i)
-	{
-		try
-		{
-			auto profile = session.get_current_interaction_profile(path[i]);
-			spdlog::info("interaction profile for {}: {}", path[i], profile);
-			DO_PROFILE(khr, simple_controller)
-			DO_PROFILE(bytedance, pico_neo3_controller)
-			DO_PROFILE(bytedance, pico4_controller)
-			DO_PROFILE(bytedance, pico4s_controller)
-			DO_PROFILE(bytedance, pico_g3_controller)
-			DO_PROFILE(google, daydream_controller)
-			DO_PROFILE(hp, mixed_reality_controller)
-			DO_PROFILE(htc, vive_controller)
-			DO_PROFILE(htc, vive_cosmos_controller)
-			DO_PROFILE(htc, vive_focus3_controller)
-			DO_PROFILE(htc, vive_pro)
-			DO_PROFILE(ml, ml2_controller)
-			DO_PROFILE(microsoft, motion_controller)
-			DO_PROFILE(microsoft, xbox_controller)
-			DO_PROFILE(oculus, go_controller)
-			DO_PROFILE(oculus, touch_controller)
-			DO_PROFILE(meta, touch_pro_controller)
-			DO_PROFILE(meta, touch_plus_controller)
-			DO_PROFILE(meta, touch_controller_rift_cv1)
-			DO_PROFILE(meta, touch_controller_quest_1_rift_s)
-			DO_PROFILE(meta, touch_controller_quest_2)
-			DO_PROFILE(samsung, odyssey_controller)
-			DO_PROFILE(valve, index_controller)
-		}
-		catch (std::exception & e)
-		{
-			spdlog::warn("Failed to get current interation profile: {}", e.what());
-		}
-		interaction_profiles[i] = interaction_profile::none;
 	}
 }

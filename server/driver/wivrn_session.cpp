@@ -146,8 +146,10 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
         connection(std::move(connection)),
         xrt_system(system),
         hmd(this, get_info()),
-        left_hand(0, &hmd, this),
-        right_hand(1, &hmd, this)
+        left_controller(0, &hmd, this),
+        left_hand_interaction(0, &hmd, this),
+        right_controller(1, &hmd, this),
+        right_hand_interaction(1, &hmd, this)
 {
 	try
 	{
@@ -172,11 +174,13 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 	if (hmd.supported.face_tracking)
 		static_roles.face = &hmd;
 
-	roles.left = xdev_count;
-	static_roles.hand_tracking.left = xdevs[xdev_count++] = &left_hand;
+	roles.left = left_controller_index = xdev_count++;
+	static_roles.hand_tracking.left = xdevs[left_controller_index] = &left_controller;
+	xdevs[left_hand_interaction_index = xdev_count++] = &left_hand_interaction;
 
-	roles.right = xdev_count;
-	static_roles.hand_tracking.right = xdevs[xdev_count++] = &right_hand;
+	roles.right = right_controller_index = xdev_count++;
+	static_roles.hand_tracking.right = xdevs[right_controller_index] = &right_controller;
+	xdevs[right_hand_interaction_index = xdev_count++] = &right_hand_interaction;
 
 #if WIVRN_FEATURE_STEAMVR_LIGHTHOUSE
 	auto use_steamvr_lh = configuration().use_steamvr_lh || std::getenv("WIVRN_USE_STEAMVR_LH");
@@ -314,8 +318,8 @@ xrt_result_t wivrn::wivrn_session::create_session(std::unique_ptr<wivrn_connecti
 	u_builder_create_space_overseer_legacy(
 	        &self->xrt_system.broadcast,
 	        &self->hmd,
-	        &self->left_hand,
-	        &self->right_hand,
+	        &self->left_controller,
+	        &self->right_controller,
 	        nullptr,
 	        self->xdevs,
 	        self->xdev_count,
@@ -364,6 +368,8 @@ static xrt_device_name get_name(interaction_profile profile)
 			return XRT_DEVICE_INVALID;
 		case interaction_profile::khr_simple_controller:
 			return XRT_DEVICE_SIMPLE_CONTROLLER;
+		case interaction_profile::ext_hand_interaction_ext:
+			return XRT_DEVICE_EXT_HAND_INTERACTION;
 		case interaction_profile::bytedance_pico_neo3_controller:
 			return XRT_DEVICE_PICO_NEO3_CONTROLLER;
 		case interaction_profile::bytedance_pico4_controller:
@@ -408,8 +414,8 @@ static xrt_device_name get_name(interaction_profile profile)
 }
 void wivrn_session::operator()(from_headset::trackings && tracking)
 {
-	auto left = xdevs[roles.left] == &left_hand ? get_name(tracking.interaction_profiles[0]) : XRT_DEVICE_INVALID;
-	auto right = xdevs[roles.right] == &right_hand ? get_name(tracking.interaction_profiles[1]) : XRT_DEVICE_INVALID;
+	auto left = (roles.left == left_controller_index || roles.left == left_hand_interaction_index) ? get_name(tracking.interaction_profiles[0]) : XRT_DEVICE_INVALID;
+	auto right = (roles.right == right_controller_index || roles.right == right_hand_interaction_index) ? get_name(tracking.interaction_profiles[1]) : XRT_DEVICE_INVALID;
 	if (left != roles.left_profile or right != roles.right_profile)
 	{
 		U_LOG_I("Updating interaction profiles: from \n"
@@ -420,8 +426,42 @@ void wivrn_session::operator()(from_headset::trackings && tracking)
 		        std::string(magic_enum::enum_name(roles.right_profile)).c_str(),
 		        std::string(magic_enum::enum_name(right)).c_str());
 		std::lock_guard lock(roles_mutex);
+
+		// don't change role when hand from other driver is used
+		if (roles.left == left_hand_interaction_index || roles.left == left_controller_index)
+		{
+			if (left == XRT_DEVICE_EXT_HAND_INTERACTION)
+			{
+				left_hand_interaction.reset_history();
+				roles.left = left_hand_interaction_index;
+			}
+			else
+			{
+				left_controller.reset_history();
+				roles.left = left_controller_index;
+				set_enabled(device_id::LEFT_PINCH_POSE, false);
+				set_enabled(device_id::LEFT_POKE, false);
+			}
+		}
 		roles.left_profile = left;
+
+		if (roles.right == right_hand_interaction_index || roles.right == right_controller_index)
+		{
+			if (right == XRT_DEVICE_EXT_HAND_INTERACTION)
+			{
+				right_hand_interaction.reset_history();
+				roles.right = right_hand_interaction_index;
+			}
+			else
+			{
+				right_controller.reset_history();
+				roles.right = right_controller_index;
+				set_enabled(device_id::RIGHT_PINCH_POSE, false);
+				set_enabled(device_id::RIGHT_POKE, false);
+			}
+		}
 		roles.right_profile = right;
+
 		++roles.generation_id;
 	}
 
@@ -440,8 +480,16 @@ void wivrn_session::operator()(const from_headset::tracking & tracking)
 	auto offset = offset_est.get_offset();
 
 	hmd.update_tracking(tracking, offset);
-	left_hand.update_tracking(tracking, offset);
-	right_hand.update_tracking(tracking, offset);
+	if (roles.left == left_hand_interaction_index)
+		left_hand_interaction.update_tracking(tracking, offset);
+	else
+		left_controller.update_tracking(tracking, offset);
+
+	if (roles.right == right_hand_interaction_index)
+		right_hand_interaction.update_tracking(tracking, offset);
+	else
+		right_controller.update_tracking(tracking, offset);
+
 	if (eye_tracker)
 		eye_tracker->update_tracking(tracking, offset);
 	{
@@ -458,16 +506,19 @@ void wivrn_session::operator()(const from_headset::tracking & tracking)
 
 void wivrn_session::operator()(from_headset::derived_pose && derived)
 {
-	left_hand.set_derived_pose(derived);
-	right_hand.set_derived_pose(derived);
+	left_controller.set_derived_pose(derived);
+	left_hand_interaction.set_derived_pose(derived);
+
+	right_controller.set_derived_pose(derived);
+	right_hand_interaction.set_derived_pose(derived);
 }
 
 void wivrn_session::operator()(from_headset::hand_tracking && hand_tracking)
 {
 	auto offset = offset_est.get_offset();
 
-	left_hand.update_hand_tracking(hand_tracking, offset);
-	right_hand.update_hand_tracking(hand_tracking, offset);
+	left_controller.update_hand_tracking(hand_tracking, offset);
+	right_controller.update_hand_tracking(hand_tracking, offset);
 }
 void wivrn_session::operator()(from_headset::body_tracking && body_tracking)
 {
@@ -486,8 +537,15 @@ void wivrn_session::operator()(from_headset::inputs && inputs)
 {
 	auto offset = get_offset();
 
-	left_hand.set_inputs(inputs, offset);
-	right_hand.set_inputs(inputs, offset);
+	if (roles.left == left_hand_interaction_index)
+		left_hand_interaction.set_inputs(inputs, offset);
+	else if (roles.left == left_controller_index)
+		left_controller.set_inputs(inputs, offset);
+
+	if (roles.right == right_hand_interaction_index)
+		right_hand_interaction.set_inputs(inputs, offset);
+	else if (roles.right == right_controller_index)
+		right_controller.set_inputs(inputs, offset);
 }
 
 void wivrn_session::operator()(from_headset::timesync_response && timesync)
@@ -506,12 +564,20 @@ static auto to_tracking_control(device_id id)
 			return tid::left_grip;
 		case device_id::LEFT_PALM:
 			return tid::left_palm;
+		case device_id::LEFT_PINCH_POSE:
+			return tid::left_pinch;
+		case device_id::LEFT_POKE:
+			return tid::left_poke;
 		case device_id::RIGHT_AIM:
 			return tid::right_aim;
 		case device_id::RIGHT_GRIP:
 			return tid::right_grip;
 		case device_id::RIGHT_PALM:
 			return tid::right_palm;
+		case device_id::RIGHT_PINCH_POSE:
+			return tid::right_pinch;
+		case device_id::RIGHT_POKE:
+			return tid::right_poke;
 		default:
 			break;
 	}

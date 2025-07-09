@@ -39,6 +39,7 @@ namespace wivrn
 
 enum wivrn_controller_input_index
 {
+	WIVRN_CONTROLLER_INPUT_INVALID = -1,
 	WIVRN_CONTROLLER_AIM_POSE,
 	WIVRN_CONTROLLER_GRIP_POSE,
 	WIVRN_CONTROLLER_PALM_POSE,
@@ -237,7 +238,13 @@ static input_data map_input(device_id id)
 		default:
 			break;
 	}
-	throw std::range_error("bad input id " + std::to_string((int)id));
+	// If the headset supports hand_interaction_ext, upon switch
+	// to/from hand tracking we may get the inputs packet before
+	// the interaction profile change, so if we get a bad input
+	// just return an invalid index so we can ignore it
+	U_LOG_D("wivrn_controller: bad input id %s", std::string(magic_enum::enum_name(id)).c_str());
+	// the type here doesn't really matter
+	return {WIVRN_CONTROLLER_INPUT_INVALID, wivrn_input_type::BOOL, XRT_DEVICE_TYPE_UNKNOWN};
 }
 
 static xrt_binding_input_pair simple_input_binding[] = {
@@ -872,5 +879,12 @@ xrt_result_t wivrn_controller::set_output(xrt_output_name name, const xrt_output
 		return XRT_ERROR_OUTPUT_REQUEST_FAILURE;
 	}
 	return XRT_SUCCESS;
+}
+
+void wivrn_controller::reset_history()
+{
+	grip.reset();
+	aim.reset();
+	palm.reset();
 }
 } // namespace wivrn
