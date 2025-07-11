@@ -57,6 +57,7 @@ struct configuration
 	std::vector<encoder> encoders;
 	std::optional<encoder> encoder_passthrough;
 	std::optional<int> bitrate;
+	int bit_depth = 8;
 	std::optional<std::array<double, 2>> scale;
 	std::optional<std::array<float, 3>> grip_surface;
 	std::vector<std::string> application;

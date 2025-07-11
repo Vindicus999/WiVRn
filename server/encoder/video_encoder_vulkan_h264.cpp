@@ -192,6 +192,9 @@ std::unique_ptr<wivrn::video_encoder_vulkan_h264> wivrn::video_encoder_vulkan_h2
 	                vk::VideoEncodeCapabilitiesKHR,
 	                vk::VideoEncodeH264CapabilitiesKHR>(video_profile_info.get());
 
+	if (settings.bit_depth != 8)
+		throw std::runtime_error("h264 codec only supports 8-bit encoding");
+
 	std::unique_ptr<video_encoder_vulkan_h264> self(new video_encoder_vulkan_h264(vk, rect, video_caps, encode_caps, fps, stream_idx, settings));
 
 	vk::VideoEncodeH264SessionParametersAddInfoKHR h264_add_info{};

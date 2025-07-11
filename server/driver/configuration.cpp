@@ -200,6 +200,9 @@ configuration::configuration()
 		if (auto it = json.find("use-steamvr-lh"); it != json.end())
 			use_steamvr_lh = *it;
 
+		if (auto it = json.find("bit-depth"); it != json.end())
+			bit_depth = *it;
+
 		if (auto it = json.find("tcp-only"); it != json.end())
 			tcp_only = *it;
 		else if (auto it = json.find("tcp_only"); it != json.end())
