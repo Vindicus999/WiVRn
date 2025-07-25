@@ -1,7 +1,7 @@
 /*
  * WiVRn VR streaming
- * Copyright (C) 2022  Guillaume Meunier <guillaume.meunier@centraliens.net>
- * Copyright (C) 2022  Patrick Nicolas <patricknicolas@laposte.net>
+ * Copyright (C) 2024  Guillaume Meunier <guillaume.meunier@centraliens.net>
+ * Copyright (C) 2025  Patrick Nicolas <patricknicolas@laposte.net>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,23 +17,27 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "strings.h"
+#include "apps.h"
 
-std::vector<std::string> utils::split(const std::string & s, const std::string & sep)
+#include "application.h"
+
+#include <ranges>
+
+Apps::Apps(QObject * parent)
 {
-	std::string::size_type i = 0;
-	std::vector<std::string> v;
+	auto apps = wivrn::list_applications();
 
-	while (true)
+	for (const auto & [id, app]: apps)
 	{
-		std::string::size_type j = s.find_first_of(sep, i);
-		if (j == std::string::npos)
-		{
-			v.push_back(s.substr(i));
-			return v;
-		}
-
-		v.push_back(s.substr(i, j - i));
-		i = j + 1;
+		m_apps.push_back(
+		        vrApp(
+		                QString::fromStdString(app.name.at("")),
+		                QString::fromStdString(app.exec)));
 	}
+
+	std::ranges::sort(m_apps, [](const vrApp & a, const vrApp & b) {
+		return a.name() < b.name();
+	});
 }
+
+#include "moc_apps.cpp"

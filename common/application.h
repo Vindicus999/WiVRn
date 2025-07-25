@@ -1,7 +1,6 @@
 /*
  * WiVRn VR streaming
- * Copyright (C) 2022  Guillaume Meunier <guillaume.meunier@centraliens.net>
- * Copyright (C) 2022  Patrick Nicolas <patricknicolas@laposte.net>
+ * Copyright (C) 2025  Patrick Nicolas <patricknicolas@laposte.net>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,23 +16,22 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "strings.h"
+#pragma once
 
-std::vector<std::string> utils::split(const std::string & s, const std::string & sep)
+#include <optional>
+#include <string>
+#include <unordered_map>
+
+namespace wivrn
 {
-	std::string::size_type i = 0;
-	std::vector<std::string> v;
 
-	while (true)
-	{
-		std::string::size_type j = s.find_first_of(sep, i);
-		if (j == std::string::npos)
-		{
-			v.push_back(s.substr(i));
-			return v;
-		}
+struct application
+{
+	// localised names, with empty locale for default
+	std::unordered_map<std::string, std::string> name;
+	std::string exec;
+	std::optional<std::string> path;
+};
 
-		v.push_back(s.substr(i, j - i));
-		i = j + 1;
-	}
-}
+std::unordered_map<std::string, application> list_applications(bool include_steam = true);
+} // namespace wivrn

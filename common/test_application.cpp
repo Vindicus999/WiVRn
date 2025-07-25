@@ -1,7 +1,6 @@
 /*
  * WiVRn VR streaming
- * Copyright (C) 2022  Guillaume Meunier <guillaume.meunier@centraliens.net>
- * Copyright (C) 2022  Patrick Nicolas <patricknicolas@laposte.net>
+ * Copyright (C) 2025  Patrick Nicolas <patricknicolas@laposte.net>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,24 +15,28 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include "application.h"
 
-#include "strings.h"
+#include <iostream>
 
-std::vector<std::string> utils::split(const std::string & s, const std::string & sep)
+int main()
 {
-	std::string::size_type i = 0;
-	std::vector<std::string> v;
+	auto apps = wivrn::list_applications();
 
-	while (true)
+	std::cout << "Parsed " << apps.size() << " applications" << std::endl;
+	for (const auto & [k, app]: apps)
 	{
-		std::string::size_type j = s.find_first_of(sep, i);
-		if (j == std::string::npos)
+		std::cout << "======================" << std::endl;
+		std::cout << k << std::endl;
+		for (const auto & [locale, name]: app.name)
 		{
-			v.push_back(s.substr(i));
-			return v;
+			std::cout << "Name";
+			if (not locale.empty())
+				std::cout << "[" << locale << "]";
+			std::cout << "=" << name << std::endl;
 		}
-
-		v.push_back(s.substr(i, j - i));
-		i = j + 1;
+		std::cout << "Exec=" << app.exec << std::endl;
+		if (app.path)
+			std::cout << "Path=" << *app.path << std::endl;
 	}
 }
