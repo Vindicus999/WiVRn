@@ -1,4 +1,4 @@
-From 7114d99942608a2f02d45d64d8eac3e1c2ea739c Mon Sep 17 00:00:00 2001
+From 999c18895dc60680b0c4e167b4b89de031020445 Mon Sep 17 00:00:00 2001
 From: rcelyte <rcelyte@battletrains.org>
 Date: Fri, 23 Aug 2024 20:54:53 +0000
 Subject: [PATCH] t/common: Load SolarXR driver
@@ -13,15 +13,15 @@ Subject: [PATCH] t/common: Load SolarXR driver
  6 files changed, 132 insertions(+)
 
 diff --git a/src/xrt/drivers/qwerty/qwerty_device.c b/src/xrt/drivers/qwerty/qwerty_device.c
-index 8841413efd..127644bc8b 100644
+index 53949d3b90..e1194bc061 100644
 --- a/src/xrt/drivers/qwerty/qwerty_device.c
 +++ b/src/xrt/drivers/qwerty/qwerty_device.c
 @@ -315,6 +315,8 @@ qwerty_hmd_create(void)
  
  	xd->inputs[0].name = XRT_INPUT_GENERIC_HEAD_POSE;
  
-+	xd->orientation_tracking_supported = true;
-+	xd->position_tracking_supported = true;
++	xd->supported.orientation_tracking = true;
++	xd->supported.position_tracking = true;
  	xd->update_inputs = u_device_noop_update_inputs;
  	xd->get_tracked_pose = qwerty_get_tracked_pose;
  	xd->get_view_poses = u_device_get_view_poses;
@@ -29,8 +29,8 @@ index 8841413efd..127644bc8b 100644
  	xd->binding_profiles = binding_profiles;
  	xd->binding_profile_count = ARRAY_SIZE(binding_profiles);
  
-+	xd->orientation_tracking_supported = true;
-+	xd->position_tracking_supported = true;
++	xd->supported.orientation_tracking = true;
++	xd->supported.position_tracking = true;
  	xd->update_inputs = qwerty_update_inputs;
  	xd->get_tracked_pose = qwerty_get_tracked_pose;
  	xd->set_output = qwerty_set_output;
