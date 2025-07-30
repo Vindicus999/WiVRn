@@ -1231,7 +1231,7 @@ void scenes::lobby::gui_about()
 	ImGui::SetCursorPosX(win_width / 4);
 
 	ImGui::Image(about_picture, {win_width / 2, win_width / 2});
-	ImGui::PushFont(imgui_ctx->large_font);
+	ImGui::PushFont(nullptr, constants::gui::font_size_large);
 	CenterTextH(std::string("Sneed'n'Chuck Edition"));
 	ImGui::PopFont();
 }
