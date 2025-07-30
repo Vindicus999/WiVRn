@@ -124,7 +124,7 @@ jobs:
       run: |
         git config --global --add safe.directory $(pwd)
         pip install toml aiohttp
-        tools/gen_flatpak_manifest.py --git https://github.com/${{github.repository}}.git --out flatpak
+        tools/gen_flatpak_manifest.py --gitlocal --out flatpak
         cat flatpak/io.github.wivrn.wivrn.yml
 
     - uses: flatpak/flatpak-github-actions/flatpak-builder@v6.4
@@ -153,11 +153,13 @@ jobs:
   nix-test:
     name: Test Nix package and devshell
     runs-on: ubuntu-24.04
+    if: ${{ vars.APK_ONLY == '' }}
+
     steps:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
-    
+
     - uses: cachix/install-nix-action@v31
     - run: nix flake check
     - run: nix build
@@ -242,7 +244,7 @@ jobs:
         WIVRN_SERVER_PID=$!
 
         mkdir -p ~/.config/wivrn
-        echo '{"servers": [{"autoconnect": false, "manual": true, "pretty_name": "Deep Thought", "hostname": "localhost", "port": 9757, "tcp_only": false, "cookie": ""}]}' > ~/.config/wivrn/client.json.in
+        echo '{"servers": [{"autoconnect": false, "manual": true, "pretty_name": "Deep Thought", "hostname": "localhost", "port": 9757, "tcp_only": false, "cookie": ""}], "first_run": false}' > ~/.config/wivrn/client.json.in
 
         for LANG in en $(basename -a ${{github.workspace}}/locale/*)
         do
@@ -574,7 +576,7 @@ jobs:
         git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git config --global user.name "github-actions[bot]"
 
-        sudo apt-get install python-toml python-aiohttp
+        sudo apt-get install python3-toml python3-aiohttp
 
         cd flathub
         git remote add upstream https://github.com/flathub/io.github.wivrn.wivrn.git

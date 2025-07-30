@@ -21,6 +21,7 @@
 
 #include "xr.h"
 #include "xr/details/enumerate.h"
+#include <algorithm>
 #include <cassert>
 #include <cstring>
 #include <spdlog/spdlog.h>
@@ -38,6 +39,26 @@ static XrBool32 debug_callback(
 	spdlog::info("OpenXR debug message: severity={}, type={}, function={}, {}", messageSeverity, messageTypes, callbackData->functionName, callbackData->message);
 
 	return XR_FALSE;
+}
+
+static std::pair<XrVersion, XrInstance> create_instance(XrInstanceCreateInfo & info)
+{
+	XrResult res;
+	for (XrVersion version: {
+	             XR_API_VERSION_1_1,
+	             XR_API_VERSION_1_0,
+	     })
+	{
+		info.applicationInfo.apiVersion = version;
+		XrInstance inst;
+		res = xrCreateInstance(&info, &inst);
+		if (XR_SUCCEEDED(res))
+			return {version, inst};
+		spdlog::info("Failed to create OpenXR instance version {}: {}",
+		             xr::to_string(version),
+		             xr::to_string(res));
+	}
+	throw std::system_error(res, xr::error_category(), "Failed to create OpenXR instance");
 }
 
 #if defined(XR_USE_PLATFORM_ANDROID)
@@ -94,6 +115,7 @@ xr::instance::instance(std::string_view application_name, std::vector<const char
 	spdlog::info("Available OpenXR extensions:");
 	bool debug_utils_found = false;
 	auto all_extensions = xr::instance::extensions();
+	std::ranges::sort(all_extensions, [](const char * a, const char * b) { return strcmp(a, b) < 0; }, &XrExtensionProperties::extensionName);
 	for (XrExtensionProperties & i: all_extensions)
 	{
 		spdlog::info("    {} (version {})", i.extensionName, i.extensionVersion);
@@ -122,7 +144,6 @@ xr::instance::instance(std::string_view application_name, std::vector<const char
 
 	XrInstanceCreateInfo create_info{
 	        .type = XR_TYPE_INSTANCE_CREATE_INFO,
-	        .applicationInfo = {.apiVersion = XR_MAKE_VERSION(1, 0, 0)},
 	        .enabledApiLayerCount = (uint32_t)layers.size(),
 	        .enabledApiLayerNames = layers.data(),
 	        .enabledExtensionCount = (uint32_t)extensions.size(),
@@ -139,8 +160,7 @@ xr::instance::instance(std::string_view application_name, std::vector<const char
 	create_info.next = &instanceCreateInfoAndroid;
 #endif
 
-	CHECK_XR(xrCreateInstance(&create_info, &id));
-	assert(id != XR_NULL_HANDLE);
+	std::tie(api_version, id) = create_instance(create_info);
 
 	if (debug_utils_found)
 	{

@@ -114,6 +114,7 @@ out gl_PerVertex
 
 void main()
 {
+	// TODO: use base_color_texcoord et al instead of always using texcoord 0
 	for(int i = 0; i < nb_texcoords; i++)
 		texcoord[i] = in_texcoord[i];
 
@@ -149,7 +150,7 @@ void main()
 
 const float dither_pattern[4][4] = {
 	{ 0.0f, 0.5f, 0.125f, 0.625f},
-	{ 0.75f, 0.22f, 0.875f, 0.375f},
+	{ 0.75f, 0.25f, 0.875f, 0.375f},
 	{ 0.1875f, 0.6875f, 0.0625f, 0.5625},
 	{ 0.9375f, 0.4375f, 0.8125f, 0.3125}
 };
@@ -205,9 +206,6 @@ void main()
 	float fog = clamp((length(frag_pos) - fog_min_dist) / (fog_max_dist - fog_min_dist), 0.0, 1.0);
 
 	bc = mix(bc + ec, fog_color, fog);
-
-// 	if (alpha_cutout && c.a <= 0.5)
-// 		discard;
 
 	if (dithering)
 	{

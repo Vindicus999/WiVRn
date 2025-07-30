@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.25)
+cmake_minimum_required(VERSION 3.28)
 project(WiVRn VERSION 0.0.0 LANGUAGES C CXX)
 
 # Set default for FetchContent projects
@@ -31,6 +31,7 @@ option(WIVRN_BUILD_SERVER_LIBRARY "Build OpenXR library for WiVRn server" ${WIVR
 option(WIVRN_BUILD_DASHBOARD "Build WiVRn dashboard" OFF)
 option(WIVRN_BUILD_WIVRNCTL "Build wivrnctl" ON)
 option(WIVRN_BUILD_DISSECTOR "Build Wireshark dissector" OFF)
+option(WIVRN_BUILD_TEST "Build test binaries" OFF)
 option(WIVRN_WERROR "Treat warnings as errors" OFF)
 
 option(WIVRN_USE_NVENC "Enable nvenc (Nvidia) hardware encoder" ON)
@@ -239,9 +240,9 @@ endif()
 
 if (WIVRN_BUILD_DISSECTOR)
     if (WIVRN_USE_SYSTEM_OPENXR STREQUAL "AUTO")
-        find_package(OpenXR 1.0.34)
+        find_package(OpenXR 1.1.48)
     elseif(WIVRN_USE_SYSTEM_OPENXR STREQUAL "ON")
-        find_package(OpenXR 1.0.34 REQUIRED)
+        find_package(OpenXR 1.1.48 REQUIRED)
     endif()
     find_package(Wireshark REQUIRED)
 endif()
@@ -273,15 +274,17 @@ FetchContent_Declare(stb           EXCLUDE_FROM_ALL SYSTEM URL https://github.co
 FetchContent_Declare(libktx        EXCLUDE_FROM_ALL SYSTEM
                                    GIT_REPOSITORY https://github.com/KhronosGroup/KTX-Software
                                    GIT_TAG 91ace88675ac59a97e55d0378a6602a9ae6b98bd)
-FetchContent_Declare(implot        EXCLUDE_FROM_ALL SYSTEM URL https://github.com/epezent/implot/archive/refs/tags/v0.16.tar.gz
-                                   URL_HASH SHA256=961df327d8a756304d1b0a67316eebdb1111d13d559f0d3415114ec0eb30abd1)
+FetchContent_Declare(implot        EXCLUDE_FROM_ALL SYSTEM URL https://github.com/epezent/implot/archive/3da8bd34299965d3b0ab124df743fe3e076fa222.zip
+                                   URL_HASH SHA256=e9b439a94aa6f09fcf12ed9c2cd784efe5e99e96242122aa683e690b29f7a59f)
 file(GLOB IMGUI_PATCHES CONFIGURE_DEPENDS patches/imgui/*)
-FetchContent_Declare(imgui         EXCLUDE_FROM_ALL SYSTEM URL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.3.tar.gz
-                                   URL_HASH SHA256=29949d7b300c30565fbcd66398100235b63aa373acfee0b76853a7aeacd1be28
+FetchContent_Declare(imgui         EXCLUDE_FROM_ALL SYSTEM URL https://github.com/ocornut/imgui/archive/refs/tags/v1.92.1.tar.gz
+                                   URL_HASH SHA256=32c237c2abf67a2ffccaac17192f711d4a787554b4133187a153d49057d6109c
                                    PATCH_COMMAND    ${CMAKE_CURRENT_LIST_DIR}/patches/apply.sh ${IMGUI_PATCHES}
 )
 FetchContent_Declare(uni-algo      EXCLUDE_FROM_ALL SYSTEM URL https://github.com/uni-algo/uni-algo/archive/v1.2.0.tar.gz
                                    URL_HASH SHA256=f2a1539cd8635bc6088d05144a73ecfe7b4d74ee0361fabed6f87f9f19e74ca9)
+FetchContent_Declare(entt          EXCLUDE_FROM_ALL SYSTEM URL https://github.com/skypjack/entt/archive/refs/tags/v3.15.0.tar.gz
+                                   URL_HASH SHA256=01466fcbf77618a79b62891510c0bbf25ac2804af5751c84982b413852234d66)
 
 file(GLOB MONADO_PATCHES CONFIGURE_DEPENDS patches/monado/*)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS monado-rev)
@@ -296,7 +299,9 @@ FetchContent_Declare(monado
 )
 
 add_subdirectory(external)
-add_subdirectory(common)
+if (WIVRN_BUILD_CLIENT OR WIVRN_BUILD_SERVER OR WIVRN_BUILD_DASHBOARD OR WIVRN_BUILD_DISSECTOR)
+    add_subdirectory(common)
+endif()
 
 if (WIVRN_BUILD_CLIENT)
     add_subdirectory(client)

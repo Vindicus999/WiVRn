@@ -39,6 +39,7 @@ namespace wivrn
 
 enum wivrn_controller_input_index
 {
+	WIVRN_CONTROLLER_INPUT_INVALID = -1,
 	WIVRN_CONTROLLER_AIM_POSE,
 	WIVRN_CONTROLLER_GRIP_POSE,
 	WIVRN_CONTROLLER_PALM_POSE,
@@ -237,7 +238,13 @@ static input_data map_input(device_id id)
 		default:
 			break;
 	}
-	throw std::range_error("bad input id " + std::to_string((int)id));
+	// If the headset supports hand_interaction_ext, upon switch
+	// to/from hand tracking we may get the inputs packet before
+	// the interaction profile change, so if we get a bad input
+	// just return an invalid index so we can ignore it
+	U_LOG_D("wivrn_controller: bad input id %s", std::string(magic_enum::enum_name(id)).c_str());
+	// the type here doesn't really matter
+	return {WIVRN_CONTROLLER_INPUT_INVALID, wivrn_input_type::BOOL, XRT_DEVICE_TYPE_UNKNOWN};
 }
 
 static xrt_binding_input_pair simple_input_binding[] = {
@@ -572,7 +579,7 @@ wivrn_controller::wivrn_controller(int hand_id,
 	SET_INPUT(TOUCH, GRIP_POSE);
 	SET_INPUT(GENERIC, PALM_POSE);
 
-	if (auto grip_surface = configuration::read_user_configuration().grip_surface)
+	if (auto grip_surface = configuration().grip_surface)
 	{
 		std::array<float, 3> angles = grip_surface.value();
 		float deg_2_rad = std::numbers::pi / 180.0;
@@ -741,8 +748,8 @@ xrt_result_t wivrn_controller::get_tracked_pose(xrt_input_name name, int64_t at_
 			cnx->set_enabled(device, true);
 			break;
 		default:
-			U_LOG_W("Unknown input name requested");
-			return {};
+			U_LOG_XDEV_UNSUPPORTED_INPUT(this, u_log_get_global_level(), name);
+			return XRT_ERROR_INPUT_UNSUPPORTED;
 	}
 	cnx->add_predict_offset(extrapolation_time);
 	if (auto & out = tracking_dump())
@@ -784,9 +791,9 @@ xrt_result_t wivrn_controller::get_hand_tracking(xrt_input_name name, int64_t de
 		}
 
 		default:
-			U_LOG_W("Unknown input name requested %d", int(name));
+			U_LOG_XDEV_UNSUPPORTED_INPUT(this, u_log_get_global_level(), name);
+			return XRT_ERROR_INPUT_UNSUPPORTED;
 	}
-	return XRT_ERROR_INPUT_UNSUPPORTED;
 }
 
 void wivrn_controller::set_derived_pose(const from_headset::derived_pose & derived)
@@ -840,7 +847,7 @@ void wivrn_controller::update_hand_tracking(const from_headset::hand_tracking & 
 		cnx->set_enabled(joints.hand_id == 0 ? to_headset::tracking_control::id::left_hand : to_headset::tracking_control::id::right_hand, false);
 }
 
-void wivrn_controller::set_output(xrt_output_name name, const xrt_output_value * value)
+xrt_result_t wivrn_controller::set_output(xrt_output_name name, const xrt_output_value * value)
 {
 	device_id id;
 	const bool left = device_type == XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER;
@@ -856,7 +863,7 @@ void wivrn_controller::set_output(xrt_output_name name, const xrt_output_value *
 			id = left ? device_id::LEFT_THUMB_HAPTIC : device_id::RIGHT_THUMB_HAPTIC;
 			break;
 		default:
-			return;
+			return XRT_ERROR_OUTPUT_UNSUPPORTED;
 	}
 
 	try
@@ -869,7 +876,15 @@ void wivrn_controller::set_output(xrt_output_name name, const xrt_output_value *
 	}
 	catch (...)
 	{
-		// Ignore errors
+		return XRT_ERROR_OUTPUT_REQUEST_FAILURE;
 	}
+	return XRT_SUCCESS;
+}
+
+void wivrn_controller::reset_history()
+{
+	grip.reset();
+	aim.reset();
+	palm.reset();
 }
 } // namespace wivrn

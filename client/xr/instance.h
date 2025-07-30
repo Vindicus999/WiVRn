@@ -43,12 +43,14 @@ union event
 	XrEventDataDisplayRefreshRateChangedFB refresh_rate_changed;
 	XrEventDataPassthroughStateChangedFB passthrough_state_changed;
 	XrEventDataVisibilityMaskChangedKHR visibility_mask_changed;
+	XrEventDataUserPresenceChangedEXT user_presence_changed;
 };
 class instance : public utils::handle<XrInstance, xrDestroyInstance>
 {
 	std::string runtime_version;
 	std::string runtime_name;
 	std::unordered_map<std::string, uint32_t> loaded_extensions;
+	XrVersion api_version;
 
 public:
 #if defined(XR_USE_PLATFORM_ANDROID)
@@ -68,6 +70,11 @@ public:
 	const std::string & get_runtime_name() const
 	{
 		return runtime_name;
+	}
+
+	XrVersion get_api_version() const
+	{
+		return api_version;
 	}
 
 	template <typename F>

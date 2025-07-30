@@ -382,46 +382,9 @@ imgui_context::imgui_context(vk::raii::PhysicalDevice physical_device, vk::raii:
 	style.Colors[ImGuiCol_ModalWindowDimBg] = {0, 0, 0, 0};
 }
 
-void imgui_context::add_chars(std::string_view sv)
-{
-	for (auto it = sv.begin(); it != sv.end();)
-	{
-		ImWchar c = (ImWchar)*it;
-		if (c < 0x80)
-			++it;
-		else
-			it += ImTextCharFromUtf8(&c, it, sv.end());
-
-		if (!glyph_range_builder.GetBit(c))
-		{
-			glyph_range_builder.AddChar(c);
-			glyph_range_dirty = true;
-		}
-	}
-}
-
 #ifdef __ANDROID__
-static std::vector<std::string> find_font(const ImFontGlyphRangesBuilder & glyph_range_builder, const std::string & locale)
+static std::vector<std::string> find_font(std::u16string_view sample_text, const std::string & locale)
 {
-	std::u16string wtext;
-	std::u16string_view wtextview;
-	for (int i = 0; i < glyph_range_builder.UsedChars.Size; ++i)
-	{
-		std::uint32_t used_chars = glyph_range_builder.UsedChars[i];
-		if (used_chars == 0)
-			continue;
-
-		for (int j = 0; j < 32; ++j)
-		{
-			ImWchar c = i * 32 + j;
-			if (used_chars & (1 << j))
-			{
-				wtext += c;
-			}
-		}
-	}
-	wtextview = wtext;
-
 	AFontMatcher * font_matcher = AFontMatcher_create();
 	if (!font_matcher)
 		throw std::runtime_error("AFontMatcher_create");
@@ -432,18 +395,18 @@ static std::vector<std::string> find_font(const ImFontGlyphRangesBuilder & glyph
 
 	std::vector<std::string> fonts;
 
-	while (!wtextview.empty())
+	while (!sample_text.empty())
 	{
 		uint32_t runlength = 0;
 
-		AFont * font = AFontMatcher_match(font_matcher, "sans-serif", (uint16_t *)wtextview.data(), wtextview.size(), &runlength);
+		AFont * font = AFontMatcher_match(font_matcher, "sans-serif", (uint16_t *)sample_text.data(), sample_text.size(), &runlength);
 		fonts.emplace_back(AFont_getFontFilePath(font));
 		AFont_close(font);
 
 		if (runlength == 0)
 			break;
 
-		wtextview = wtextview.substr(runlength);
+		sample_text = sample_text.substr(runlength);
 	}
 
 	AFontMatcher_destroy(font_matcher);
@@ -451,7 +414,7 @@ static std::vector<std::string> find_font(const ImFontGlyphRangesBuilder & glyph
 	return fonts;
 }
 #else
-static std::vector<std::string> find_font(ImFontGlyphRangesBuilder glyph_range_builder, const std::string & locale)
+static std::vector<std::string> find_font(std::u16string sample_text, const std::string & locale)
 {
 	// See https://www.camconn.cc/post/how-to-fontconfig-lib-c/
 
@@ -470,21 +433,8 @@ static std::vector<std::string> find_font(ImFontGlyphRangesBuilder glyph_range_b
 	// Add the text to the pattern (to determine appropriate characters)
 	FcCharSet * charset = FcCharSetCreate();
 
-	for (int i = 8; i < glyph_range_builder.UsedChars.Size; ++i)
-	{
-		std::uint32_t used_chars = glyph_range_builder.UsedChars[i];
-		if (used_chars == 0)
-			continue;
-
-		for (int j = 0; j < 32; ++j)
-		{
-			ImWchar c = i * 32 + j;
-			if (used_chars & (1 << j))
-			{
-				FcCharSetAddChar(charset, c);
-			}
-		}
-	}
+	for (char16_t c: sample_text)
+		FcCharSetAddChar(charset, c);
 
 	FcPatternAddCharSet(pattern, FC_CHARSET, charset);
 	FcCharSetDestroy(charset);
@@ -513,28 +463,26 @@ static std::vector<std::string> find_font(ImFontGlyphRangesBuilder glyph_range_b
 			continue;
 
 		bool keep_this_font = false;
-		for (int i = 0; i < glyph_range_builder.UsedChars.Size; ++i)
-		{
-			std::uint32_t & used_chars = glyph_range_builder.UsedChars[i];
-			if (used_chars == 0)
-				continue;
 
-			for (int j = 0; j < 32; ++j)
+		std::u16string tmp = sample_text;
+		for (int i = 0; i < tmp.size();)
+		{
+			char16_t c = tmp[i];
+
+			if (FcCharSetHasChar(font_charset, c))
 			{
-				ImWchar c = i * 32 + j;
-				if (used_chars & (1 << j))
-				{
-					if (FcCharSetHasChar(font_charset, c))
-					{
-						keep_this_font = true;
-						used_chars &= ~(1 << j);
-					}
-				}
+				keep_this_font = true;
+
+				tmp[i] = tmp[tmp.size() - 1];
+				tmp.resize(tmp.size() - 1);
 			}
+			else
+				++i;
 		}
 
 		if (keep_this_font)
 			fonts.emplace_back((const char *)font_file);
+		break;
 	}
 
 	FcFontSetDestroy(fs);
@@ -546,29 +494,19 @@ static std::vector<std::string> find_font(ImFontGlyphRangesBuilder glyph_range_b
 
 void imgui_context::initialize_fonts()
 {
-	glyph_ranges.clear();
+	std::u16string sample_text = u"Hello world";
 
-	// Always include Basic Latin and Latin-1 Supplement without control characters
-	ImWchar default_ranges[] = {0x20, 0x7f, 0xa0, 0xff, 0};
-	glyph_range_builder.AddRanges(default_ranges);
+	const auto & locale = application::get_messages_info();
+	auto it = glyph_set_per_language.find(locale.language + "_" + locale.country);
+	if (it == glyph_set_per_language.end())
+		it = glyph_set_per_language.find(locale.language);
 
-	{
-		const auto & locale = application::get_messages_info();
-		auto it = glyph_set_per_language.find(locale.language + "_" + locale.country);
-		if (it == glyph_set_per_language.end())
-			it = glyph_set_per_language.find(locale.language);
-
-		if (it != glyph_set_per_language.end())
-		{
-			for (ImWchar c: it->second)
-				glyph_range_builder.AddChar(c);
-		}
-	}
-
-	glyph_range_builder.BuildRanges(&glyph_ranges);
+	if (it != glyph_set_per_language.end())
+		for (char16_t c: it->second)
+			sample_text += c;
 
 	// Load Fonts
-	auto fonts = find_font(glyph_range_builder, application::get_messages_info().language);
+	auto fonts = find_font(sample_text, application::get_messages_info().language);
 	for (auto & i: fonts)
 	{
 		spdlog::info("Font {}", i);
@@ -577,40 +515,20 @@ void imgui_context::initialize_fonts()
 	asset font_awesome_regular("Font Awesome 6 Free-Regular-400.otf");
 	asset font_awesome_solid("Font Awesome 6 Free-Solid-900.otf");
 
-	IM_DELETE(io.Fonts);
-	io.Fonts = IM_NEW(ImFontAtlas);
+	ImFontConfig config;
+	config.FontDataOwnedByAtlas = false;
 
+	for (auto & font: fonts)
 	{
-		ImFontConfig config;
-		config.FontDataOwnedByAtlas = false;
-
-		for (auto & font: fonts)
-		{
-			spdlog::info("Using font {}", font, application::get_messages_info().language);
-			io.Fonts->AddFontFromFileTTF(font.c_str(), constants::gui::font_size_small, &config, glyph_ranges.Data);
-			config.MergeMode = true;
-		}
-
+		spdlog::info("Using font {}", font, application::get_messages_info().language);
+		io.Fonts->AddFontFromFileTTF(font.c_str(), constants::gui::font_size_small, &config);
 		config.MergeMode = true;
-		config.GlyphMinAdvanceX = 40; // Use if you want to make the icon monospaced
-		static const ImWchar icon_ranges[] = {ICON_MIN_FA, ICON_MAX_FA, 0};
-		io.Fonts->AddFontFromMemoryTTF(const_cast<std::byte *>(font_awesome_regular.data()), font_awesome_regular.size(), constants::gui::font_size_small, &config, icon_ranges);
-		io.Fonts->AddFontFromMemoryTTF(const_cast<std::byte *>(font_awesome_solid.data()), font_awesome_solid.size(), constants::gui::font_size_small, &config, icon_ranges);
 	}
 
-	{
-		ImFontConfig config;
-		config.FontDataOwnedByAtlas = false;
-		for (auto & font: fonts)
-		{
-			large_font = io.Fonts->AddFontFromFileTTF(font.c_str(), constants::gui::font_size_large, &config, glyph_ranges.Data);
-			config.MergeMode = true;
-		}
-	}
-
-	glyph_range_dirty = false;
-
-	ImGui_ImplVulkan_CreateFontsTexture();
+	config.MergeMode = true;
+	config.GlyphMinAdvanceX = 40; // Use if you want to make the icon monospaced
+	io.Fonts->AddFontFromMemoryTTF(const_cast<std::byte *>(font_awesome_regular.data()), font_awesome_regular.size(), constants::gui::font_size_small, &config);
+	io.Fonts->AddFontFromMemoryTTF(const_cast<std::byte *>(font_awesome_solid.data()), font_awesome_solid.size(), constants::gui::font_size_small, &config);
 }
 
 std::vector<imgui_context::controller_state> imgui_context::read_controllers_state(XrTime display_time)
@@ -626,6 +544,9 @@ std::vector<imgui_context::controller_state> imgui_context::read_controllers_sta
 		auto & [ctrl, state] = controller;
 
 		controller_state & new_state = new_states.emplace_back();
+
+		if (not controllers_enabled)
+			continue;
 
 		if (ctrl.hand)
 		{
@@ -841,24 +762,6 @@ void imgui_context::new_frame(XrTime display_time)
 		controller.second = next_state;
 	}
 
-	// Force recreation of the font atlas
-	if (glyph_range_dirty)
-	{
-		// Wait for fences before ImGui_ImplVulkan_DestroyFontsTexture is called
-		std::vector<vk::Fence> fences;
-		for (auto & f: command_buffers)
-		{
-			fences.push_back(*f.fence);
-		}
-
-		if (auto result = device.waitForFences(fences, true, 1'000'000'000); result != vk::Result::eSuccess)
-			spdlog::error("vkWaitForfences: {}", vk::to_string(result));
-
-		ImGui_ImplVulkan_DestroyFontsTexture();
-		initialize_fonts();
-		ImGui_ImplVulkan_CreateFontsTexture();
-	}
-
 	// Start the Dear ImGui frame
 	ImGui_ImplVulkan_NewFrame();
 
@@ -876,10 +779,20 @@ void imgui_context::new_frame(XrTime display_time)
 
 	image_index = swapchain.acquire();
 	swapchain.wait();
+
+	hovered_item_prev = hovered_item;
+	hovered_item = 0;
 }
 
 std::vector<std::pair<int, XrCompositionLayerQuad>> imgui_context::end_frame()
 {
+	if (hovered_item != hovered_item_prev && hovered_item != 0)
+	{
+		size_t controller = get_focused_controller();
+		if (auto haptic_output = controllers[controller].first.haptic_output; haptic_output != XR_NULL_HANDLE)
+			application::haptic_start(haptic_output, XR_NULL_PATH, 10'000'000, 1000, 1);
+	}
+
 	vk::Image destination = swapchain.images()[image_index].image;
 
 	ImGui::SetCurrentContext(context);
@@ -1070,6 +983,17 @@ std::vector<std::pair<int, XrCompositionLayerQuad>> imgui_context::end_frame()
 	return quads;
 }
 
+void imgui_context::vibrate_on_hover()
+{
+	if (ImGui::IsItemHovered())
+		hovered_item = ImGui::GetItemID();
+}
+
+void imgui_context::set_hovered_item()
+{
+	hovered_item = ImGui::GetItemID();
+}
+
 imgui_context::~imgui_context()
 {
 	ImGui::SetCurrentContext(context);
@@ -1119,7 +1043,7 @@ ImTextureID imgui_context::load_texture(const std::string & filename, vk::raii::
 
 	device.updateDescriptorSets(ds_write, nullptr);
 
-	ImTextureID id = *ds;
+	ImTextureID id = reinterpret_cast<ImTextureID>(VkDescriptorSet(*ds));
 
 	textures.emplace(
 	        id,
@@ -1159,6 +1083,11 @@ void imgui_context::set_current()
 	ImPlot::SetCurrentContext(plot_context);
 }
 
+void imgui_context::set_controllers_enabled(bool value)
+{
+	controllers_enabled = value;
+}
+
 bool imgui_context::is_modal_popup_shown() const
 {
 	return ImGui::GetTopMostAndVisiblePopupModal() != nullptr;
@@ -1173,4 +1102,51 @@ imgui_context::viewport & imgui_context::layer(ImVec2 position)
 	}
 
 	return layers_.front();
+}
+
+void imgui_context::tooltip(std::string_view text)
+{
+	// FIXME: this is incorrect if we use the docking branch of imgui
+	ImGuiViewport * viewport = ImGui::GetMainViewport();
+	auto & current_layer = layer(ImGui::GetMousePos());
+	auto pos_backup = viewport->Pos;
+	auto size_backup = viewport->Size;
+	viewport->Pos = ImVec2(current_layer.vp_origin.x, current_layer.vp_origin.y);
+	viewport->Size = ImVec2(current_layer.vp_size.x, current_layer.vp_size.y);
+
+	ImVec2 pos{
+	        (ImGui::GetItemRectMin().x + ImGui::GetItemRectMax().x) / 2,
+	        ImGui::GetItemRectMin().y - constants::style::tooltip_distance,
+	};
+
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, constants::style::tooltip_padding);
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, constants::style::tooltip_rounding);
+
+	// Clamp position to avoid overflowing on the left or the right
+	auto & style = ImGui::GetStyle();
+	const ImVec2 text_size = ImGui::CalcTextSize(text.data(), text.data() + text.size(), true);
+	const ImVec2 size = {text_size.x + style.WindowPadding.x * 2.0f, text_size.y + style.WindowPadding.y * 2.0f};
+	pos.x = std::clamp<float>(pos.x, viewport->Pos.x + size.x / 2, viewport->Pos.x + viewport->Size.x - size.x / 2);
+	ImVec2 pivot = {0.5, 1};
+
+	// Move tooltip below the item if it overflows on the top
+	if (pos.y - size.y <= viewport->Pos.y)
+	{
+		pos.y = ImGui::GetItemRectMax().y + constants::style::tooltip_distance;
+		pivot.y = 0;
+	}
+
+	ImGui::SetNextWindowPos(pos, ImGuiCond_Always, pivot);
+	if (ImGui::BeginTooltip())
+	{
+		ImGui::PushStyleColor(ImGuiCol_Text, 0xffffffff);
+		ImGui::TextUnformatted(text.data(), text.data() + text.size());
+		ImGui::PopStyleColor();
+		ImGui::EndTooltip();
+	}
+
+	ImGui::PopStyleVar(2);
+
+	viewport->Pos = pos_backup;
+	viewport->Size = size_backup;
 }

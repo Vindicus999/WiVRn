@@ -37,12 +37,12 @@ set(XRT_FEATURE_RENDERDOC                         ${WIVRN_FEATURE_RENDERDOC})
 set(XRT_FEATURE_OPENXR_FACE_TRACKING2_FB         ON)
 set(XRT_FEATURE_OPENXR_FACIAL_TRACKING_HTC       ON)
 set(XRT_FEATURE_OPENXR_HAND_TRACKING_EXT         ON)
+set(XRT_FEATURE_OPENXR_INTERACTION_EXT_HAND      ON)
 set(XRT_FEATURE_OPENXR_INTERACTION_EXT_PALM_POSE ON)
 set(XRT_FEATURE_OPENXR_INTERACTION_BYTEDANCE ON)
 set(XRT_FEATURE_OPENXR_INTERACTION_VIVE_FOCUS3 ON)
 set(XRT_FEATURE_OPENXR_INTERACTION_TOUCH_PRO ON)
 set(XRT_FEATURE_OPENXR_INTERACTION_TOUCH_PLUS ON)
-set(XRT_FEATURE_OPENXR_INTERACTION_EXT_HAND      OFF)
 
 set(XRT_HAVE_BLUETOOTH               OFF)
 set(XRT_HAVE_GST                     OFF)
@@ -94,6 +94,7 @@ if (WIVRN_BUILD_SERVER)
 			driver/wivrn_pacer.cpp
 			driver/wivrn_comp_target.cpp
 			driver/wivrn_controller.cpp
+			driver/wivrn_hand_interaction.cpp
 			driver/wivrn_eye_tracker.cpp
 			driver/wivrn_fb_face2_tracker.cpp
 			driver/wivrn_htc_face_tracker.cpp
@@ -127,7 +128,11 @@ if (WIVRN_BUILD_SERVER)
 	endif()
 
 	if(WIVRN_USE_NVENC)
-		target_sources(wivrn-server PRIVATE encoder/video_encoder_nvenc.cpp)
+		target_sources(
+			wivrn-server
+			PRIVATE encoder/video_encoder_nvenc.cpp
+				encoder/video_encoder_nvenc_shared_state.cpp
+			)
 	endif()
 
 	if(WIVRN_USE_VAAPI)
@@ -188,6 +193,22 @@ if (WIVRN_BUILD_SERVER)
 	target_link_libraries(wivrn-server PUBLIC wivrn-server-dbus)
 	target_link_libraries(wivrn-server PUBLIC PkgConfig::libnotify)
 
+	if(WIVRN_USE_SYSTEMD)
+		add_custom_command(OUTPUT systemd_manager.c systemd_manager.h
+				   COMMAND ${GDBUS_CODEGEN} ${CMAKE_CURRENT_SOURCE_DIR}/../dbus/org.freedesktop.systemd1.Manager.xml --interface-prefix org.freedesktop.systemd1 --generate-c-code systemd_manager --c-namespace systemd
+				   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../dbus/org.freedesktop.systemd1.Manager.xml )
+		add_custom_command(OUTPUT systemd_unit.c systemd_unit.h
+			COMMAND ${GDBUS_CODEGEN} ${CMAKE_CURRENT_SOURCE_DIR}/../dbus/org.freedesktop.systemd1.Unit.xml --interface-prefix org.freedesktop.systemd1 --generate-c-code systemd_unit --c-namespace unit
+				   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../dbus/org.freedesktop.systemd1.Manager.xml )
+		target_sources(wivrn-server-dbus PRIVATE
+			${CMAKE_CURRENT_BINARY_DIR}/systemd_manager.c ${CMAKE_CURRENT_BINARY_DIR}/systemd_manager.h
+			${CMAKE_CURRENT_BINARY_DIR}/systemd_unit.c ${CMAKE_CURRENT_BINARY_DIR}/systemd_unit.h)
+		target_sources(
+			wivrn-server
+			PRIVATE start_systemd_unit.cpp
+			)
+	endif()
+
 	target_link_libraries(
 		wivrn-server
 		PRIVATE
@@ -202,6 +223,7 @@ if (WIVRN_BUILD_SERVER)
 			PkgConfig::AVAHI
 			Eigen3::Eigen
 			wivrn-common
+			wivrn-common-server
 			wivrn-external
 			nlohmann_json::nlohmann_json
 		)
@@ -210,10 +232,6 @@ if (WIVRN_BUILD_SERVER)
 
 	configure_file(dist/wivrn.service.in wivrn.service)
 	install(FILES ${CMAKE_CURRENT_BINARY_DIR}/wivrn.service
-		DESTINATION lib/systemd/user/)
-
-	configure_file(dist/wivrn-application.service.in wivrn-application.service)
-	install(FILES ${CMAKE_CURRENT_BINARY_DIR}/wivrn-application.service
 		DESTINATION lib/systemd/user/)
 
 	install(FILES dist/firewalld-wivrn.xml

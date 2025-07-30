@@ -76,10 +76,12 @@ wivrn_hmd::wivrn_hmd(wivrn::wivrn_session * cnx,
                 .supported = {
                         .orientation_tracking = true,
                         .position_tracking = true,
+                        .presence = true,
                         .battery_status = true,
                 },
                 .update_inputs = [](xrt_device *) { return XRT_SUCCESS; },
                 .get_tracked_pose = method_pointer<&wivrn_hmd::get_tracked_pose>,
+                .get_presence = method_pointer<&wivrn_hmd::get_presence>,
                 .get_view_poses = method_pointer<&wivrn_hmd::get_view_poses>,
                 .get_visibility_mask = method_pointer<&wivrn_hmd::get_visibility_mask>,
                 .get_battery_status = method_pointer<&wivrn_hmd::get_battery_status>,
@@ -87,7 +89,7 @@ wivrn_hmd::wivrn_hmd(wivrn::wivrn_session * cnx,
         },
         cnx(cnx)
 {
-	const auto config = configuration::read_user_configuration();
+	const auto config = configuration();
 
 	auto eye_width = info.recommended_eye_width;
 	eye_width = ((eye_width + 3) / 4) * 4;
@@ -124,8 +126,8 @@ xrt_result_t wivrn_hmd::get_tracked_pose(xrt_input_name name, int64_t at_timesta
 {
 	if (name != XRT_INPUT_GENERIC_HEAD_POSE)
 	{
-		U_LOG_E("Unknown input name");
-		return {};
+		U_LOG_XDEV_UNSUPPORTED_INPUT(this, u_log_get_global_level(), name);
+		return XRT_ERROR_INPUT_UNSUPPORTED;
 	}
 
 	auto [extrapolation_time, view] = views.get_at(at_timestamp_ns);
@@ -145,6 +147,13 @@ void wivrn_hmd::update_battery(const from_headset::battery & new_battery)
 	cnx->set_enabled(to_headset::tracking_control::id::battery, false);
 	std::lock_guard lock(mutex);
 	battery = new_battery;
+}
+
+xrt_result_t wivrn_hmd::get_presence(bool * out_presence)
+{
+	*out_presence = presence;
+
+	return XRT_SUCCESS;
 }
 
 xrt_result_t wivrn_hmd::get_view_poses(const xrt_vec3 * default_eye_relation,
@@ -221,5 +230,30 @@ void wivrn_hmd::update_visibility_mask(const from_headset::visibility_mask_chang
 	assert(mask.view_index < 2);
 	auto m = visibility_mask.lock();
 	m->at(mask.view_index) = mask.data;
+}
+
+bool wivrn_hmd::update_presence(bool new_presence, bool real)
+{
+	// if this presence change comes from headset, always honor it,
+	// otherwise try to keep it in sync with the real presence,
+	// while still changing presence to false when session is not
+	// visible
+	if (real || new_presence == this->real_presence || !new_presence)
+	{
+		if (real && this->real_presence != new_presence)
+		{
+			U_LOG_I("Updating real user presence: %s -> %s", real_presence ? "true" : "false", new_presence ? "true" : "false");
+			this->real_presence = new_presence;
+		}
+
+		if (this->presence == new_presence)
+			return false;
+
+		U_LOG_I("Updating user presence: %s -> %s", this->presence ? "true" : "false", new_presence ? "true" : "false");
+		this->presence = new_presence;
+		return true;
+	}
+
+	return false;
 }
 } // namespace wivrn

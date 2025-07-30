@@ -5,6 +5,7 @@
  * @brief  Main file for WiVRn Monado service.
  */
 
+#include "application.h"
 #include "openxr/openxr.h"
 #include "sleep_inhibitor.h"
 #include "util/u_trace_marker.h"
@@ -33,7 +34,6 @@
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
-#include <iterator>
 #include <libnotify/notification.h>
 #include <memory>
 #include <poll.h>
@@ -52,6 +52,10 @@
 #include <server/ipc_server_interface.h>
 #include <shared/ipc_protocol.h>
 #include <util/u_file.h>
+
+#if WIVRN_USE_SYSTEMD
+#include "start_systemd_unit.h"
+#endif
 
 // Insert the on load constructor to init trace marker.
 U_TRACE_TARGET_SETUP(U_TRACE_WHICH_SERVICE)
@@ -124,21 +128,6 @@ int create_listen_socket()
 	return fd;
 }
 
-void display_child_status(int wstatus, const std::string & name)
-{
-	std::cerr << name << " exited, exit status " << WEXITSTATUS(wstatus);
-	if (WIFSIGNALED(wstatus))
-	{
-		std::cerr << ", received signal " << sigabbrev_np(WTERMSIG(wstatus)) << " ("
-		          << strsignal(WTERMSIG(wstatus)) << ")"
-		          << (WCOREDUMP(wstatus) ? ", core dumped" : "") << std::endl;
-	}
-	else
-	{
-		std::cerr << std::endl;
-	}
-}
-
 static std::filesystem::path flatpak_app_path()
 {
 	if (auto value = flatpak_key(flatpak::section::instance, "app-path"))
@@ -197,9 +186,7 @@ guint server_kill_watch;
 pid_t server_pid;
 std::optional<std::jthread> connection_thread;
 
-guint app_watch;
-guint app_kill_watch;
-pid_t app_pid;
+std::unique_ptr<children_manager> children;
 
 bool quitting_main_loop;
 bool do_fork;
@@ -235,35 +222,6 @@ void start_publishing();
 void stop_publishing();
 
 void update_fsm();
-
-void start_app()
-{
-#if WIVRN_USE_SYSTEMD
-	app_pid = use_systemd ? start_unit_file() : fork_application();
-#else
-	app_pid = fork_application();
-#endif
-
-	assert(app_watch == 0);
-	assert(app_kill_watch == 0);
-	if (app_pid)
-	{
-		app_watch = g_child_watch_add(app_pid, [](pid_t, int status, void *) {
-			display_child_status(status, "Application");
-			g_source_remove(app_watch);
-			if (app_kill_watch)
-				g_source_remove(app_kill_watch);
-
-			app_watch = 0;
-			app_kill_watch = 0;
-
-			update_fsm(); }, nullptr);
-	}
-	else
-	{
-		app_watch = 0;
-	}
-}
 
 void start_server(configuration config)
 {
@@ -337,17 +295,6 @@ void start_server(configuration config)
 		runtime_setter.emplace();
 }
 
-void kill_app()
-{
-	kill(-app_pid, SIGTERM);
-
-	// Send SIGKILL after 1s if it is still running
-	app_kill_watch = g_timeout_add(1000, [](void *) {
-		assert(app_pid > 0);
-		kill(-app_pid, SIGKILL);
-		return G_SOURCE_REMOVE; }, 0);
-}
-
 void kill_server()
 {
 	// Write to the server's stdin to make it quit
@@ -419,7 +366,7 @@ void stop_publishing()
 void update_fsm()
 {
 	bool server_running = server_watch != 0 or connection_thread;
-	bool app_running = app_watch != 0;
+	bool app_running = children->running();
 
 	if (quitting_main_loop)
 	{
@@ -429,15 +376,18 @@ void update_fsm()
 			kill_server();
 
 		if (app_running)
-			kill_app();
+			children->stop();
 
 		if (not server_running and not app_running)
+		{
+			children.reset(nullptr);
 			g_main_loop_quit(main_loop);
+		}
 	}
 	else
 	{
 		if (not server_running and app_running)
-			kill_app();
+			children->stop();
 
 		if (not server_running)
 		{
@@ -477,8 +427,16 @@ gboolean headset_connected_success(void *)
 
 	expose_known_keys_on_dbus();
 
-	start_server(configuration::read_user_configuration());
-	start_app();
+	configuration c;
+	start_server(c);
+	try
+	{
+		children->start_application(c.application);
+	}
+	catch (std::exception & e)
+	{
+		std::cerr << "Failed to start application: " << e.what();
+	}
 
 	delay_next_try = default_delay_next_try;
 
@@ -510,7 +468,7 @@ gboolean headset_connected_incorrect_pin(void *)
 gboolean headset_connected(gint fd, GIOCondition condition, gpointer user_data)
 {
 	assert(server_watch == 0);
-	assert(app_watch == 0);
+	assert(not children->running());
 	assert(not connection_thread);
 	assert(listener);
 
@@ -552,6 +510,11 @@ gboolean control_received(gint fd, GIOCondition condition, gpointer user_data)
 			                   on_headset_info_packet(std::get<wivrn::from_headset::headset_info_packet>(*packet));
 			                   inhibitor.emplace();
 			                   wivrn_server_set_headset_connected(dbus_server, true);
+		                   },
+		                   [&](const wivrn::from_headset::start_app & request) {
+			                   const auto & apps = list_applications();
+			                   if (auto it = apps.find(request.app_id); it != apps.end())
+				                   children->start_application(it->second.exec);
 		                   },
 		                   [&](const from_monado::headset_connected &) {
 			                   stop_publishing();
@@ -807,6 +770,17 @@ void on_headset_info_packet(const wivrn::from_headset::headset_info_packet & inf
 
 void on_name_acquired(GDBusConnection * connection, const gchar * name, gpointer user_data)
 {
+#if WIVRN_USE_SYSTEMD
+	if (use_systemd)
+	{
+		children = std::make_unique<systemd_units_manager>(connection, update_fsm);
+	}
+	else
+#endif
+	{
+		children = std::make_unique<forked_children>(update_fsm);
+	}
+
 	dbus_server = wivrn_server_skeleton_new();
 
 	g_signal_connect(dbus_server,
@@ -846,9 +820,15 @@ void on_name_acquired(GDBusConnection * connection, const gchar * name, gpointer
 
 	on_headset_info_packet({});
 
-	std::ifstream file(configuration::get_config_file());
-	std::string config{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
-
+	std::string config;
+	try
+	{
+		config = configuration::read_configuration().dump();
+	}
+	catch (std::exception & e)
+	{
+		std::cerr << "Invalid configuration: " << e.what() << std::endl;
+	}
 	wivrn_server_set_json_configuration(dbus_server, config.c_str());
 
 	expose_known_keys_on_dbus();
@@ -1001,8 +981,6 @@ int main(int argc, char * argv[])
 	auto no_publish = app.add_flag("--no-publish-service")->description("disable publishing the service through avahi");
 	auto no_encrypt = app.add_flag("--no-encrypt")->description("disable encryption")->group("Debug");
 #if WIVRN_USE_SYSTEMD
-	// --application should only be used from wivrn-application unit file
-	auto app_flag = app.add_flag("--application")->group("");
 	app.add_flag("--systemd", use_systemd, "use systemd to launch user-configured application");
 #endif
 
@@ -1026,12 +1004,8 @@ int main(int argc, char * argv[])
 	if (*no_publish)
 		publication = wivrn::service_publication::none;
 	else
-		publication = configuration::read_user_configuration().publication;
+		publication = configuration().publication;
 
-#if WIVRN_USE_SYSTEMD
-	if (*app_flag)
-		return exec_application(configuration::read_user_configuration());
-#endif
 	try
 	{
 		return inner_main(argc, argv, not *no_instructions);

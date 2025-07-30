@@ -23,6 +23,7 @@
 #include "utils/wivrn_vk_bundle.h"
 #include "video_encoder.h"
 
+#include "wivrn_packets.h"
 #include <cmath>
 #include <magic_enum.hpp>
 #include <string>
@@ -91,8 +92,9 @@ void print_encoders(const std::vector<wivrn::encoder_settings> & encoders)
 			group = encoder.group;
 			U_LOG_I("Group %d", group);
 		}
+
 		std::string codec(magic_enum::enum_name(encoder.codec));
-		U_LOG_I("\t%s (%s)", encoder.encoder_name.c_str(), codec.c_str());
+		U_LOG_I("\t%s (%s %d-bit)", encoder.encoder_name.c_str(), codec.c_str(), encoder.bit_depth);
 		U_LOG_I("\tchannels: %s", std::string(magic_enum::enum_name(encoder.channels)).c_str());
 		U_LOG_I("\tsize:%" PRIu16 "x%" PRIu16 " offset:%" PRIu16 "x%" PRIu16,
 		        encoder.width,
@@ -141,7 +143,7 @@ static constexpr auto ffmpeg_version()
 	return result;
 }
 
-static std::optional<wivrn::video_codec> filter_codecs_vaapi(wivrn_vk_bundle & bundle, const std::vector<wivrn::video_codec> & codecs)
+static std::optional<wivrn::video_codec> filter_codecs_vaapi(wivrn_vk_bundle & bundle, const std::vector<wivrn::video_codec> & codecs, int bit_depth)
 {
 	video_encoder_ffmpeg::mute_logs mute;
 	encoder_settings s{
@@ -154,11 +156,18 @@ static std::optional<wivrn::video_codec> filter_codecs_vaapi(wivrn_vk_bundle & b
 	        "vaapi",
 	        default_bitrate,
 	};
+	s.bit_depth = bit_depth;
+
 	for (auto codec: codecs)
 	{
-		if constexpr (ffmpeg_version()[0] < 6)
+		if (codec == wivrn::video_codec::h264)
 		{
-			if (codec == wivrn::video_codec::h264)
+			if (bit_depth != 8)
+			{
+				U_LOG_D("Will not use h264: %d-bit not supported", bit_depth);
+				continue;
+			}
+			if constexpr (ffmpeg_version()[0] < 6)
 			{
 				U_LOG_W("Skip h264 on ffmpeg < 6 due to poor performance");
 				continue;
@@ -181,7 +190,7 @@ static std::optional<wivrn::video_codec> filter_codecs_vaapi(wivrn_vk_bundle & b
 #endif
 
 #if WIVRN_USE_NVENC
-static bool probe_nvenc(wivrn_vk_bundle & bundle)
+static bool probe_nvenc(wivrn_vk_bundle & bundle, int bit_depth)
 {
 	static bool res = [&]() {
 	encoder_settings s{
@@ -195,6 +204,7 @@ static bool probe_nvenc(wivrn_vk_bundle & bundle)
 	        encoder_nvenc,
 	        default_bitrate,
 	};
+	s.bit_depth = bit_depth;
 	try
 	{
 		video_encoder_nvenc test(bundle, s, 60, 0);
@@ -209,14 +219,14 @@ static bool probe_nvenc(wivrn_vk_bundle & bundle)
 }
 #endif
 
-static void fill_defaults(wivrn_vk_bundle & bundle, const std::vector<wivrn::video_codec> & headset_codecs, configuration::encoder & config)
+static void fill_defaults(wivrn_vk_bundle & bundle, const std::vector<wivrn::video_codec> & headset_codecs, configuration::encoder & config, int bit_depth)
 {
 	if (config.name.empty())
 	{
 		if (is_nvidia(*bundle.physical_device))
 		{
 #if WIVRN_USE_NVENC
-			if (probe_nvenc(bundle))
+			if (probe_nvenc(bundle, bit_depth))
 				config.name = encoder_nvenc;
 			else
 #else
@@ -224,8 +234,13 @@ static void fill_defaults(wivrn_vk_bundle & bundle, const std::vector<wivrn::vid
 #endif
 			{
 #if WIVRN_USE_X264
-				config.name = encoder_x264;
-				config.codec = h264;
+				if (bit_depth != 8)
+					U_LOG_E("no encoder found with %d-bit support (set 8-bit to use x264)", bit_depth);
+				else
+				{
+					config.name = encoder_x264;
+					config.codec = h264;
+				}
 #else
 				U_LOG_E("no suitable encoder available (compile with x264 or nvenc support)");
 #endif
@@ -236,9 +251,14 @@ static void fill_defaults(wivrn_vk_bundle & bundle, const std::vector<wivrn::vid
 #if WIVRN_USE_VAAPI
 			config.name = encoder_vaapi;
 #elif WIVRN_USE_X264
-			U_LOG_W("ffmpeg support not compiled, vaapi encoder not available");
-			config.name = encoder_x264;
-			config.codec = h264;
+			if (bit_depth != 8)
+				U_LOG_E("no encoder found with %d-bit support (set 8-bit to use x264)", bit_depth);
+			else
+			{
+				U_LOG_W("ffmpeg support not compiled, vaapi encoder not available");
+				config.name = encoder_x264;
+				config.codec = h264;
+			}
 #else
 			U_LOG_E("no suitable encoder available (compile with x264 or nvenc support)");
 #endif
@@ -248,35 +268,44 @@ static void fill_defaults(wivrn_vk_bundle & bundle, const std::vector<wivrn::vid
 #if WIVRN_USE_VAAPI
 	if (config.name == encoder_vaapi and not config.codec)
 	{
-		config.codec = filter_codecs_vaapi(bundle, headset_codecs);
+		config.codec = filter_codecs_vaapi(bundle, headset_codecs, bit_depth);
 		if (not config.codec)
 		{
-			U_LOG_W("Failed to initialize vaapi, fallback to software encoding");
-			config.name = encoder_x264;
-			config.codec = h264;
+#if WIVRN_USE_X264
+			if (bit_depth != 8)
+				U_LOG_E("Failed to initialize vaapi, but can't use x264 due to %d-bit encoding (set 8-bit to use x264)", bit_depth);
+			else
+			{
+				U_LOG_W("Failed to initialize vaapi, fallback to software encoding");
+				config.name = encoder_x264;
+				config.codec = h264;
+			}
+#else
+			U_LOG_E("Failed to initialize vaapi");
+#endif
 		}
 	}
 #endif
 
 	if (config.name == encoder_vulkan and not config.codec)
-		config.codec = h264;
+		config.codec = h264; // this will fail if 10-bit is enabled
 
 #if WIVRN_USE_X264
 	if (config.name == encoder_x264)
-		config.codec = h264;
+		config.codec = h264; // this will fail if 10-bit is enabled
 #endif
 
 	if (not config.codec)
-		config.codec = h264;
+		config.codec = bit_depth == 10 ? h265 : h264;
 }
 
-static std::vector<configuration::encoder> get_encoder_default_settings(wivrn_vk_bundle & bundle, const std::vector<wivrn::video_codec> & headset_codecs)
+static std::vector<configuration::encoder> get_encoder_default_settings(wivrn_vk_bundle & bundle, const std::vector<wivrn::video_codec> & headset_codecs, int bit_depth)
 {
 	configuration::encoder base;
-	fill_defaults(bundle, headset_codecs, base);
+	fill_defaults(bundle, headset_codecs, base, bit_depth);
 
 #ifdef WIVRN_SPLIT_ENCODERS
-	if (base.name != encoder_x264 and base.name != encoder_nvenc)
+	if (base.name != encoder_x264)
 	{
 		/* Split in 3 parts:
 		 *  +--------+--------+
@@ -330,16 +359,12 @@ static uint16_t align(uint16_t value, uint16_t alignment)
 std::vector<encoder_settings> get_encoder_settings(wivrn_vk_bundle & bundle, uint32_t & width, uint32_t & height, const from_headset::headset_info_packet & info)
 {
 	configuration config;
-	try
-	{
-		config = configuration::read_user_configuration();
-	}
-	catch (const std::exception & e)
-	{
-		U_LOG_E("Failed to read encoder configuration: %s", e.what());
-	}
+
+	if (config.bit_depth != 8 && config.bit_depth != 10)
+		throw std::runtime_error("invalid bit-depth setting. supported values: 8, 10");
+
 	if (config.encoders.empty())
-		config.encoders = get_encoder_default_settings(bundle, info.supported_codecs);
+		config.encoders = get_encoder_default_settings(bundle, info.supported_codecs, config.bit_depth);
 	if (not config.encoder_passthrough)
 		config.encoder_passthrough.emplace();
 
@@ -347,7 +372,7 @@ std::vector<encoder_settings> get_encoder_settings(wivrn_vk_bundle & bundle, uin
 	config.encoder_passthrough->height = 1;
 	config.encoder_passthrough->offset_x = 0;
 	config.encoder_passthrough->offset_y = 0;
-	fill_defaults(bundle, info.supported_codecs, *config.encoder_passthrough);
+	fill_defaults(bundle, info.supported_codecs, *config.encoder_passthrough, config.bit_depth);
 
 	uint64_t bitrate = config.bitrate.value_or(default_bitrate);
 	std::array<double, 2> default_scale;
@@ -363,7 +388,7 @@ std::vector<encoder_settings> get_encoder_settings(wivrn_vk_bundle & bundle, uin
 
 	for (auto & encoder: config.encoders)
 	{
-		fill_defaults(bundle, info.supported_codecs, encoder);
+		fill_defaults(bundle, info.supported_codecs, encoder, config.bit_depth);
 		assert(encoder.codec);
 		check_scale(encoder.name,
 		            *encoder.codec,
@@ -402,6 +427,7 @@ std::vector<encoder_settings> get_encoder_settings(wivrn_vk_bundle & bundle, uin
 		settings.video_width = settings.width;
 		settings.video_height = settings.height;
 		settings.codec = *encoder.codec;
+		settings.bit_depth = config.bit_depth;
 		if (encoder.group)
 			settings.group = *encoder.group;
 		else
@@ -432,6 +458,7 @@ std::vector<encoder_settings> get_encoder_settings(wivrn_vk_bundle & bundle, uin
 		settings.video_width = settings.width;
 		settings.video_height = settings.height;
 		settings.codec = *encoder.codec;
+		settings.bit_depth = config.bit_depth;
 		if (encoder.group)
 			settings.group = *encoder.group;
 		else

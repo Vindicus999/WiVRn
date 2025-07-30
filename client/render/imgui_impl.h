@@ -67,6 +67,8 @@ public:
 		XrAction scroll;  // XR_ACTION_TYPE_VECTOR2F_INPUT
 		// TODO: thresholds?
 
+		XrAction haptic_output;
+
 		xr::hand_tracker * hand = nullptr;
 	};
 
@@ -153,13 +155,13 @@ private:
 	XrSpace world;
 	size_t focused_controller = (size_t)-1;
 	XrTime last_display_time = 0;
+	bool controllers_enabled = true;
 
 	bool button_pressed = false;
 	bool fingertip_touching = false;
 
-	ImFontGlyphRangesBuilder glyph_range_builder;
-	ImVector<ImWchar> glyph_ranges;
-	bool glyph_range_dirty = true;
+	ImGuiID hovered_item = 0;      // Hovered item in the current frame, reset at the beginning of the frame
+	ImGuiID hovered_item_prev = 0; // Hovered item at the previous frame
 
 #if WIVRN_SHOW_IMGUI_DEMO_WINDOW
 	bool show_demo_window = true;
@@ -192,7 +194,6 @@ public:
 	void new_frame(XrTime display_time);
 	std::vector<std::pair<int, XrCompositionLayerQuad>> end_frame();
 
-	ImFont * large_font;
 	size_t get_focused_controller() const
 	{
 		return focused_controller;
@@ -209,6 +210,10 @@ public:
 	void free_texture(ImTextureID);
 	void set_current();
 
-	void add_chars(std::string_view sv);
 	bool is_modal_popup_shown() const;
+
+	void vibrate_on_hover();
+	void set_hovered_item();
+	void set_controllers_enabled(bool value);
+	void tooltip(std::string_view text);
 };

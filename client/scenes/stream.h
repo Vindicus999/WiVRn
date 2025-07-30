@@ -23,11 +23,13 @@
 #include "decoder/shard_accumulator.h"
 #include "render/imgui_impl.h"
 #include "scene.h"
+#include "scenes/input_profile.h"
 #include "stream_reprojection.h"
+#include "utils/thread_safe.h"
 #include "wifi_lock.h"
 #include "wivrn_client.h"
 #include "wivrn_packets.h"
-#include "xr/passthrough.h"
+#include "xr/space.h"
 #include <mutex>
 #include <shared_mutex>
 #include <thread>
@@ -104,8 +106,6 @@ private:
 
 	std::optional<stream_reprojection> reprojector;
 
-	std::optional<xr::passthrough> passthrough;
-
 	vk::raii::Fence fence = nullptr;
 	vk::raii::CommandBuffer command_buffer = nullptr;
 
@@ -122,19 +122,63 @@ private:
 
 	xr::swapchain swapchain;
 	xr::swapchain swapchain_imgui;
-	vk::Format swapchain_format;
 
 	std::optional<audio> audio_handle;
 
+	std::optional<input_profile> input;
+	static inline const uint32_t layer_controllers = 1 << 0;
+	static inline const uint32_t layer_rays = 1 << 1;
+
+	// Size of the composition layer used for the controllers
+	uint32_t width;
+	uint32_t height;
+
 	std::optional<imgui_context> imgui_ctx;
-	bool plots_visible = true;
+	enum class gui_status
+	{
+		hidden,
+		overlay_only,
+		compact,
+		stats,
+		settings,
+		foveation_settings
+	};
+
+	bool is_gui_interactable() const;
+
+	std::atomic<gui_status> gui_status = gui_status::hidden;
+	enum gui_status last_gui_status = gui_status::hidden;
+	XrTime gui_status_last_change;
+	float dimming = 0;
+
 	XrAction plots_toggle_1 = XR_NULL_HANDLE;
 	XrAction plots_toggle_2 = XR_NULL_HANDLE;
+	XrAction recenter_left = XR_NULL_HANDLE;
+	XrAction recenter_right = XR_NULL_HANDLE;
+	XrAction foveation_pitch = XR_NULL_HANDLE;
+	XrAction foveation_distance = XR_NULL_HANDLE;
+	XrAction foveation_ok = XR_NULL_HANDLE;
+	XrAction foveation_cancel = XR_NULL_HANDLE;
+
+	// Position of the GUI relative to the view space, in view space axes
+	glm::vec3 head_gui_position{-0.1, -0.3, -1.2}; // Shift 10cm left by default so that the stats are centered accounting for the tab list
+	glm::quat head_gui_orientation{1, 0, 0, 0};
+
+	bool override_foveation_enable;
+	float override_foveation_pitch; // The pitch is the opposite as the height displayed in the GUI
+	float override_foveation_distance;
+
+	// Which controller is used for recentering and position of the GUI relative to the controller, in controller axes, during recentering
+	std::optional<std::tuple<xr::spaces, glm::vec3, glm::quat>> recentering_context;
+	void update_gui_position(xr::spaces controller);
 
 	// Keep a reference to the resources needed to blit the images until vkWaitForFences
 	std::vector<std::shared_ptr<wivrn::shard_accumulator::blit_handle>> current_blit_handles;
 
-	stream() = default;
+	// Last application list received from server
+	thread_safe<to_headset::application_list> applications;
+
+	stream();
 
 public:
 	~stream();
@@ -157,6 +201,7 @@ public:
 	void operator()(to_headset::audio_stream_description &&);
 	void operator()(to_headset::video_stream_description &&);
 	void operator()(to_headset::refresh_rate_change &&);
+	void operator()(to_headset::application_list &&);
 	void operator()(audio_data &&);
 
 	void push_blit_handle(wivrn::shard_accumulator * decoder, std::shared_ptr<wivrn::shard_accumulator::blit_handle> handle);
@@ -173,6 +218,13 @@ public:
 		return !exiting;
 	}
 
+	auto get_applications()
+	{
+		return applications.lock();
+	}
+
+	void start_application(std::string appid);
+
 	static meta & get_meta_scene();
 
 private:
@@ -183,14 +235,15 @@ private:
 	void on_interaction_profile_changed(const XrEventDataInteractionProfileChanged &);
 
 	void setup(const to_headset::video_stream_description &);
-	void setup_reprojection_swapchain();
+	void setup_reprojection_swapchain(uint32_t width, uint32_t height);
 	void exit();
 
 	vk::raii::QueryPool query_pool = nullptr;
 	bool query_pool_filled = false;
 
-	uint64_t bytes_sent = 0;
+	// Used for plots
 	uint64_t bytes_received = 0;
+	uint64_t bytes_sent = 0;
 	float bandwidth_rx = 0;
 	float bandwidth_tx = 0;
 
@@ -245,7 +298,17 @@ private:
 	XrTime last_metric_time = 0;
 	int metrics_offset = 0;
 
+	// Used for compact view
+	float compact_bandwidth_rx = 0;
+	float compact_bandwidth_tx = 0;
+	float compact_cpu_time = 0;
+	float compact_gpu_time = 0;
+
 	void accumulate_metrics(XrTime predicted_display_time, const std::vector<std::shared_ptr<wivrn::shard_accumulator::blit_handle>> & blit_handles, const gpu_timestamps & timestamps);
-	std::vector<XrCompositionLayerQuad> plot_performance_metrics(XrTime predicted_display_time);
+	void gui_performance_metrics();
+	void gui_compact_view();
+	void gui_settings();
+	void gui_foveation_settings(float predicted_display_period);
+	void draw_gui(XrTime predicted_display_time, XrDuration predicted_display_period);
 };
 } // namespace scenes

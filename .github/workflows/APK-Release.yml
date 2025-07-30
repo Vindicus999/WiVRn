@@ -22,9 +22,14 @@ jobs:
     - uses: actions/checkout@v4
       with:
         # Checkout from upstream instead of WiVRn-APK to ensure the GIT_DESC variable is set correctly
-        repository: 'WiVRn/WiVRn'
+        repository: 'Vindicus999/WiVRn'
         ref: ${{ github.sha }}
         fetch-depth: 0
+    #
+    # - uses: actions/checkout@v4
+    #   with:
+    #     repository: 'Vindicus999/WiVRn'
+    #     ref: sneed
 
     - name: set up JDK
       uses: actions/setup-java@v4
@@ -68,7 +73,9 @@ jobs:
     - name: Prepare before archiving artifacts
       run: |
         mkdir apk
+        ls build/outputs/apk/
         mv $(find build/outputs/apk/ -name "*.apk") apk/
+        ls apk/
         mkdir debug
         mv build/intermediates/merged_native_libs/*/*/out/lib/* debug/
         find debug -name libopenxr_loader.so -delete
@@ -102,13 +109,15 @@ jobs:
         pattern: 'apk-*'
         merge-multiple: true
 
-    - name: Rename APK artifacts
-      run: |
-        cd apk
-        for f in *.apk; do
-          BASENAME=`echo ${f}|awk -F '-APK-' '{print $2}'`
-          mv "${f}" "org.meumeu.wivrn-${BASENAME}"
-        done
+    # - name: Rename APK artifacts
+    #   run: |
+    #     cd apk
+    #     ls
+    #     for f in *.apk; do
+    #       BASENAME=`echo ${f}|awk -F '-APK-' '{print $2}'`
+    #       mv "${f}" "org.meumeu.wivrn-${BASENAME}"
+    #     done
+    #     ls
 
     - name: Download APK debug artifacts
       uses: actions/download-artifact@v4
@@ -121,6 +130,11 @@ jobs:
       run: |
         cd symbols
         zip -r ../debug-symbols.zip .
+
+    - name: How the hell doesnt it work
+      run: |
+        ls apk
+        ls
 
     - name: APK Release
       uses: softprops/action-gh-release@v2

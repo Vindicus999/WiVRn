@@ -16,10 +16,17 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include "constants.h"
 #include "utils/overloaded.h"
 #include "xr/fb_body_tracker.h"
+#include "xr/fb_face_tracker2.h"
 #include "xr/htc_body_tracker.h"
 #include "xr/pico_body_tracker.h"
+#include "xr/space.h"
+#include <glm/gtc/matrix_access.hpp>
+#include <glm/gtc/quaternion.hpp>
+#include <magic_enum.hpp>
+#include <openxr/openxr.h>
 #define GLM_FORCE_RADIANS
 
 #include "stream.h"
@@ -115,13 +122,38 @@ static const std::unordered_map<std::string, device_id> device_ids = {
 	{"/user/hand/right/input/trackpad/force",      device_id::RIGHT_TRACKPAD_FORCE},
 	{"/user/hand/right/input/stylus/force",        device_id::RIGHT_STYLUS_FORCE},
 	{"/user/hand/right/input/stylus_fb/force",     device_id::RIGHT_STYLUS_FORCE},
+
+	// XR_EXT_hand_interaction
+	{"/user/hand/left/input/pinch_ext/value",      device_id::LEFT_PINCH_VALUE},
+	{"/user/hand/left/input/pinch_ext/ready_ext",  device_id::LEFT_PINCH_READY},
+	{"/user/hand/left/input/aim_activate_ext/value",device_id::LEFT_AIM_ACTIVATE_VALUE},
+	{"/user/hand/left/input/aim_activate_ext/ready_ext",device_id::LEFT_AIM_ACTIVATE_READY},
+	{"/user/hand/left/input/grasp_ext/value",      device_id::LEFT_GRASP_VALUE},
+	{"/user/hand/left/input/grasp_ext/ready_ext",  device_id::LEFT_GRASP_READY},
+
+	{"/user/hand/right/input/pinch_ext/value",      device_id::RIGHT_PINCH_VALUE},
+	{"/user/hand/right/input/pinch_ext/ready_ext",  device_id::RIGHT_PINCH_READY},
+	{"/user/hand/right/input/aim_activate_ext/value",device_id::RIGHT_AIM_ACTIVATE_VALUE},
+	{"/user/hand/right/input/aim_activate_ext/ready_ext",device_id::RIGHT_AIM_ACTIVATE_READY},
+	{"/user/hand/right/input/grasp_ext/value",      device_id::RIGHT_GRASP_VALUE},
+	{"/user/hand/right/input/grasp_ext/ready_ext",  device_id::RIGHT_GRASP_READY},
 };
 // clang-format on
 
-static const std::array supported_formats = {
+static const std::array supported_color_formats = {
         vk::Format::eR8G8B8A8Srgb,
         vk::Format::eB8G8R8A8Srgb,
 };
+
+static const std::array supported_depth_formats{
+        vk::Format::eD32Sfloat,
+        vk::Format::eX8D24UnormPack32,
+};
+
+scenes::stream::stream() :
+        scene_impl<stream>(supported_color_formats, supported_depth_formats)
+{
+}
 
 static from_headset::visibility_mask_changed::masks get_visibility_mask(xr::instance & inst, xr::session & session, int view)
 {
@@ -219,12 +251,21 @@ std::shared_ptr<scenes::stream> scenes::stream::create(std::unique_ptr<wivrn_ses
 
 		if (config.check_feature(feature::face_tracking))
 		{
-			if (application::get_fb_face_tracking2_supported())
-				info.face_tracking = from_headset::face_type::fb2;
-			else if (application::get_htc_face_tracking_eye_supported() or application::get_htc_face_tracking_lip_supported())
-				info.face_tracking = from_headset::face_type::htc;
-			else if (application::get_pico_face_tracking_supported())
-				info.face_tracking = from_headset::face_type::pico;
+			info.face_tracking = std::visit(utils::overloaded{
+			                                        [](std::monostate &) {
+				                                        return from_headset::face_type::none;
+			                                        },
+			                                        [](xr::fb_face_tracker2 &) {
+				                                        return from_headset::face_type::fb2;
+			                                        },
+			                                        [](xr::htc_face_tracker &) {
+				                                        return from_headset::face_type::htc;
+			                                        },
+			                                        [](xr::pico_face_tracker &) {
+				                                        return from_headset::face_type::fb2;
+			                                        },
+			                                },
+			                                application::get_face_tracker());
 		}
 
 		info.num_generic_trackers = 0;
@@ -257,10 +298,40 @@ std::shared_ptr<scenes::stream> scenes::stream::create(std::unique_ptr<wivrn_ses
 	{
 		for (uint8_t view = 0; view < view_count; ++view)
 		{
-			self->network_session->send_control(from_headset::visibility_mask_changed{
-			        .data = get_visibility_mask(self->instance, self->session, view),
-			        .view_index = view});
+			try
+			{
+				self->network_session->send_control(from_headset::visibility_mask_changed{
+				        .data = get_visibility_mask(self->instance, self->session, view),
+				        .view_index = view});
+			}
+			catch (std::exception & e)
+			{
+				spdlog::warn("Failed to get visibility mask: ", e.what());
+			}
 		}
+	}
+
+	{
+		const auto & info = application::get_messages_info();
+		self->network_session->send_control(from_headset::get_application_list{
+		        .language = info.language,
+		        .country = info.country,
+		        .variant = info.variant,
+		});
+	}
+
+	{
+		const auto & config = application::get_config();
+		self->override_foveation_enable = config.override_foveation_enable;
+		self->override_foveation_pitch = config.override_foveation_pitch;
+		self->override_foveation_distance = config.override_foveation_distance;
+
+		if (self->override_foveation_enable)
+			self->network_session->send_control(from_headset::override_foveation_center{
+			        .enabled = self->override_foveation_enable,
+			        .pitch = self->override_foveation_pitch,
+			        .distance = self->override_foveation_distance,
+			});
 	}
 
 	self->network_thread = utils::named_thread("network_thread", &stream::process_packets, self.get());
@@ -308,25 +379,6 @@ std::shared_ptr<scenes::stream> scenes::stream::create(std::unique_ptr<wivrn_ses
 		self->input_actions.emplace_back(it->second, action, action_type);
 	}
 
-	self->swapchain_format = vk::Format::eUndefined;
-	spdlog::info("Supported swapchain formats:");
-
-	for (auto format: self->session.get_swapchain_formats())
-	{
-		spdlog::info("    {}", vk::to_string(format));
-	}
-	for (auto format: self->session.get_swapchain_formats())
-	{
-		if (std::find(supported_formats.begin(), supported_formats.end(), format) != supported_formats.end())
-		{
-			self->swapchain_format = format;
-			break;
-		}
-	}
-
-	if (self->swapchain_format == vk::Format::eUndefined)
-		throw std::runtime_error("No supported swapchain format");
-
 	spdlog::info("Using format {}", vk::to_string(self->swapchain_format));
 
 	self->query_pool = vk::raii::QueryPool(
@@ -342,42 +394,107 @@ std::shared_ptr<scenes::stream> scenes::stream::create(std::unique_ptr<wivrn_ses
 
 void scenes::stream::on_focused()
 {
-	if (application::get_config().show_performance_metrics)
+	gui_status_last_change = application::now();
+
+	auto views = system.view_configuration_views(viewconfig);
+	// stream_view = override_view(views[0], guess_model());
+	width = views[0].recommendedImageRectWidth;
+	height = views[0].recommendedImageRectHeight;
+
+	renderer.emplace(device, physical_device, queue, commandpool);
+	loader.emplace(device, physical_device, queue, application::queue_family_index(), renderer->get_default_material());
+
+	std::string profile = controller_name();
+	input.emplace(
+	        *this,
+	        "controllers/" + profile + "/profile.json",
+	        layer_controllers,
+	        layer_rays);
+
+	spdlog::info("Loaded input profile {}", input->id);
+
+	for (auto i: {xr::spaces::aim_left, xr::spaces::aim_right, xr::spaces::grip_left, xr::spaces::grip_right})
 	{
-		swapchain_imgui = xr::swapchain(
-		        session,
-		        device,
-		        swapchain_format,
-		        1500,
-		        1000);
+		auto [p, q] = input->offset[i] = controller_offset(controller_name(), i);
 
-		imgui_context::viewport vp{
-		        .space = xr::spaces::view,
-		        .position = {0, 0, -1},
-		        .orientation = {1, 0, 0, 0},
-		        .size = {1.0, 0.6666},
-		        .vp_origin = {0, 0},
-		        .vp_size = {1500, 1000},
-		};
-
-		imgui_ctx.emplace(physical_device,
-		                  device,
-		                  queue_family_index,
-		                  queue,
-		                  std::span<imgui_context::controller>{},
-		                  swapchain_imgui,
-		                  std::vector{vp});
-
-		plots_toggle_1 = get_action("plots_toggle_1").first;
-		plots_toggle_2 = get_action("plots_toggle_2").first;
+		auto rot = glm::degrees(glm::eulerAngles(q));
+		spdlog::info("Initializing offset of space {} to ({}, {}, {}) mm, ({}, {}, {})°",
+		             magic_enum::enum_name(i),
+		             1000 * p.x,
+		             1000 * p.y,
+		             1000 * p.z,
+		             rot.x,
+		             rot.y,
+		             rot.z);
 	}
 
+	std::array imgui_inputs{
+	        imgui_context::controller{
+	                .aim = get_action_space("left_aim"),
+	                .offset = input->offset[xr::spaces::aim_left],
+	                .trigger = get_action("left_trigger").first,
+	                .squeeze = get_action("left_squeeze").first,
+	                .scroll = get_action("left_scroll").first,
+	                .haptic_output = get_action("left_haptic").first,
+	        },
+	        imgui_context::controller{
+	                .aim = get_action_space("right_aim"),
+	                .offset = input->offset[xr::spaces::aim_right],
+	                .trigger = get_action("right_trigger").first,
+	                .squeeze = get_action("right_squeeze").first,
+	                .scroll = get_action("right_scroll").first,
+	                .haptic_output = get_action("right_haptic").first,
+	        },
+	};
+
+	swapchain_imgui = xr::swapchain(
+	        session,
+	        device,
+	        swapchain_format,
+	        1800,
+	        1000);
+
+	imgui_context::viewport vp{
+	        .space = xr::spaces::world,
+	        // Position and orientation are set at each frame
+	        .size = {1.2, 0.6666},
+	        .vp_origin = {0, 0},
+	        .vp_size = {1800, 1000},
+	};
+
+	imgui_ctx.emplace(physical_device,
+	                  device,
+	                  queue_family_index,
+	                  queue,
+	                  imgui_inputs,
+	                  swapchain_imgui,
+	                  std::vector{vp});
+
+	plots_toggle_1 = get_action("plots_toggle_1").first;
+	plots_toggle_2 = get_action("plots_toggle_2").first;
+	recenter_left = get_action("recenter_left").first;
+	recenter_right = get_action("recenter_right").first;
+	foveation_pitch = get_action("foveation_pitch").first;
+	foveation_distance = get_action("foveation_distance").first;
+	foveation_ok = get_action("foveation_ok").first;
+	foveation_cancel = get_action("foveation_cancel").first;
+
 	assert(video_stream_description);
-	setup_reprojection_swapchain();
+	std::unique_lock lock(decoder_mutex);
+	setup_reprojection_swapchain(
+	        video_stream_description->defoveated_width / view_count,
+	        video_stream_description->defoveated_height);
 }
 
 void scenes::stream::on_unfocused()
 {
+	renderer->wait_idle(); // Must be before the scene data because the renderer uses its descriptor sets
+	world.clear();         // Must be cleared before the renderer so that the descriptor sets are freed before their pools
+	input.reset();
+	loader.reset();
+	renderer.reset();
+	clear_swapchains();
+
 	imgui_ctx.reset();
 	swapchain_imgui = xr::swapchain();
 }
@@ -547,6 +664,78 @@ std::shared_ptr<shard_accumulator::blit_handle> scenes::stream::accumulator_imag
 		return *it;
 	}
 	return nullptr;
+}
+
+void scenes::stream::update_gui_position(xr::spaces controller)
+{
+	auto aim = application::locate_controller(
+	        application::space(controller),
+	        application::space(xr::spaces::view),
+	        predicted_display_time);
+
+	if (not aim)
+		return;
+
+	auto [offset_position, offset_orientation] = input->offset[controller];
+
+	auto head_controller_position = aim->first + glm::mat3_cast(aim->second * offset_orientation) * offset_position;
+	auto head_controller_orientation = aim->second * offset_orientation;
+	auto head_controller_direction = -glm::column(glm::mat3_cast(head_controller_orientation), 2);
+
+	if (not recentering_context)
+	{
+		// First frame of recentering: get the GUI position relative to the controller
+
+		// Compute the intersection of the ray with the GUI
+		auto gui_controller_direction = glm::conjugate(head_gui_orientation) * head_controller_direction;
+		auto gui_controller_position = glm::conjugate(head_gui_orientation) * (head_controller_position - head_gui_position);
+
+		float lambda = -gui_controller_position.z / gui_controller_direction.z;
+		auto gui_intersection = gui_controller_position + lambda * gui_controller_direction;
+
+		auto viewport_size = imgui_ctx->layers()[0].size;
+		if (std::isnan(lambda) or lambda < 0 or
+		    std::abs(gui_intersection.x) > viewport_size.x / 2 or
+		    std::abs(gui_intersection.y) > viewport_size.y / 2)
+		{
+			// Reset the relative GUI position if the ray does not intersect
+			recentering_context.emplace(controller, glm::vec3{0, 0, -1}, glm::quat{1, 0, 0, 0});
+		}
+		else
+		{
+			glm::vec3 controller_gui_position = glm::conjugate(head_controller_orientation) * (head_gui_position - head_controller_position);
+			glm::quat controller_gui_orientation = glm::conjugate(head_controller_orientation) * head_gui_orientation;
+
+			recentering_context.emplace(controller, controller_gui_position, controller_gui_orientation);
+		}
+	}
+	else
+	{
+		// Subsequent frames of recentering: keep the GUI locked to the controller
+		auto [_, controller_gui_position, controller_gui_orientation] = *recentering_context;
+
+		head_gui_position = head_controller_position + head_controller_orientation * controller_gui_position;
+		head_gui_orientation = head_controller_orientation * controller_gui_orientation;
+	}
+}
+
+bool scenes::stream::is_gui_interactable() const
+{
+	switch (gui_status)
+	{
+		case gui_status::stats:
+		case gui_status::settings:
+		case gui_status::foveation_settings:
+			return true;
+
+		case gui_status::hidden:
+		case gui_status::overlay_only:
+		case gui_status::compact:
+			return false;
+	}
+
+	assert(false);
+	__builtin_unreachable();
 }
 
 void scenes::stream::render(const XrFrameState & frame_state)
@@ -737,8 +926,6 @@ void scenes::stream::render(const XrFrameState & frame_state)
 
 	session.begin_frame();
 
-	int image_index = swapchain.acquire();
-	swapchain.wait();
 	std::array<int, view_count> image_indices;
 
 	command_buffer.reset();
@@ -878,15 +1065,43 @@ void scenes::stream::render(const XrFrameState & frame_state)
 
 	command_buffer.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, *query_pool, 1);
 
-	// defoveate the image
-	auto extents = reprojector->reproject(command_buffer, foveation, image_index);
-	for (size_t i = 0; i < view_count; ++i)
+	XrExtent2Di extents[view_count];
 	{
-		extents[i] = {
-		        .width = std::min(extents[i].width, swapchain.width()),
-		        .height = std::min(extents[i].height, swapchain.height()),
-		};
+		int32_t max_width = 0;
+		int32_t max_height = 0;
+		for (size_t i = 0; i < view_count; ++i)
+		{
+			extents[i] = reprojector->defoveated_size(foveation[i]);
+			max_width = std::max(max_width, extents[i].width);
+			max_height = std::max(max_height, extents[i].height);
+		}
+		// If the defoveated image is larger than the swapchain, try to reallocate one
+		if (swapchain.width() < max_width or swapchain.height() < max_height)
+		{
+			try
+			{
+				spdlog::info("Recreating swapchain, from {}x{} to {}x{}",
+				             swapchain.width(),
+				             swapchain.height(),
+				             max_width,
+				             max_height);
+				setup_reprojection_swapchain(max_width, max_height);
+			}
+			catch (std::exception & e)
+			{
+				spdlog::warn("failed to increase swapchain size");
+				for (size_t i = 0; i < view_count; ++i)
+				{
+					extents[i].width = std::min(extents[i].width, swapchain.width());
+					extents[i].height = std::min(extents[i].height, swapchain.height());
+				}
+			}
+		}
 	}
+	// defoveate the image
+	int image_index = swapchain.acquire();
+	swapchain.wait();
+	reprojector->reproject(command_buffer, foveation, image_index);
 
 	command_buffer.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, *query_pool, 2);
 
@@ -894,31 +1109,18 @@ void scenes::stream::render(const XrFrameState & frame_state)
 	vk::SubmitInfo submit_info;
 	submit_info.setCommandBuffers(*command_buffer);
 	queue.submit(submit_info, *fence);
+	swapchain.release();
 
-	XrEnvironmentBlendMode blend_mode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-	std::vector<XrCompositionLayerBaseHeader *> layers_base;
 	std::vector<XrCompositionLayerProjectionView> layer_view(view_count);
 
 	if (use_alpha)
-	{
 		session.enable_passthrough(system);
-		std::visit(
-		        utils::overloaded{
-		                [&](std::monostate &) {
-			                assert(false);
-		                },
-		                [&](xr::passthrough_alpha_blend & p) {
-			                blend_mode = XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND;
-		                },
-		                [&](auto & p) {
-			                layers_base.push_back(p.layer());
-		                }},
-		        session.get_passthrough());
-	}
 	else
 		session.disable_passthrough();
 
-	swapchain.release();
+	render_start(use_alpha, frame_state.predictedDisplayTime);
+
+	// Add the layer with the streamed content
 	for (uint32_t view = 0; view < view_count; view++)
 	{
 		layer_view[view] =
@@ -937,45 +1139,47 @@ void scenes::stream::render(const XrFrameState & frame_state)
 		                },
 		        };
 	}
+	add_projection_layer(
+	        XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT,
+	        application::space(xr::spaces::world),
+	        std::move(layer_view));
 
-	XrCompositionLayerProjection layer{
-	        .type = XR_TYPE_COMPOSITION_LAYER_PROJECTION,
-	        .layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT,
-	        .space = application::space(xr::spaces::world),
-	        .viewCount = (uint32_t)layer_view.size(),
-	        .views = layer_view.data(),
-	};
-
-	XrCompositionLayerSettingsFB settings;
-	const configuration::openxr_post_processing_settings openxr_post_processing = application::get_config().openxr_post_processing;
-	if ((openxr_post_processing.sharpening | openxr_post_processing.super_sampling) > 0)
+	if (composition_layer_color_scale_bias_supported)
 	{
-		settings = {
-		        .type = XR_TYPE_COMPOSITION_LAYER_SETTINGS_FB,
-		        .layerFlags = openxr_post_processing.sharpening | openxr_post_processing.super_sampling,
-		};
-		layer.next = &settings;
+		switch (gui_status)
+		{
+			case gui_status::hidden:
+			case gui_status::foveation_settings:
+			case gui_status::compact:
+			case gui_status::overlay_only:
+				dimming = dimming - frame_state.predictedDisplayPeriod / (1e9 * constants::stream::fade_duration);
+				break;
+			case gui_status::stats:
+			case gui_status::settings:
+				dimming = dimming + frame_state.predictedDisplayPeriod / (1e9 * constants::stream::fade_duration);
+				break;
+		}
+
+		dimming = std::clamp<float>(dimming, 0, 1);
+		float x = dimming * dimming * (3 - 2 * dimming); // Easing function
+
+		float scale = std::lerp(1, constants::stream::dimming_scale, x);
+		float bias = std::lerp(0, constants::stream::dimming_bias, x);
+
+		set_color_scale_bias({scale, scale, scale, 1}, {bias, bias, bias, 0});
 	}
 
-	std::vector<XrCompositionLayerQuad> imgui_layers;
-	if (imgui_ctx)
-	{
-		accumulate_metrics(frame_state.predictedDisplayTime, current_blit_handles, timestamps);
-		if (plots_visible)
-			imgui_layers = plot_performance_metrics(frame_state.predictedDisplayTime);
-	}
+	if (const configuration::openxr_post_processing_settings openxr_post_processing = application::get_config().openxr_post_processing;
+	    (openxr_post_processing.sharpening | openxr_post_processing.super_sampling) > 0)
+		set_layer_settings(openxr_post_processing.sharpening | openxr_post_processing.super_sampling);
 
-	layers_base.push_back(reinterpret_cast<XrCompositionLayerBaseHeader *>(&layer));
+	accumulate_metrics(frame_state.predictedDisplayTime, current_blit_handles, timestamps);
 
-	if (imgui_ctx and plots_visible)
-	{
-		for (auto & layer: imgui_layers)
-			layers_base.push_back(reinterpret_cast<XrCompositionLayerBaseHeader *>(&layer));
-	}
+	draw_gui(frame_state.predictedDisplayTime, frame_state.predictedDisplayPeriod);
 
 	try
 	{
-		session.end_frame(frame_state.predictedDisplayTime, layers_base, blend_mode);
+		render_end();
 	}
 	catch (std::system_error & e)
 	{
@@ -1031,7 +1235,22 @@ void scenes::stream::render(const XrFrameState & frame_state)
 		CHECK_XR(xrGetActionStateBoolean(session, &get_info, &state_2));
 
 		if (state_1.currentState and state_2.currentState and (state_1.changedSinceLastSync or state_2.changedSinceLastSync))
-			plots_visible = not plots_visible;
+		{
+			switch (gui_status)
+			{
+				case gui_status::hidden:
+				case gui_status::compact:
+				case gui_status::overlay_only:
+					gui_status = gui_status::stats;
+					break;
+
+				case gui_status::stats:
+				case gui_status::settings:
+				case gui_status::foveation_settings:
+					gui_status = gui_status::hidden;
+					break;
+			}
+		}
 	}
 
 	query_pool_filled = true;
@@ -1173,16 +1392,13 @@ void scenes::stream::setup(const to_headset::video_stream_description & descript
 	}
 }
 
-void scenes::stream::setup_reprojection_swapchain()
+void scenes::stream::setup_reprojection_swapchain(uint32_t swapchain_width, uint32_t swapchain_height)
 {
-	std::unique_lock lock(decoder_mutex);
 	device.waitIdle();
 	session.set_refresh_rate(video_stream_description->fps);
 
 	const uint32_t video_width = video_stream_description->width / view_count;
 	const uint32_t video_height = video_stream_description->height;
-	uint32_t swapchain_width = video_stream_description->defoveated_width / view_count;
-	uint32_t swapchain_height = video_stream_description->defoveated_height;
 
 	const configuration::sgsr_settings sgsr = application::get_config().sgsr;
 	if (sgsr.enabled)
@@ -1225,40 +1441,68 @@ scene::meta & scenes::stream::get_meta_scene()
 	static meta m{
 	        .name = "Stream",
 	        .actions = {
+	                {"left_aim", XR_ACTION_TYPE_POSE_INPUT},
+	                {"left_trigger", XR_ACTION_TYPE_FLOAT_INPUT},
+	                {"left_squeeze", XR_ACTION_TYPE_FLOAT_INPUT},
+	                {"left_scroll", XR_ACTION_TYPE_VECTOR2F_INPUT},
+	                {"left_haptic", XR_ACTION_TYPE_VIBRATION_OUTPUT},
+	                {"right_aim", XR_ACTION_TYPE_POSE_INPUT},
+	                {"right_trigger", XR_ACTION_TYPE_FLOAT_INPUT},
+	                {"right_squeeze", XR_ACTION_TYPE_FLOAT_INPUT},
+	                {"right_scroll", XR_ACTION_TYPE_VECTOR2F_INPUT},
+	                {"right_haptic", XR_ACTION_TYPE_VIBRATION_OUTPUT},
+
 	                {"plots_toggle_1", XR_ACTION_TYPE_BOOLEAN_INPUT},
 	                {"plots_toggle_2", XR_ACTION_TYPE_BOOLEAN_INPUT},
+
+	                {"recenter_left", XR_ACTION_TYPE_BOOLEAN_INPUT},
+	                {"recenter_right", XR_ACTION_TYPE_BOOLEAN_INPUT},
+
+	                {"foveation_pitch", XR_ACTION_TYPE_FLOAT_INPUT},
+	                {"foveation_distance", XR_ACTION_TYPE_FLOAT_INPUT},
+	                {"foveation_ok", XR_ACTION_TYPE_BOOLEAN_INPUT},
+	                {"foveation_cancel", XR_ACTION_TYPE_BOOLEAN_INPUT},
 	        },
 	        .bindings = {
 	                suggested_binding{
-	                        "/interaction_profiles/oculus/touch_controller",
 	                        {
+	                                "/interaction_profiles/oculus/touch_controller",
+	                                "/interaction_profiles/facebook/touch_controller_pro",
+	                                "/interaction_profiles/meta/touch_pro_controller",
+	                                "/interaction_profiles/meta/touch_controller_plus",
+	                                "/interaction_profiles/meta/touch_plus_controller",
+	                                "/interaction_profiles/bytedance/pico_neo3_controller",
+	                                "/interaction_profiles/bytedance/pico4_controller",
+	                                "/interaction_profiles/bytedance/pico4s_controller",
+	                                "/interaction_profiles/htc/vive_focus3_controller",
+	                        },
+	                        {
+	                                {"left_aim", "/user/hand/left/input/aim/pose"},
+	                                {"left_trigger", "/user/hand/left/input/trigger/value"},
+	                                {"left_squeeze", "/user/hand/left/input/squeeze/value"},
+	                                {"left_scroll", "/user/hand/left/input/thumbstick"},
+	                                {"left_haptic", "/user/hand/left/output/haptic"},
+	                                {"right_aim", "/user/hand/right/input/aim/pose"},
+	                                {"right_trigger", "/user/hand/right/input/trigger/value"},
+	                                {"right_squeeze", "/user/hand/right/input/squeeze/value"},
+	                                {"right_scroll", "/user/hand/right/input/thumbstick"},
+	                                {"right_haptic", "/user/hand/right/output/haptic"},
+
+	                                {"recenter_left", "/user/hand/left/input/squeeze/value"},
+	                                {"recenter_right", "/user/hand/right/input/squeeze/value"},
+	                                {"foveation_pitch", "/user/hand/right/input/thumbstick/y"},
+	                                {"foveation_distance", "/user/hand/left/input/thumbstick/y"},
+	                                {"foveation_ok", "/user/hand/right/input/a/click"},
+	                                {"foveation_cancel", "/user/hand/right/input/b/click"},
+
 	                                {"plots_toggle_1", "/user/hand/left/input/thumbstick/click"},
 	                                {"plots_toggle_2", "/user/hand/right/input/thumbstick/click"},
 	                        },
 	                },
 	                suggested_binding{
-	                        "/interaction_profiles/bytedance/pico_neo3_controller",
 	                        {
-	                                {"plots_toggle_1", "/user/hand/left/input/thumbstick/click"},
-	                                {"plots_toggle_2", "/user/hand/right/input/thumbstick/click"},
+	                                "/interaction_profiles/khr/simple_controller",
 	                        },
-	                },
-	                suggested_binding{
-	                        "/interaction_profiles/bytedance/pico4_controller",
-	                        {
-	                                {"plots_toggle_1", "/user/hand/left/input/thumbstick/click"},
-	                                {"plots_toggle_2", "/user/hand/right/input/thumbstick/click"},
-	                        },
-	                },
-	                suggested_binding{
-	                        "/interaction_profiles/htc/vive_focus3_controller",
-	                        {
-	                                {"plots_toggle_1", "/user/hand/left/input/thumbstick/click"},
-	                                {"plots_toggle_2", "/user/hand/right/input/thumbstick/click"},
-	                        },
-	                },
-	                suggested_binding{
-	                        "/interaction_profiles/khr/simple_controller",
 	                        {},
 	                },
 	        },
@@ -1285,6 +1529,22 @@ void scenes::stream::on_xr_event(const xr::event & event)
 			network_session->send_control(from_headset::visibility_mask_changed{
 			        .data = get_visibility_mask(instance, session, event.visibility_mask_changed.viewIndex),
 			        .view_index = uint8_t(event.visibility_mask_changed.viewIndex),
+			});
+			break;
+		case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED:
+			// Override session state if the GUI is interactable
+			if (event.state_changed.state == XR_SESSION_STATE_FOCUSED and is_gui_interactable())
+				network_session->send_control(from_headset::session_state_changed{
+				        .state = XR_SESSION_STATE_VISIBLE,
+				});
+			else
+				network_session->send_control(from_headset::session_state_changed{
+				        .state = event.state_changed.state,
+				});
+			break;
+		case XR_TYPE_EVENT_DATA_USER_PRESENCE_CHANGED_EXT:
+			network_session->send_control(from_headset::user_presence_changed{
+			        .present = (bool)event.user_presence_changed.isUserPresent,
 			});
 			break;
 		case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED:

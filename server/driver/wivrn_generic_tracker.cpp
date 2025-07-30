@@ -126,27 +126,14 @@ wivrn_generic_tracker::wivrn_generic_tracker(int index, xrt_device * hmd, wivrn_
 {
 	auto unique_name = std::format("WiVRn Generic Tracker #{}", index + 1);
 	strlcpy(str, unique_name.c_str(), std::size(str));
-	strlcpy(serial, unique_name.c_str(), std::size(serial));
+	auto unique_serial = std::format("wivrn-{}", index + 1);
+	strlcpy(serial, unique_serial.c_str(), std::size(serial));
 
 	pose_input.name = XRT_INPUT_GENERIC_TRACKER_POSE;
 	pose_input.active = true;
 
 	inputs = &pose_input;
 	input_count = 1;
-}
-
-#define XRT_INPUT_NAME_CASE(NAME, VALUE) \
-	case VALUE:                      \
-		return #NAME;
-
-const char * input_name_str(xrt_input_name name)
-{
-	switch (name)
-	{
-		XRT_INPUT_LIST(XRT_INPUT_NAME_CASE)
-		default:
-			return "Unknown";
-	}
 }
 
 xrt_result_t wivrn_generic_tracker::update_inputs()
@@ -166,7 +153,7 @@ xrt_result_t wivrn_generic_tracker::get_tracked_pose(xrt_input_name name, int64_
 		return XRT_SUCCESS;
 	}
 
-	U_LOG_D("Unknown input name %s", input_name_str(name));
+	U_LOG_XDEV_UNSUPPORTED_INPUT(this, u_log_get_global_level(), name);
 	return XRT_ERROR_NOT_IMPLEMENTED;
 }
 

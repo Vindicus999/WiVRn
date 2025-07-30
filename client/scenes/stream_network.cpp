@@ -19,9 +19,15 @@
 
 #include "stream.h"
 
+#ifdef __ANDROID__
 #include "application.h"
+#endif
+
 #include "utils/named_thread.h"
+
+#include <algorithm>
 #include <spdlog/spdlog.h>
+#include <uni_algo/case.h>
 
 void scenes::stream::process_packets()
 {
@@ -98,4 +104,20 @@ void scenes::stream::send_feedback(const wivrn::from_headset::feedback & feedbac
 	{
 		spdlog::warn("Exception while sending feedback packet: {}", e.what());
 	}
+}
+
+void scenes::stream::operator()(to_headset::application_list && apps)
+{
+	std::ranges::sort(apps.applications, [](auto & l, auto & r) {
+		return una::casesens::collate_utf8(l.name, r.name) < 0;
+	});
+	auto locked = applications.lock();
+	*locked = std::move(apps);
+}
+
+void scenes::stream::start_application(std::string appid)
+{
+	network_session->send_control(wivrn::from_headset::start_app{
+	        .app_id = std::move(appid),
+	});
 }

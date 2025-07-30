@@ -62,7 +62,12 @@ void render_distortion_images_fini(struct render_resources * r)
 	DF(Memory, r->distortion.device_memory);
 }
 
-static double foveate(double a, double b, double λ, double c, double x)
+// a, b: parameters computed by solve_foveation
+// λ: pixel ratio between full size and foveated image (in range ]0,1[)
+// c: coordinates in -1,1 range of the full size image where pixel ratio must be 1:1
+// x: coordinates in -1,1 range of the foveated image
+// result: full size image coordinates in -1,1 range
+static double defoveate(double a, double b, double λ, double c, double x)
 {
 	// In order to save encoding, transmit and decoding time, only a portion of the image is encoded in full resolution.
 	// on each axis, foveated coordinates are defined by the following formula.
@@ -137,8 +142,16 @@ static std::tuple<float, float> solve_foveation(float λ, float c)
 	return {a, b(a)};
 }
 
+static bool is_zero_quat(xrt_quat q)
+{
+	return q.x == 0 and q.y == 0 and q.z == 0 and q.w == 0;
+}
+
 static xrt_vec2 yaw_pitch(xrt_quat q)
 {
+	if (is_zero_quat(q))
+		return xrt_vec2{};
+
 	float sine_theta = std::clamp(-2.0f * (q.y * q.z - q.w * q.x), -1.0f, 1.0f);
 
 	float pitch = std::asin(sine_theta);
@@ -157,17 +170,23 @@ static xrt_vec2 yaw_pitch(xrt_quat q)
 
 static float angles_to_center(float e, float l, float r)
 {
-	return (e - l) / (r - l) * 2 - 1;
+	e = tan(e);
+	l = tan(l);
+	r = tan(r);
+	float res = std::clamp((e - l) / (r - l) * 2 - 1, -1.f, 1.f);
+	// If the center isn't in the FoV, fallback to middle of image
+	if (std::isnan(res))
+		return 0;
+	return res;
 }
 
-static float convergence_angle(float eye_x, float gaze_yaw)
+static float convergence_angle(float distance, float eye_x, float gaze_yaw)
 {
-	const float c = 0.5; // simutaled convergence distance
-	auto b = c * std::sin(gaze_yaw) - eye_x;
-	return std::asin(b / c);
+	auto b = distance * std::sin(gaze_yaw) - eye_x;
+	return std::asin(b / distance);
 }
 
-void fill_param_2d(
+static void fill_param_2d(
         float c,
         size_t foveated_dim,
         size_t source_dim,
@@ -182,7 +201,7 @@ void fill_param_2d(
 	for (size_t i = 1; i < foveated_dim; ++i)
 	{
 		double u = (i * 2.) / foveated_dim - 1;
-		auto f = foveate(a, b, scale, c, u);
+		auto f = defoveate(a, b, scale, c, u);
 		uint16_t n = std::clamp<uint16_t>((f * 0.5 + 0.5) * source_dim + 0.5, 0, source_dim);
 		assert(n > last);
 		size_t count = n - last;
@@ -209,6 +228,44 @@ void fill_param_2d(
 	out.resize(count * 2 - 1);
 }
 
+static float get_angle_offset()
+{
+	if (const char * cvar = std::getenv("WIVRN_FOVEATION_OFFSET"))
+	{
+		std::string_view var(cvar);
+		float res;
+		auto e = std::from_chars(var.begin(), var.end(), res);
+		if (e.ec == std::errc())
+		{
+			// No clamping, we don’t know the range
+			// of actual values for all headsets for sure.
+			return -res * M_PI / 180;
+		}
+		else
+			U_LOG_W("Malformed WIVRN_FOVEATION_OFFSET, must be a number (angle in °)");
+	}
+	// normal sight line is between 10° and 15° below horizontal
+	// https://apps.dtic.mil/sti/tr/pdf/AD0758339.pdf pages 393-394
+	// testing shows 10° looks better
+	return 10 * M_PI / 180;
+}
+
+static float get_convergence_distance()
+{
+	if (const char * cvar = std::getenv("WIVRN_FOVEATION_DISTANCE"))
+	{
+		std::string_view var(cvar);
+		float res;
+		auto e = std::from_chars(var.begin(), var.end(), res);
+		if (e.ec == std::errc())
+			return std::max(res, 0.05f);
+		else
+			U_LOG_W("Malformed WIVRN_FOVEATION_DISTANCE, must be a number (distance in meters)");
+	}
+	// 1m by default
+	return 1;
+}
+
 namespace wivrn
 {
 
@@ -216,43 +273,37 @@ void wivrn_foveation::compute_params(
         xrt_rect src[2],
         const xrt_fov fovs[2])
 {
-	std::lock_guard lock(mutex);
+	auto e = yaw_pitch(gaze);
 
-	xrt_vec2 tan_center[2]{};
-	if (gaze.x != 0 or gaze.y != 0 or gaze.z != 0 or gaze.w != 0)
-	{
-		auto e = yaw_pitch(gaze);
-		for (size_t i = 0; i < 2; ++i)
-		{
-			xrt_quat view_quat{
-			        .x = views[i].pose.orientation.x,
-			        .y = views[i].pose.orientation.y,
-			        .z = views[i].pose.orientation.z,
-			        .w = views[i].pose.orientation.w};
-			auto view = yaw_pitch(view_quat);
+	if (manual_foveation.enabled)
+		e.y = manual_foveation.pitch;
 
-			auto angle_x = convergence_angle(views[i].pose.position.x, e.x);
-			tan_center[i].x = angles_to_center(view.x + angle_x, views[i].fov.angleLeft, views[i].fov.angleRight);
-			tan_center[i].y = angles_to_center(-view.y - e.y, views[i].fov.angleUp, views[i].fov.angleDown);
-		}
-	}
-	else
-	{
-		for (size_t i = 0; i < 2; ++i)
-			tan_center[i].x = angles_to_center(0, fovs[i].angle_left, fovs[i].angle_right);
-	}
-
-	for (int i = 0; i < 2; ++i)
+	for (size_t i = 0; i < 2; ++i)
 	{
 		const auto & fov = fovs[i];
-		if (foveated_width < src[i].extent.w)
-			fill_param_2d(tan_center[i].x, foveated_width, src[i].extent.w, params[i].x);
+
+		size_t extent_w = std::abs(src[i].extent.w);
+		if (foveated_width < extent_w)
+		{
+			auto distance = manual_foveation.enabled ? manual_foveation.distance : convergence_distance;
+			auto angle_x = convergence_angle(distance, eye_x[i], e.x);
+			auto center = angles_to_center(angle_x, fov.angle_left, fov.angle_right);
+			fill_param_2d(center, foveated_width, extent_w, params[i].x);
+		}
 		else
 			params[i].x = {uint16_t(src[i].extent.w)};
-		if (foveated_height < src[i].extent.h)
+
+		size_t extent_h = std::abs(src[i].extent.h);
+		if (foveated_height < extent_h)
 		{
-			auto offset_y = (views[i].fov.angleDown + views[i].fov.angleUp) / 2;
-			fill_param_2d(tan_center[i].y + offset_y, foveated_height, src[i].extent.h, params[i].y);
+			auto angle_y = e.y;
+			if (is_zero_quat(gaze) and not manual_foveation.enabled)
+			{
+				// Natural gaze is not straight forward, adjust the angle
+				angle_y += angle_offset;
+			}
+			auto center = angles_to_center(-angle_y, fov.angle_up, fov.angle_down);
+			fill_param_2d(center, foveated_height, extent_h, params[i].y);
 		}
 		else
 			params[i].y = {uint16_t(src[i].extent.h)};
@@ -262,6 +313,8 @@ void wivrn_foveation::compute_params(
 wivrn_foveation::wivrn_foveation(wivrn_vk_bundle & bundle, const xrt_hmd_parts & hmd) :
         foveated_width(hmd.screens[0].w_pixels / 2),
         foveated_height(hmd.screens[0].h_pixels),
+        angle_offset(get_angle_offset()),
+        convergence_distance(get_convergence_distance()),
         command_pool(bundle.device, vk::CommandPoolCreateInfo{.queueFamilyIndex = bundle.queue_family_index}),
         cmd(std::move(bundle.device.allocateCommandBuffers({
                 .commandPool = *command_pool,
@@ -289,7 +342,8 @@ void wivrn_foveation::update_tracking(const from_headset::tracking & tracking, c
 
 	const uint8_t orientation_ok = from_headset::tracking::orientation_valid | from_headset::tracking::orientation_tracked;
 
-	views = tracking.views;
+	eye_x[0] = tracking.views[0].pose.position.x;
+	eye_x[1] = tracking.views[1].pose.position.x;
 
 	std::optional<xrt_quat> head;
 
@@ -322,6 +376,12 @@ void wivrn_foveation::update_tracking(const from_headset::tracking & tracking, c
 	}
 }
 
+void wivrn_foveation::update_foveation_center_override(const from_headset::override_foveation_center & center)
+{
+	std::lock_guard lock(mutex);
+	manual_foveation = center;
+}
+
 std::array<to_headset::foveation_parameter, 2> wivrn_foveation::get_parameters()
 {
 	std::lock_guard lock(mutex);
@@ -346,6 +406,7 @@ static void fill_ubo(
 		const int n_source = std::abs(n_ratio - int(i)) + 1;
 		for (size_t j = 0; j < n; ++j)
 		{
+			assert(count > 0);
 			if (flip)
 				ubo[1] = ubo[0] - n_source;
 			else
@@ -364,11 +425,11 @@ static bool operator==(const T & a, const T & b)
 	static_assert(std::has_unique_object_representations_v<T>);
 	return std::memcmp(&a, &b, sizeof(T)) == 0;
 }
-bool operator==(const xrt_quat & a, const xrt_quat & b)
+static bool operator==(const xrt_quat & a, const xrt_quat & b)
 {
 	return a.x == b.x and a.y == b.y and a.z == b.z and a.w == b.w;
 }
-bool operator==(const xrt_fov & a, const xrt_fov & b)
+static bool operator==(const xrt_fov & a, const xrt_fov & b)
 {
 	return a.angle_left == b.angle_left and a.angle_right == b.angle_right and a.angle_up == b.angle_up and a.angle_down == b.angle_down;
 }
@@ -391,18 +452,28 @@ vk::CommandBuffer wivrn_foveation::update_foveation_buffer(
 	}
 
 	// Check if the last value is still valid
-	if (last.flip_y == flip_y and last.src[0] == source[0] and last.src[1] == source[1] and last.fovs[0] == fovs[0] and last.fovs[1] == fovs[1])
-	{
-		std::lock_guard lock(mutex);
-		if (last.gaze == gaze)
-			return nullptr;
-	}
+	std::lock_guard lock(mutex);
+	if (last.flip_y == flip_y                                                             //
+	    and last.src[0] == source[0]                                                      //
+	    and last.src[1] == source[1]                                                      //
+	    and last.fovs[0] == fovs[0]                                                       //
+	    and last.fovs[1] == fovs[1]                                                       //
+	    and (last.gaze == gaze or manual_foveation.enabled)                               // Ignore the gaze if foveation center is overridden
+	    and std::abs(last.eye_x[0] - eye_x[0]) < 0.0005                                   //
+	    and std::abs(last.eye_x[1] - eye_x[1]) < 0.0005                                   //
+	    and last.manual_foveation.enabled == manual_foveation.enabled                     //
+	    and std::abs(last.manual_foveation.pitch - manual_foveation.pitch) < 0.0005       //
+	    and std::abs(last.manual_foveation.distance - manual_foveation.distance) < 0.0005 //
+	)
+		return nullptr;
 
 	last = {
 	        .gaze = gaze,
 	        .flip_y = flip_y,
 	        .src = {source[0], source[1]},
 	        .fovs = {fovs[0], fovs[1]},
+	        .eye_x = {eye_x[0], eye_x[1]},
+	        .manual_foveation = manual_foveation,
 	};
 
 	compute_params(source, fovs);
@@ -410,8 +481,35 @@ vk::CommandBuffer wivrn_foveation::update_foveation_buffer(
 	auto ubo = (render_compute_distortion_foveation_data *)host_buffer.map();
 	for (size_t view = 0; view < 2; ++view)
 	{
-		fill_ubo(ubo->x + view * RENDER_FOVEATION_BUFFER_DIMENSIONS, params[view].x, false, source[view].offset.w, source[view].extent.w, foveated_width);
-		fill_ubo(ubo->y + view * RENDER_FOVEATION_BUFFER_DIMENSIONS, params[view].y, flip_y, source[view].offset.h, source[view].extent.h, foveated_height);
+		bool flip = false;
+		size_t offset, extent;
+
+		if (source[view].extent.w < 0)
+		{
+			flip = true;
+			offset = source[view].offset.w + source[view].extent.w;
+			extent = -source[view].extent.w;
+		}
+		else
+		{
+			offset = source[view].offset.w;
+			extent = source[view].extent.w;
+		}
+		fill_ubo(ubo->x + view * RENDER_FOVEATION_BUFFER_DIMENSIONS, params[view].x, flip, offset, extent, foveated_width);
+
+		if (source[view].extent.h < 0)
+		{
+			flip = not flip_y;
+			offset = source[view].offset.h + source[view].extent.h;
+			extent = -source[view].extent.h;
+		}
+		else
+		{
+			flip = flip_y;
+			offset = source[view].offset.h;
+			extent = source[view].extent.h;
+		}
+		fill_ubo(ubo->y + view * RENDER_FOVEATION_BUFFER_DIMENSIONS, params[view].y, flip, offset, extent, foveated_height);
 	}
 	return *cmd;
 }

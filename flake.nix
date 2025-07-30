@@ -37,7 +37,7 @@
               # Keep in sync with CMakeLists.txt monado rev
               rev = builtins.readFile ./monado-rev;
               # Nix will output the correct hash when it doesn't match
-              hash = "sha256-+PiWxnvMXaSFc+67r17GBRXo7kbjikSElawNMJCydrk=";
+              hash = "sha256-BiqNLYTQseymHgkZ3RLHOesxi6qaf4L0j8dgpgaG7LI=";
             };
           };
 
@@ -56,7 +56,29 @@
           ];
         }));
       in {
-        packages.default = package;
+        packages = {
+          default = package;
+          dissector = package.overrideAttrs (oldAttrs: {
+            pname = "wivrn-dissector";
+            cmakeFlags = (lib.filter (flag: !(lib.hasPrefix "-DWIVRN_BUILD" flag)) oldAttrs.cmakeFlags) ++ [
+              (lib.cmakeBool "WIVRN_BUILD_CLIENT" false)
+              (lib.cmakeBool "WIVRN_BUILD_SERVER" false)
+              (lib.cmakeBool "WIVRN_BUILD_DASHBOARD" false)
+              (lib.cmakeBool "WIVRN_BUILD_WIVRNCTL" false)
+              (lib.cmakeBool "WIVRN_BUILD_DISSECTOR" true)
+            ];
+            buildInputs = oldAttrs.buildInputs ++ [
+              (pkgs.symlinkJoin {
+                name = "wireshark-dev-out-combined";
+                paths = [
+                  pkgs.wireshark.out
+                  pkgs.wireshark.dev
+                ];
+              })
+            ];
+            preFixup = null;
+          });
+        };
         devShells.default = package.overrideAttrs (oldAttrs: {
           nativeBuildInputs = oldAttrs.nativeBuildInputs ++ devTools;
         });

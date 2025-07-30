@@ -29,6 +29,7 @@
 
 #include <drm_fourcc.h>
 #include <filesystem>
+#include <libavutil/pixfmt.h>
 #include <optional>
 #include <unordered_map>
 #include <vulkan/vulkan_raii.hpp>
@@ -124,9 +125,23 @@ std::unordered_map<uint32_t, vk::Format> vulkan_drm_format_map = {
         {DRM_FORMAT_XBGR8888, vk::Format::eR8G8B8A8Unorm},
 };
 
-vk::Format drm_to_vulkan_fmt(uint32_t drm_fourcc)
+std::unordered_map<uint32_t, vk::Format> vulkan_drm_format_map_10bit = {
+        {DRM_FORMAT_R8, vk::Format::eR10X6UnormPack16},
+        {DRM_FORMAT_R10, vk::Format::eR10X6UnormPack16},
+        {DRM_FORMAT_R16, vk::Format::eR10X6UnormPack16},
+        {DRM_FORMAT_GR88, vk::Format::eR10X6G10X6Unorm2Pack16},
+        {DRM_FORMAT_RG88, vk::Format::eR10X6G10X6Unorm2Pack16},
+        {DRM_FORMAT_GR1616, vk::Format::eR10X6G10X6Unorm2Pack16},
+        {DRM_FORMAT_RG1616, vk::Format::eR10X6G10X6Unorm2Pack16},
+};
+
+/// bit_depth not checked, valid values are 8 and 10
+vk::Format drm_to_vulkan_fmt(uint32_t drm_fourcc, int bit_depth)
 {
-	return vulkan_drm_format_map.at(drm_fourcc);
+	if (bit_depth == 10)
+		return vulkan_drm_format_map_10bit.at(drm_fourcc);
+	else
+		return vulkan_drm_format_map.at(drm_fourcc);
 }
 
 } // namespace
@@ -151,9 +166,28 @@ video_encoder_va::video_encoder_va(wivrn_vk_bundle & vk,
 	settings.video_width += settings.video_width % 2;
 	settings.video_height += settings.video_height % 2;
 
-	auto vaapi_frame_ctx = make_hwframe_ctx(vaapi_hw_ctx.get(), AV_PIX_FMT_VAAPI, AV_PIX_FMT_NV12, settings.video_width, settings.video_height);
+	AVPixelFormat sw_format;
 
-	assert(av_pix_fmt_count_planes(AV_PIX_FMT_NV12) == 2);
+	switch (settings.codec)
+	{
+		case video_codec::av1:
+		case video_codec::h265:
+			if (settings.bit_depth == 10)
+				sw_format = AV_PIX_FMT_P010;
+			else if (settings.bit_depth == 8)
+				sw_format = AV_PIX_FMT_NV12;
+			else
+				throw std::runtime_error("selected codec only supports 10-bit or 8-bit encoding");
+			break;
+		default:
+			if (settings.bit_depth != 8)
+				throw std::runtime_error("selected codec only supports 8-bit encoding");
+			sw_format = AV_PIX_FMT_NV12;
+			break;
+	}
+
+	auto vaapi_frame_ctx = make_hwframe_ctx(vaapi_hw_ctx.get(), AV_PIX_FMT_VAAPI, sw_format, settings.video_width, settings.video_height);
+	assert(av_pix_fmt_count_planes(sw_format) == 2);
 
 	rect = vk::Rect2D{
 	        .offset = {
@@ -199,7 +233,8 @@ video_encoder_va::video_encoder_va(wivrn_vk_bundle & vk,
 			av_dict_set(&opts, "rc_mode", "CBR", 0);
 			break;
 		case video_codec::h265:
-			encoder_ctx->profile = FF_PROFILE_HEVC_MAIN;
+			// bit_depth is either 8 or 10 here
+			encoder_ctx->profile = settings.bit_depth == 10 ? FF_PROFILE_HEVC_MAIN_10 : FF_PROFILE_HEVC_MAIN;
 			break;
 		case video_codec::av1:
 			encoder_ctx->profile = FF_PROFILE_AV1_MAIN;
@@ -282,7 +317,7 @@ video_encoder_va::video_encoder_va(wivrn_vk_bundle & vk,
 			vk::StructureChain image_create_info{
 			        vk::ImageCreateInfo{
 			                .imageType = vk::ImageType::e2D,
-			                .format = drm_to_vulkan_fmt(desc->layers[i].format),
+			                .format = drm_to_vulkan_fmt(desc->layers[i].format, settings.bit_depth),
 			                .extent = {
 			                        .width = uint32_t(drm_frame->width / (i == 0 ? 1 : 2)),
 			                        .height = uint32_t(drm_frame->height / (i == 0 ? 1 : 2)),

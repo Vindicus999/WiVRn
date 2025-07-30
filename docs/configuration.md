@@ -1,6 +1,12 @@
 # Configurable items
 
-Configuration is done on server side, in `$XDG_CONFIG_HOME/wivrn/config.json` or if `$XDG_CONFIG_HOME` is not set, `$HOME/.config/wivrn/config.json`.
+Configuration is done on server side.
+Files are read from
+- `/usr/share/wivrn/config.json` (where `/usr` is selected at configure time with `CMAKE_INSTALL_PREFIX`)
+- `/etc/wivrn/config.json`
+- `$XDG_CONFIG_HOME/wivrn/config.json` or if `$XDG_CONFIG_HOME` is not set, `$HOME/.config/wivrn/config.json`.
+
+Files later in the list replace top-level values from previous ones.
 
 All elements are optional and have default values.
 
@@ -16,7 +22,7 @@ Scaling is applied in a foveated fashion: the center has a 1:1 ratio and the res
 	"scale": 0.5
 }
 ```
-The x and y resolution of the streamed video are half the size on the headsed, reduces the required bandwidth and encoding/decoding time by about 4.
+The x and y resolution of the streamed video are half the size on the headset, reduces the required bandwidth and encoding/decoding time by about 4.
 
 ```json
 {
@@ -29,6 +35,11 @@ Scales x by a 0.75 factor, and y by a 0.5 factor.
 Default value: `50000000` (50Mb/s)
 
 Bitrate of the video, in bit/s. Split among decoders based on size and codecs.
+
+## `bit-depth`
+Default value: `8` (bits)
+
+Bit depth of the video. 8-bit is supported by all encoders. 10-bit is supported by `vaapi` encoders using `h265` or `av1`.
 
 ## `encoders`
 A list of encoders to use.
