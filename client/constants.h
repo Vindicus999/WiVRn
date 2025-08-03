@@ -28,9 +28,6 @@ namespace constants::gui
 // Minimum distance between a GUI layer and a fingertip/controller to register a click
 constexpr float min_pointer_distance = -0.1;
 
-// Number of combined image samplers in ImGui descriptor pool
-constexpr unsigned int nb_combined_image_samplers = 100;
-
 // Font to use (desktop only)
 constexpr const char font_name[] = "Noto Sans";
 
@@ -39,7 +36,7 @@ constexpr int font_size_small = 30;
 constexpr int font_size_large = 75;
 
 // Ratio between joystick position and scroll distance/s
-constexpr float scroll_ratio = 3;
+constexpr float scroll_ratio = 10;
 
 // Threshold on the trigger value to register a click
 constexpr float trigger_click_thd = 0.8;
