@@ -42,6 +42,7 @@
 #include "utils/ranges.h"
 #include "vk/pipeline.h"
 #include "vk/shader.h"
+#include "vk/specialization_constants.h"
 #include "wivrn_packets.h"
 #include <algorithm>
 #include <mutex>
@@ -527,7 +528,7 @@ void scenes::stream::push_blit_handle(shard_accumulator * decoder, std::shared_p
 		}
 
 		if (state_ != state::streaming and std::ranges::all_of(decoders, [](accumulator_images & i) {
-			    return i.alpha() or not i.frames().empty();
+			    return i.alpha() or not i.empty();
 		    }))
 		{
 			state_ = state::streaming;
@@ -546,15 +547,14 @@ bool scenes::stream::accumulator_images::alpha() const
 	return decoder->desc().channels == wivrn::to_headset::video_stream_description::channels_t::alpha;
 }
 
-std::vector<uint64_t> scenes::stream::accumulator_images::frames() const
+bool scenes::stream::accumulator_images::empty() const
 {
-	std::vector<uint64_t> result;
 	for (const auto & frame: latest_frames)
 	{
 		if (frame)
-			result.push_back(frame->feedback.frame_index);
+			return false;
 	}
-	return result;
+	return true;
 }
 
 std::vector<std::shared_ptr<shard_accumulator::blit_handle>> scenes::stream::common_frame(XrTime display_time)
@@ -805,51 +805,19 @@ void scenes::stream::render(const XrFrameState & frame_state)
 
 			const auto & description = i.decoder->desc();
 			vk::Extent2D image_size = i.decoder->image_size();
-			std::array useful_size{
-			        float(description.width) / image_size.width,
-			        float(description.height) / image_size.height,
-			};
 			spdlog::info("useful size: {}x{} with buffer {}x{}",
 			             description.width,
 			             description.height,
 			             image_size.width,
 			             image_size.height);
 
-			std::array specialization_constants_desc{
-			        vk::SpecializationMapEntry{
-			                .constantID = 0,
-			                .offset = 0,
-			                .size = sizeof(float),
-			        },
-			        vk::SpecializationMapEntry{
-			                .constantID = 1,
-			                .offset = sizeof(float),
-			                .size = sizeof(float),
-			        }};
+			auto vert_constants = make_specialization_constants(
+			        float(description.width) / image_size.width,
+			        float(description.height) / image_size.height);
 
-			vk::SpecializationInfo vert_specialization_info;
-			vert_specialization_info.setMapEntries(specialization_constants_desc);
-			vert_specialization_info.setData<float>(useful_size);
-
-			std::array<VkBool32, 2> constants = {
-			        need_srgb_conversion(guess_model()),
-			        i.alpha(),
-			};
-			std::array frag_specialization_constant_desc = {
-			        vk::SpecializationMapEntry{
-			                .constantID = 0,
-			                .offset = 0,
-			                .size = sizeof(constants[0]),
-			        },
-			        vk::SpecializationMapEntry{
-			                .constantID = 1,
-			                .offset = sizeof(constants[0]),
-			                .size = sizeof(constants[1]),
-			        },
-			};
-			vk::SpecializationInfo frag_specialization_info;
-			frag_specialization_info.setMapEntries(frag_specialization_constant_desc);
-			frag_specialization_info.setData<VkBool32>(constants);
+			auto frag_constants = make_specialization_constants(
+			        VkBool32(need_srgb_conversion(guess_model())),
+			        VkBool32(i.alpha()));
 
 			// Create graphics pipeline
 			vk::raii::ShaderModule vertex_shader = load_shader(device, "stream.vert");
@@ -867,13 +835,13 @@ void scenes::stream::render(const XrFrameState & frame_state)
 			                           .stage = vk::ShaderStageFlagBits::eVertex,
 			                           .module = *vertex_shader,
 			                           .pName = "main",
-			                           .pSpecializationInfo = &vert_specialization_info,
+			                           .pSpecializationInfo = vert_constants,
 			                   },
 			                   {
 			                           .stage = vk::ShaderStageFlagBits::eFragment,
 			                           .module = *fragment_shader,
 			                           .pName = "main",
-			                           .pSpecializationInfo = &frag_specialization_info,
+			                           .pSpecializationInfo = frag_constants,
 			                   }},
 			        .VertexBindingDescriptions = {},
 			        .VertexAttributeDescriptions = {},
@@ -1008,6 +976,10 @@ void scenes::stream::render(const XrFrameState & frame_state)
 	uint16_t x_offset = 0;
 	for (auto & out: decoder_output)
 	{
+		vk::Extent2D decoder_out_size{
+		        .width = decoder_out_image.info().extent.width,
+		        .height = decoder_out_image.info().extent.height,
+		};
 		command_buffer.beginRenderPass(
 		        {
 		                .renderPass = *blit_render_pass,
@@ -1316,10 +1288,7 @@ void scenes::stream::setup(const to_headset::video_stream_description & descript
 	}
 
 	// Create outputs for the decoders
-	decoder_out_size = vk::Extent2D{video_width, video_height};
 	{
-		decoder_out_format = vk::Format::eA8B8G8R8SrgbPack32;
-
 		vk::ImageCreateInfo image_info{
 		        .flags = vk::ImageCreateFlags{},
 		        .imageType = vk::ImageType::e2D,
@@ -1343,7 +1312,7 @@ void scenes::stream::setup(const to_headset::video_stream_description & descript
 		vk::ImageViewCreateInfo image_view_info{
 		        .image = vk::Image{decoder_out_image},
 		        .viewType = vk::ImageViewType::e2D,
-		        .format = vk::Format::eA8B8G8R8SrgbPack32,
+		        .format = image_info.format,
 		        .components = {},
 		        .subresourceRange = {
 		                .aspectMask = vk::ImageAspectFlagBits::eColor,
@@ -1367,8 +1336,8 @@ void scenes::stream::setup(const to_headset::video_stream_description & descript
 			                .renderPass = *blit_render_pass,
 			                .attachmentCount = 1,
 			                .pAttachments = &*output.image_view,
-			                .width = decoder_out_size.width,
-			                .height = decoder_out_size.height,
+			                .width = image_info.extent.width,
+			                .height = image_info.extent.height,
 			                .layers = 1,
 			        });
 		}
@@ -1435,8 +1404,6 @@ void scenes::stream::setup_reprojection_swapchain(uint32_t swapchain_width, uint
 	        device,
 	        physical_device,
 	        decoder_out_image,
-	        vk::Extent2D{.width = video_width, .height = video_height},
-	        2,
 	        swapchain_images,
 	        extent,
 	        swapchain.format());

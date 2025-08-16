@@ -21,7 +21,6 @@
 
 #include "audio/audio.h"
 #include "decoder/shard_accumulator.h"
-#include "imgui.h"
 #include "render/imgui_impl.h"
 #include "scene.h"
 #include "scenes/input_profile.h"
@@ -68,12 +67,12 @@ private:
 		vk::DescriptorSet descriptor_set = nullptr;
 		vk::raii::PipelineLayout blit_pipeline_layout = nullptr;
 		vk::raii::Pipeline blit_pipeline = nullptr;
-		// latest frames from oldest to most recent
+		// latest frames, rolling buffer
 		std::array<std::shared_ptr<wivrn::shard_accumulator::blit_handle>, image_buffer_size> latest_frames;
 
 		std::shared_ptr<wivrn::shard_accumulator::blit_handle> frame(uint64_t id) const;
 		bool alpha() const;
-		std::vector<uint64_t> frames() const;
+		bool empty() const;
 	};
 
 	wifi_lock::wifi wifi;
@@ -85,8 +84,7 @@ private:
 	std::unique_ptr<wivrn_session> network_session;
 	std::atomic<bool> exiting = false;
 	std::thread network_thread;
-	std::mutex tracking_control_mutex;
-	to_headset::tracking_control tracking_control{};
+	thread_safe<to_headset::tracking_control> tracking_control{};
 	std::array<std::atomic<interaction_profile>, 2> interaction_profiles; // left and right hand
 	std::atomic<bool> recenter_requested = false;
 	std::atomic<XrDuration> display_time_phase = 0;
@@ -101,8 +99,6 @@ private:
 	vk::raii::DescriptorPool blit_descriptor_pool = nullptr;
 	vk::raii::RenderPass blit_render_pass = nullptr;
 
-	vk::Extent2D decoder_out_size;
-	vk::Format decoder_out_format;
 	image_allocation decoder_out_image;
 
 	struct renderpass_output
