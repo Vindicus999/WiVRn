@@ -1,7 +1,6 @@
 /*
  * WiVRn VR streaming
- * Copyright (C) 2024  Guillaume Meunier <guillaume.meunier@centraliens.net>
- * Copyright (C) 2024  Patrick Nicolas <patricknicolas@laposte.net>
+ * Copyright (C) 2025  Patrick Nicolas <patricknicolas@laposte.net>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,27 +18,26 @@
 
 #pragma once
 
-#include "utils/handle.h"
-#include <array>
-#include <optional>
+#include "fb_body_tracker.h"
+#include "htc_body_tracker.h"
+#include "pico_body_tracker.h"
+#include "xr/system.h"
+
+#include <utility>
+#include <variant>
+#include <vector>
 #include <openxr/openxr.h>
 
 namespace xr
 {
+
 class instance;
 class session;
 
-class hand_tracker : public utils::handle<XrHandTrackerEXT>
-{
-	PFN_xrLocateHandJointsEXT xrLocateHandJointsEXT{};
+using body_tracker = std::variant<std::monostate, xr::fb_body_tracker, xr::htc_body_tracker, xr::pico_body_tracker>;
 
-public:
-	hand_tracker(instance & inst, session & session, const XrHandTrackerCreateInfoEXT & info);
+body_tracker make_body_tracker(xr::instance &, xr::system &, xr::session &, std::vector<std::pair<XrPath, xr::space>> & generic_trackers, bool full_body, bool hips);
 
-	using joint = std::pair<XrHandJointLocationEXT, XrHandJointVelocityEXT>;
+body_tracker_type body_tracker_supported(xr::instance &, xr::system &);
 
-	std::optional<std::array<joint, XR_HAND_JOINT_COUNT_EXT>> locate(XrSpace space, XrTime time);
-
-	static bool check_flags(const std::array<joint, XR_HAND_JOINT_COUNT_EXT> & joints, XrSpaceLocationFlags position, XrSpaceVelocityFlags velocity);
-};
 } // namespace xr

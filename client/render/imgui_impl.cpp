@@ -345,9 +345,9 @@ imgui_context::imgui_context(
 
 	ImGui_ImplVulkan_InitInfo init_info = {
 	        .Instance = *application::get_vulkan_instance(),
-	        .PhysicalDevice = *application::get_physical_device(),
-	        .Device = *application::get_device(),
-	        .QueueFamily = application::queue_family_index(),
+	        .PhysicalDevice = *physical_device,
+	        .Device = *device,
+	        .QueueFamily = queue_family_index,
 	        .Queue = *queue.get_unsafe(),
 	        .RenderPass = *renderpass,
 	        .MinImageCount = 2,
@@ -718,7 +718,7 @@ void imgui_context::new_frame(XrTime display_time)
 	ImPlot::SetCurrentContext(plot_context);
 
 	if (last_display_time)
-		io.DeltaTime = std::min((display_time - last_display_time) * 1e-9f, 0.0166f);
+		io.DeltaTime = std::clamp((display_time - last_display_time) * 1e-9f, 0.001f, 0.0166f);
 	last_display_time = display_time;
 
 	// Uses the window list from last frame

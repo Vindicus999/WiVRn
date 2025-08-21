@@ -86,6 +86,7 @@ private:
 	std::thread network_thread;
 	thread_safe<to_headset::tracking_control> tracking_control{};
 	std::array<std::atomic<interaction_profile>, 2> interaction_profiles; // left and right hand
+	std::atomic<bool> interaction_profile_changed = false;
 	std::atomic<bool> recenter_requested = false;
 	std::atomic<XrDuration> display_time_phase = 0;
 	std::atomic<XrDuration> display_time_period = 0;
@@ -129,6 +130,8 @@ private:
 
 	std::optional<audio> audio_handle;
 
+	std::optional<xr::hand_tracker> left_hand;
+	std::optional<xr::hand_tracker> right_hand;
 	std::optional<input_profile> input;
 	static inline const uint32_t layer_controllers = 1 << 0;
 	static inline const uint32_t layer_rays = 1 << 1;

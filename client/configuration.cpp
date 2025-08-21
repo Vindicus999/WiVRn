@@ -82,6 +82,8 @@ bool configuration::check_feature(feature f) const
 	{
 		std::lock_guard lock(mutex);
 
+		auto & system = application::get_system();
+
 		auto it = features.find(f);
 		if (it == features.end())
 			return false;
@@ -94,7 +96,7 @@ bool configuration::check_feature(feature f) const
 			case feature::microphone:
 				break;
 			case feature::hand_tracking:
-				if (not application::get_hand_tracking_supported())
+				if (not system.hand_tracking_supported())
 					return false;
 				break;
 			case feature::eye_gaze:
@@ -102,50 +104,12 @@ bool configuration::check_feature(feature f) const
 					return false;
 				break;
 			case feature::face_tracking:
-				switch (guess_model())
-				{
-					case model::htc_vive_focus_3:
-					case model::htc_vive_focus_vision:
-					case model::htc_vive_xr_elite:
-						if (not std::holds_alternative<xr::htc_face_tracker>(application::get_face_tracker()))
-							return false;
-						break;
-					case model::pico_4_pro:
-					case model::pico_4_enterprise:
-						if (not std::holds_alternative<xr::pico_face_tracker>(application::get_face_tracker()))
-							return false;
-						break;
-					default:
-						if (not std::holds_alternative<xr::fb_face_tracker2>(application::get_face_tracker()))
-							return false;
-						break;
-				}
+				if (system.face_tracker_supported() == xr::face_tracker_type::none)
+					return false;
 				break;
 			case feature::body_tracking:
-				switch (guess_model())
-				{
-					case model::meta_quest_3:
-					case model::meta_quest_3s:
-						if (not std::holds_alternative<xr::fb_body_tracker>(application::get_body_tracker()))
-							return false;
-						break;
-					case model::htc_vive_focus_3:
-					case model::htc_vive_xr_elite:
-					case model::htc_vive_focus_vision:
-						if (not std::holds_alternative<xr::htc_body_tracker>(application::get_body_tracker()))
-							return false;
-						break;
-					case model::pico_neo_3:
-					case model::pico_4:
-					case model::pico_4s:
-					case model::pico_4_pro:
-					case model::pico_4_enterprise:
-						if (not std::holds_alternative<xr::pico_body_tracker>(application::get_body_tracker()))
-							return false;
-						break;
-					default:
-						break;
-				}
+				if (system.body_tracker_supported() == xr::body_tracker_type::none)
+					return false;
 				break;
 		}
 	}
@@ -181,8 +145,8 @@ void configuration::set_feature(feature f, bool state)
 
 configuration::configuration(xr::system & system)
 {
-	passthrough_enabled = system.passthrough_supported() == xr::system::passthrough_type::color;
-	features[feature::hand_tracking] = application::get_hand_tracking_supported();
+	passthrough_enabled = system.passthrough_supported() == xr::passthrough_type::color;
+	features[feature::hand_tracking] = system.hand_tracking_supported();
 	try
 	{
 		simdjson::dom::parser parser;
@@ -243,7 +207,7 @@ configuration::configuration(xr::system & system)
 				features[i] = val.get_bool();
 		}
 
-		if (system.passthrough_supported() == xr::system::passthrough_type::no_passthrough)
+		if (system.passthrough_supported() == xr::passthrough_type::none)
 			passthrough_enabled = false;
 
 		if (auto val = root["override_foveation_enable"]; val.is_bool())
@@ -269,7 +233,7 @@ configuration::configuration(xr::system & system)
 		resolution_scale = 1.4;
 		sgsr = {};
 		openxr_post_processing = {};
-		passthrough_enabled = system.passthrough_supported() == xr::system::passthrough_type::color;
+		passthrough_enabled = system.passthrough_supported() == xr::passthrough_type::color;
 	}
 }
 

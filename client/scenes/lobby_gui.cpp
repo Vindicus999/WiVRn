@@ -34,6 +34,7 @@
 #include "utils/overloaded.h"
 #include "utils/ranges.h"
 #include "version.h"
+#include "xr/body_tracker.h"
 #include <algorithm>
 #include <cassert>
 #include <chrono>
@@ -889,7 +890,7 @@ void scenes::lobby::gui_settings()
 		ImGui::EndDisabled();
 	}
 	{
-		ImGui::BeginDisabled(not application::get_hand_tracking_supported());
+		ImGui::BeginDisabled(not system.hand_tracking_supported());
 		bool enabled = config.check_feature(feature::hand_tracking);
 		if (ImGui::Checkbox(_S("Enable hand tracking"), &enabled))
 		{
@@ -913,7 +914,7 @@ void scenes::lobby::gui_settings()
 		ImGui::EndDisabled();
 	}
 	{
-		ImGui::BeginDisabled(not application::get_face_tracking_supported());
+		ImGui::BeginDisabled(std::holds_alternative<std::monostate>(face_tracker));
 		bool enabled = config.check_feature(feature::face_tracking);
 		if (ImGui::Checkbox(_S("Enable face tracking"), &enabled))
 		{
@@ -925,8 +926,9 @@ void scenes::lobby::gui_settings()
 		imgui_ctx->vibrate_on_hover();
 	}
 
+	auto body_tracker = system.body_tracker_supported();
 	{
-		ImGui::BeginDisabled(not application::get_body_tracking_supported());
+		ImGui::BeginDisabled(body_tracker == xr::body_tracker_type::none);
 		bool enabled = config.check_feature(feature::body_tracking);
 		if (ImGui::Checkbox(_S("Enable body tracking"), &enabled))
 		{
@@ -941,19 +943,14 @@ void scenes::lobby::gui_settings()
 			}
 			else
 			{
-				std::visit(utils::overloaded{
-				                   [](auto &) {},
-				                   [this](xr::fb_body_tracker &) {
-					                   imgui_ctx->tooltip(_("Requires 'Hand and body tracking' to be enabled in the Quest movement tracking settings,\notherwise body data will be guessed from controller and headset positions"));
-				                   },
-				           },
-				           application::get_body_tracker());
+				if (body_tracker == xr::body_tracker_type::fb)
+					imgui_ctx->tooltip(_("Requires 'Hand and body tracking' to be enabled in the Quest movement tracking settings,\notherwise body data will be guessed from controller and headset positions"));
 			}
 		}
 
 		imgui_ctx->vibrate_on_hover();
 	}
-	if (std::holds_alternative<xr::fb_body_tracker>(application::get_body_tracker()))
+	if (body_tracker == xr::body_tracker_type::fb)
 	{
 		ImGui::BeginDisabled(not config.check_feature(feature::body_tracking));
 		ImGui::Indent();
@@ -979,7 +976,7 @@ void scenes::lobby::gui_settings()
 		ImGui::EndDisabled();
 	}
 
-	ImGui::BeginDisabled(passthrough_supported == xr::system::passthrough_type::no_passthrough);
+	ImGui::BeginDisabled(system.passthrough_supported() == xr::passthrough_type::none);
 	if (ImGui::Checkbox(_S("Enable video passthrough in lobby"), &config.passthrough_enabled))
 	{
 		setup_passthrough();
@@ -1311,12 +1308,12 @@ void scenes::lobby::gui_first_run()
 	        item{
 	                .f = feature::face_tracking,
 	                .text = _S("Enable face tracking?"),
-	                .supported = application::get_face_tracking_supported(),
+	                .supported = not std::holds_alternative<std::monostate>(face_tracker),
 	        },
 	        item{
 	                .f = feature::body_tracking,
 	                .text = _S("Enable body tracking?"),
-	                .supported = application::get_body_tracking_supported(),
+	                .supported = system.body_tracker_supported() != xr::body_tracker_type::none,
 	        },
 	};
 
@@ -1646,11 +1643,22 @@ static auto face_weights()
 	return res;
 }
 
-static const char * get_face_icon(XrTime predicted_display_time)
+static const char * get_face_icon(XrTime predicted_display_time, xr::face_tracker & face_tracker)
 {
 	static const auto w = face_weights();
 	wivrn::from_headset::tracking::fb_face2 expression;
-	std::get<xr::fb_face_tracker2>(application::get_face_tracker()).get_weights(predicted_display_time, expression);
+	const char * result = nullptr;
+	std::visit(utils::overloaded{
+	                   [](std::monostate &) {},
+	                   [&](xr::htc_face_tracker &) { result = ICON_FA_FACE_SMILE_WINK; },
+	                   [&](auto & ft) {
+		                   ft.get_weights(predicted_display_time, expression);
+	                   },
+	           },
+	           face_tracker);
+
+	if (result)
+		return result;
 
 	if (not expression.is_valid)
 		return ICON_FA_FACE_MEH;
@@ -1693,7 +1701,7 @@ void scenes::lobby::draw_features_status(XrTime predicted_display_time)
 	        .icon_disabled = ICON_FA_MICROPHONE_SLASH,
 	});
 
-	if (application::get_hand_tracking_supported())
+	if (system.hand_tracking_supported())
 	{
 		items.push_back({
 		        .f = feature::hand_tracking,
@@ -1714,21 +1722,18 @@ void scenes::lobby::draw_features_status(XrTime predicted_display_time)
 		});
 	}
 
-	if (application::get_face_tracking_supported())
+	if (not std::holds_alternative<std::monostate>(face_tracker))
 	{
-		const char * icon_enabled = std::holds_alternative<xr::fb_face_tracker2>(application::get_face_tracker())
-		                                    ? get_face_icon(predicted_display_time)
-		                                    : ICON_FA_FACE_KISS_WINK_HEART;
 		items.push_back({
 		        .f = feature::face_tracking,
 		        .tooltip_enabled = _("Face tracking is enabled"),
 		        .tooltip_disabled = _("Face tracking is disabled"),
-		        .icon_enabled = icon_enabled,
+		        .icon_enabled = get_face_icon(predicted_display_time, face_tracker),
 		        .icon_disabled = ICON_FA_FACE_MEH_BLANK,
 		});
 	}
 
-	if (application::get_body_tracking_supported())
+	if (system.body_tracker_supported() != xr::body_tracker_type::none)
 	{
 		items.push_back({
 		        .f = feature::body_tracking,
@@ -1802,7 +1807,7 @@ void scenes::lobby::draw_features_status(XrTime predicted_display_time)
 			if (*status.charge > 0.995)
 				icon_nr = 5;
 			else
-				icon_nr = application::now() / 500'000'000 % 5;
+				icon_nr = instance.now() / 500'000'000 % 5;
 		}
 		else
 			icon_nr = std::round((*status.charge) * 4);
@@ -2031,7 +2036,7 @@ std::vector<std::pair<int, XrCompositionLayerQuad>> scenes::lobby::draw_gui(XrTi
 
 	if (not is_gui_visible(*imgui_ctx, predicted_display_time))
 	{
-		if (application::get_hand_tracking_supported())
+		if (system.hand_tracking_supported())
 			display_recentering_tip(*imgui_ctx, _("Press the grip button or put your palm up\nto move the main window"));
 		else
 			display_recentering_tip(*imgui_ctx, _("Press the grip button to move the main window"));
