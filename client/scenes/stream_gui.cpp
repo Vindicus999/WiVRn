@@ -389,8 +389,14 @@ void scenes::stream::gui_performance_metrics()
 
 	ImPlot::PopStyleColor(5);
 	{
-		std::lock_guard lock(tracking_control_mutex);
-		ImGui::Text("%s", fmt::format(_F("Estimated motion to photons latency: {}ms"), std::chrono::duration_cast<std::chrono::milliseconds>(tracking_control.max_offset).count()).c_str());
+		ImGui::Text(
+		        "%s",
+		        fmt::format(
+		                _F("Estimated motion to photons latency: {}ms"),
+		                std::chrono::duration_cast<std::chrono::milliseconds>(
+		                        tracking_control.lock()->max_offset)
+		                        .count())
+		                .c_str());
 
 		if (is_gui_interactable())
 			ImGui::Text("%s", _S("Press the grip button to move the window"));
@@ -417,7 +423,12 @@ void scenes::stream::gui_compact_view()
 		f(_S("Upload"), 8 * compact_bandwidth_tx * 1e-6, "Mbit/s");
 		f(_S("CPU time"), compact_cpu_time * 1000, "ms");
 		f(_S("GPU time"), compact_gpu_time * 1000, "ms");
-		f(_S("Motion to photon latency"), std::chrono::duration_cast<std::chrono::microseconds>(tracking_control.max_offset).count() * 1e-3f, "ms");
+		f(_S("Motion to photon latency"),
+		  std::chrono::duration_cast<std::chrono::microseconds>(
+		          tracking_control.lock()->max_offset)
+		                  .count() *
+		          1e-3f,
+		  "ms");
 		ImGui::EndTable();
 	}
 }
@@ -615,6 +626,8 @@ static glm::vec4 compute_ray_limits(const XrPosef & pose, float margin = 0)
 
 void scenes::stream::draw_gui(XrTime predicted_display_time, XrDuration predicted_display_period)
 {
+	if (not(plots_toggle_1 and plots_toggle_2))
+		return;
 	bool interactable = true;
 	XrSpace world_space = application::space(xr::spaces::world);
 	auto views = session.locate_views(viewconfig, predicted_display_time, world_space).second;
@@ -632,6 +645,19 @@ void scenes::stream::draw_gui(XrTime predicted_display_time, XrDuration predicte
 			break;
 	}
 	imgui_ctx->set_controllers_enabled(interactable);
+	if (interactable)
+	{
+		if (system.hand_tracking_supported())
+		{
+			left_hand = session.create_hand_tracker(XR_HAND_LEFT_EXT);
+			right_hand = session.create_hand_tracker(XR_HAND_RIGHT_EXT);
+		}
+	}
+	else
+	{
+		left_hand.reset();
+		right_hand.reset();
+	}
 
 	if (gui_status != last_gui_status)
 	{
@@ -863,10 +889,10 @@ void scenes::stream::draw_gui(XrTime predicted_display_time, XrDuration predicte
 		bool hide_left_controller = false;
 		bool hide_right_controller = false;
 
-		if (application::get_hand_tracking_supported())
+		if (left_hand and right_hand)
 		{
-			auto left = application::get_left_hand().locate(world_space, predicted_display_time);
-			auto right = application::get_right_hand().locate(world_space, predicted_display_time);
+			auto left = left_hand->locate(world_space, predicted_display_time);
+			auto right = right_hand->locate(world_space, predicted_display_time);
 
 			if (left and xr::hand_tracker::check_flags(*left, XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT, 0))
 				hide_left_controller = true;

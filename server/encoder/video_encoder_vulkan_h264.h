@@ -46,6 +46,7 @@ class video_encoder_vulkan_h264 : public video_encoder_vulkan
 
 	vk::VideoEncodeH264GopRemainingFrameInfoKHR gop_info;
 	vk::VideoEncodeH264RateControlInfoKHR rate_control_h264;
+	vk::VideoEncodeH264RateControlLayerInfoKHR rate_control_layer_h264;
 
 	video_encoder_vulkan_h264(wivrn_vk_bundle & vk,
 	                          vk::Rect2D rect,
@@ -70,7 +71,5 @@ public:
 	                                                         uint8_t stream_idx);
 
 	std::vector<uint8_t> get_sps_pps();
-
-	static const vk::StructureChain<vk::VideoProfileInfoKHR, vk::VideoEncodeH264ProfileInfoKHR, vk::VideoEncodeUsageInfoKHR> video_profile_info;
 };
 } // namespace wivrn

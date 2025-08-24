@@ -1,7 +1,6 @@
 /*
  * WiVRn VR streaming
- * Copyright (C) 2022  Guillaume Meunier <guillaume.meunier@centraliens.net>
- * Copyright (C) 2022  Patrick Nicolas <patricknicolas@laposte.net>
+ * Copyright (C) 2025  Patrick Nicolas <patricknicolas@laposte.net>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,11 +18,23 @@
 
 #pragma once
 
-#include "actionset.h"
-#include "error.h"
-#include "instance.h"
-#include "session.h"
-#include "swapchain.h"
-#include "system.h"
-#include "xr/check.h"
-#include "xr/to_string.h"
+#include "fb_face_tracker2.h"
+#include "htc_face_tracker.h"
+#include "pico_face_tracker.h"
+#include "xr/system.h"
+
+#include <variant>
+
+namespace xr
+{
+
+class instance;
+class session;
+
+using face_tracker = std::variant<std::monostate, xr::fb_face_tracker2, xr::htc_face_tracker, xr::pico_face_tracker>;
+
+face_tracker make_face_tracker(xr::instance &, xr::system &, xr::session &);
+
+face_tracker_type face_tracker_supported(xr::instance &, xr::system &);
+
+} // namespace xr

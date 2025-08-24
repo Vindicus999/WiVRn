@@ -59,6 +59,12 @@ Kirigami.ApplicationWindow {
             // Set the visible property here because dismissing the message removes the binding
             if (value == WivrnServer.FailedToStart)
                 message_failed_to_start.visible = true;
+
+            if (root.first_run && started) {
+                console.log("First run");
+                root.pageStack.push(Qt.resolvedUrl("WizardPage.qml"));
+                root.first_run = false;
+            }
         }
 
         function onPairingEnabledChanged(value) {
@@ -83,12 +89,6 @@ Kirigami.ApplicationWindow {
     Component.onCompleted: {
         if (WivrnServer.serverStatus == WivrnServer.Stopped)
             WivrnServer.start_server();
-
-        if (root.first_run) {
-            console.log("First run");
-            root.pageStack.push(Qt.resolvedUrl("WizardPage.qml"));
-            root.first_run = false;
-        }
 
         if (root.last_run_version != ApkInstaller.currentVersion) {
             root.last_run_version = ApkInstaller.currentVersion;
@@ -305,11 +305,12 @@ Kirigami.ApplicationWindow {
                     level: 1
                     wrapMode: Text.WordWrap
                     text: i18n("Steam information")
-                    opacity: root.server_started
+                    opacity: steam_info.opacity
                     Layout.maximumHeight: root.server_started ? -1 : 0
                 }
                 SteamLaunchOptions {
-                    opacity: root.server_started
+                    id: steam_info
+                    opacity: root.server_started && WivrnServer.steamCommand != ""
                     Layout.maximumHeight: root.server_started ? -1 : 0
                 }
 

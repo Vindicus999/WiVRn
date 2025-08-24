@@ -15,6 +15,8 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include "vk/vk_helpers.h"
+
 #include "video_encoder_vulkan.h"
 
 #include "encoder/encoder_settings.h"
@@ -174,8 +176,8 @@ void wivrn::video_encoder_vulkan::init(const vk::VideoCapabilitiesKHR & video_ca
 		        img_create_info,
 		        {
 		                .usage = VMA_MEMORY_USAGE_AUTO,
-		        });
-		vk.name(vk::Image(dpb_image), "vulkan encoder DPB image");
+		        },
+		        "vulkan encoder DPB image");
 	}
 
 	// Output buffer
@@ -193,8 +195,8 @@ void wivrn::video_encoder_vulkan::init(const vk::VideoCapabilitiesKHR & video_ca
 		        {
 		                .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT,
 		                .usage = VMA_MEMORY_USAGE_AUTO,
-		        });
-		vk.name(vk::Buffer(item.output_buffer), "vulkan encode output buffer");
+		        },
+		        "vulkan encode output buffer");
 
 		if (not(item.output_buffer.properties() & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
 		{
@@ -206,8 +208,8 @@ void wivrn::video_encoder_vulkan::init(const vk::VideoCapabilitiesKHR & video_ca
 			        {
 			                .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
 			                .usage = VMA_MEMORY_USAGE_AUTO,
-			        });
-			vk.name(vk::Buffer(item.host_buffer), "vulkan encode host buffer");
+			        },
+			        "vulkan encode host buffer");
 		}
 	}
 
@@ -266,7 +268,7 @@ void wivrn::video_encoder_vulkan::init(const vk::VideoCapabilitiesKHR & video_ca
 	                             .layerCount = 1},
 	};
 
-	if (rect.offset != vk::Offset2D{0, 0})
+	if (rect.offset != vk::Offset2D{0, 0} or not vk.vk.features.video_maintenance_1)
 	{
 		image_view_template.subresourceRange.baseArrayLayer = 0;
 		for (size_t i = 0; i < num_slots; ++i)
@@ -290,8 +292,8 @@ void wivrn::video_encoder_vulkan::init(const vk::VideoCapabilitiesKHR & video_ca
 			                   },
 			        {
 			                .usage = VMA_MEMORY_USAGE_AUTO,
-			        });
-			vk.name(vk::Image(slot_data[i].tmp_image), "vulkan encoder temporary image");
+			        },
+			        "vulkan encoder temporary image");
 			image_view_template.image = vk::Image(slot_data[i].tmp_image);
 			slot_data[i].view = vk.device.createImageView(image_view_template);
 			vk.name(slot_data[i].view, "vulkan encoder temporary image view");
@@ -478,7 +480,7 @@ std::pair<bool, vk::Semaphore> wivrn::video_encoder_vulkan::present_image(vk::Im
 	video_cmd_buf.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
 	// If we encode from top left corner, encode from the source image directly
-	bool encode_direct = rect.offset == vk::Offset2D{0, 0};
+	bool encode_direct = not slot_item.tmp_image;
 
 	vk::ImageView image_view;
 
