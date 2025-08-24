@@ -4,7 +4,7 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:8.7.3'
+        classpath 'com.android.tools.build:gradle:8.12.1'
     }
 }
 
@@ -204,6 +204,20 @@ android {
         externalNativeBuild{
             cmake {
                 arguments '-DCMAKE_ANDROID_ASSETS_DIRECTORIES=' + layout.buildDirectory.dir("assets${variant.name.capitalize()}").get().asFile
+            }
+        }
+    }
+
+    buildTypes.all { variant ->
+        sourceSets {
+            "${variant.name}" {
+                jniLibs.srcDirs layout.buildDirectory.dir("libs${variant.name.capitalize()}")
+            }
+        }
+
+        externalNativeBuild{
+            cmake {
+                arguments '-DCMAKE_ANDROID_LIB_DIRECTORIES=' + layout.buildDirectory.dir("libs${variant.name.capitalize()}").get().asFile
             }
         }
     }
