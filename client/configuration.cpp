@@ -82,8 +82,6 @@ bool configuration::check_feature(feature f) const
 	{
 		std::lock_guard lock(mutex);
 
-		auto & system = application::get_system();
-
 		auto it = features.find(f);
 		if (it == features.end())
 			return false;
@@ -96,7 +94,7 @@ bool configuration::check_feature(feature f) const
 			case feature::microphone:
 				break;
 			case feature::hand_tracking:
-				if (not system.hand_tracking_supported())
+				if (not application::get_hand_tracking_supported())
 					return false;
 				break;
 			case feature::eye_gaze:
@@ -104,12 +102,50 @@ bool configuration::check_feature(feature f) const
 					return false;
 				break;
 			case feature::face_tracking:
-				if (system.face_tracker_supported() == xr::face_tracker_type::none)
-					return false;
+				switch (guess_model())
+				{
+					case model::htc_vive_focus_3:
+					case model::htc_vive_focus_vision:
+					case model::htc_vive_xr_elite:
+						if (not std::holds_alternative<xr::htc_face_tracker>(application::get_face_tracker()))
+							return false;
+						break;
+					case model::pico_4_pro:
+					case model::pico_4_enterprise:
+						if (not std::holds_alternative<xr::pico_face_tracker>(application::get_face_tracker()))
+							return false;
+						break;
+					default:
+						if (not std::holds_alternative<xr::fb_face_tracker2>(application::get_face_tracker()))
+							return false;
+						break;
+				}
 				break;
 			case feature::body_tracking:
-				if (system.body_tracker_supported() == xr::body_tracker_type::none)
-					return false;
+				switch (guess_model())
+				{
+					case model::meta_quest_3:
+					case model::meta_quest_3s:
+						if (not std::holds_alternative<xr::fb_body_tracker>(application::get_body_tracker()))
+							return false;
+						break;
+					case model::htc_vive_focus_3:
+					case model::htc_vive_xr_elite:
+					case model::htc_vive_focus_vision:
+						if (not std::holds_alternative<xr::htc_body_tracker>(application::get_body_tracker()))
+							return false;
+						break;
+					case model::pico_neo_3:
+					case model::pico_4:
+					case model::pico_4s:
+					case model::pico_4_pro:
+					case model::pico_4_enterprise:
+						if (not std::holds_alternative<xr::pico_body_tracker>(application::get_body_tracker()))
+							return false;
+						break;
+					default:
+						break;
+				}
 				break;
 		}
 	}
@@ -145,8 +181,8 @@ void configuration::set_feature(feature f, bool state)
 
 configuration::configuration(xr::system & system)
 {
-	passthrough_enabled = system.passthrough_supported() == xr::passthrough_type::color;
-	features[feature::hand_tracking] = system.hand_tracking_supported();
+	passthrough_enabled = system.passthrough_supported() == xr::system::passthrough_type::color;
+	features[feature::hand_tracking] = application::get_hand_tracking_supported();
 	try
 	{
 		simdjson::dom::parser parser;
@@ -178,8 +214,8 @@ configuration::configuration(xr::system & system)
 		if (auto val = root["resolution_scale"]; val.is_double())
 			resolution_scale = val.get_double();
 
-		if (auto val = root["enable_stream_gui"]; val.is_bool())
-			enable_stream_gui = val.get_bool();
+		if (auto val = root["sgsr"]; val.is_object())
+			parse_sgsr_options(val.get_object());
 
 		if (auto val = root["openxr_post_processing"]; val.is_object())
 			parse_openxr_post_processing_options(val.get_object());
@@ -204,7 +240,7 @@ configuration::configuration(xr::system & system)
 				features[i] = val.get_bool();
 		}
 
-		if (system.passthrough_supported() == xr::passthrough_type::none)
+		if (system.passthrough_supported() == xr::system::passthrough_type::no_passthrough)
 			passthrough_enabled = false;
 
 		if (auto val = root["override_foveation_enable"]; val.is_bool())
@@ -218,9 +254,6 @@ configuration::configuration(xr::system & system)
 
 		if (auto val = root["first_run"]; val.is_bool())
 			first_run = val.get_bool();
-
-		if (auto val = root["locale"]; val.is_string())
-			locale = val.get_string().value();
 	}
 	catch (std::exception & e)
 	{
@@ -231,9 +264,29 @@ configuration::configuration(xr::system & system)
 		preferred_refresh_rate.reset();
 		minimum_refresh_rate.reset();
 		resolution_scale = 1.4;
+		sgsr = {};
 		openxr_post_processing = {};
-		passthrough_enabled = system.passthrough_supported() == xr::passthrough_type::color;
+		passthrough_enabled = system.passthrough_supported() == xr::system::passthrough_type::color;
 	}
+}
+
+void configuration::parse_sgsr_options(simdjson::simdjson_result<simdjson::dom::object> sgsr_root)
+{
+	sgsr = {};
+	if (auto val = sgsr_root["enabled"]; val.is_bool())
+		sgsr.enabled = val.get_bool();
+
+	if (auto val = sgsr_root["upscaling_factor"]; val.is_double())
+		sgsr.upscaling_factor = val.get_double();
+
+	if (auto val = sgsr_root["use_edge_direction"]; val.is_bool())
+		sgsr.use_edge_direction = val.get_bool();
+
+	if (auto val = sgsr_root["edge_threshold"]; val.is_double())
+		sgsr.edge_threshold = val.get_double();
+
+	if (auto val = sgsr_root["edge_sharpness"]; val.is_double())
+		sgsr.edge_sharpness = val.get_double();
 }
 
 void configuration::parse_openxr_post_processing_options(simdjson::simdjson_result<simdjson::dom::object> openxr_post_processing_root)
@@ -249,6 +302,17 @@ void configuration::parse_openxr_post_processing_options(simdjson::simdjson_resu
 static std::ostream & operator<<(std::ostream & stream, feature f)
 {
 	return stream << "\"" << magic_enum::enum_name(f) << "\"";
+}
+
+static std::ostream & write_sgsr(std::ofstream & stream, const configuration::sgsr_settings & sgsr)
+{
+	stream << "{\"enabled\":" << std::boolalpha << sgsr.enabled;
+	stream << ",\"upscaling_factor\":" << sgsr.upscaling_factor;
+	stream << ",\"use_edge_direction\":" << std::boolalpha << sgsr.use_edge_direction;
+	stream << ",\"edge_threshold\":" << sgsr.edge_threshold;
+	stream << ",\"edge_sharpness\":" << sgsr.edge_sharpness;
+	stream << "}";
+	return stream;
 }
 
 static std::ostream & write_openxr_post_processing(std::ofstream & stream, const configuration::openxr_post_processing_settings & openxr_post_processing)
@@ -293,13 +357,14 @@ void configuration::save()
 	if (minimum_refresh_rate)
 		json << ",\"minimum_refresh_rate\":" << *minimum_refresh_rate;
 	json << ",\"resolution_scale\":" << resolution_scale;
+	json << ",\"sgsr\":";
+	write_sgsr(json, sgsr);
 	json << ",\"openxr_post_processing\":";
 	write_openxr_post_processing(json, openxr_post_processing);
 	json << ",\"passthrough_enabled\":" << std::boolalpha << passthrough_enabled;
 	json << ",\"mic_unprocessed_audio\":" << std::boolalpha << mic_unprocessed_audio;
 	json << ",\"fb_lower_body\":" << std::boolalpha << fb_lower_body;
 	json << ",\"fb_hip\":" << std::boolalpha << fb_hip;
-	json << ",\"enable_stream_gui\":" << std::boolalpha << enable_stream_gui;
 	for (auto & [key, value]: features)
 		json << "," << key << ":" << std::boolalpha << value;
 	json << ",\"virtual_keyboard_layout\":" << json_string(virtual_keyboard_layout);
@@ -307,6 +372,5 @@ void configuration::save()
 	json << ",\"override_foveation_pitch\":" << override_foveation_pitch;
 	json << ",\"override_foveation_distance\":" << override_foveation_distance;
 	json << ",\"first_run\":" << std::boolalpha << first_run;
-	json << ",\"locale\":" << json_string(locale);
 	json << "}";
 }

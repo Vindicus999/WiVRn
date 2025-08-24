@@ -69,9 +69,10 @@ wivrn::fd_base::~fd_base()
 wivrn::UDP::UDP()
 {
 	fd = socket(AF_INET6, SOCK_DGRAM, 0);
+	fcntl(fd, F_SETFD, FD_CLOEXEC);
+
 	if (fd < 0)
 		throw std::system_error{errno, std::generic_category()};
-	fcntl(fd, F_SETFD, FD_CLOEXEC);
 }
 
 wivrn::UDP::UDP(int fd)
@@ -176,9 +177,10 @@ wivrn::TCP::TCP(int fd)
 wivrn::TCP::TCP(in6_addr address, int port)
 {
 	fd = socket(AF_INET6, SOCK_STREAM, 0);
+	fcntl(fd, F_SETFD, FD_CLOEXEC);
+
 	if (fd < 0)
 		throw std::system_error{errno, std::generic_category()};
-	fcntl(fd, F_SETFD, FD_CLOEXEC);
 
 	sockaddr_in6 sa;
 	sa.sin6_family = AF_INET6;
@@ -197,9 +199,10 @@ wivrn::TCP::TCP(in6_addr address, int port)
 wivrn::TCP::TCP(in_addr address, int port)
 {
 	fd = socket(AF_INET, SOCK_STREAM, 0);
+	fcntl(fd, F_SETFD, FD_CLOEXEC);
+
 	if (fd < 0)
 		throw std::system_error{errno, std::generic_category()};
-	fcntl(fd, F_SETFD, FD_CLOEXEC);
 
 	sockaddr_in sa;
 	sa.sin_family = AF_INET;

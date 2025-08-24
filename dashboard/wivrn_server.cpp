@@ -507,37 +507,29 @@ void wivrn_server::on_server_properties_changed(const QString & interface_name, 
 
 void wivrn_server::setJsonConfiguration(QString new_configuration)
 {
-	if (server_interface)
-	{
-		server_interface->setJsonConfiguration(m_jsonConfiguration = new_configuration);
-		jsonConfigurationChanged(new_configuration);
-	}
+	server_interface->setJsonConfiguration(m_jsonConfiguration = new_configuration);
+	jsonConfigurationChanged(new_configuration);
 }
 
 void wivrn_server::revoke_key(QString public_key)
 {
-	if (server_interface)
-		server_interface->RevokeKey(public_key);
+	server_interface->RevokeKey(public_key);
 }
 
 void wivrn_server::rename_key(QString public_key, QString name)
 {
-	if (server_interface)
-		server_interface->RenameKey(public_key, name);
+	server_interface->RenameKey(public_key, name);
 }
 
 QString wivrn_server::enable_pairing(int timeout_secs)
 {
 	qDebug() << "Enabling pairing for" << timeout_secs << "seconds";
-	if (server_interface)
-		return server_interface->EnablePairing(timeout_secs).value();
-	return "";
+	return server_interface->EnablePairing(timeout_secs).value();
 }
 
 void wivrn_server::disable_pairing()
 {
-	if (server_interface)
-		server_interface->DisablePairing();
+	server_interface->DisablePairing();
 }
 
 QString wivrn_server::hostname()

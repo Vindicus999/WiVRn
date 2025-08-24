@@ -148,8 +148,7 @@ xrt_result_t wivrn_generic_tracker::get_tracked_pose(xrt_input_name name, int64_
 	{
 		std::tie(extrapolation_time, *res) = poses.get_pose_at(at_timestamp_ns);
 
-		active = true;
-		cnx.update_tracker_enabled();
+		cnx.set_tracker_enabled(index, true);
 		cnx.add_predict_offset(extrapolation_time);
 		return XRT_SUCCESS;
 	}
@@ -161,9 +160,6 @@ xrt_result_t wivrn_generic_tracker::get_tracked_pose(xrt_input_name name, int64_
 void wivrn_generic_tracker::update_tracking(const from_headset::body_tracking & tracking, const from_headset::body_tracking::pose & pose, const clock_offset & offset)
 {
 	if (!poses.update_tracking(tracking.production_timestamp, tracking.timestamp, pose, offset))
-	{
-		active = false;
-		cnx.update_tracker_enabled();
-	}
+		cnx.set_tracker_enabled(index, false);
 }
 } // namespace wivrn

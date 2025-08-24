@@ -20,6 +20,8 @@
 #pragma once
 
 #include "wivrn_packets.h"
+#include "xr/pico_eye_types.h"
+#include "xr/pico_eye_types_reflection.h"
 #include <openxr/openxr.h>
 
 namespace xr
@@ -29,13 +31,22 @@ class session;
 
 class pico_face_tracker
 {
-	struct impl;
-	std::shared_ptr<impl> i;
+	PFN_xrStartEyeTrackingPICO xrStartEyeTrackingPICO{};
+	PFN_xrStopEyeTrackingPICO xrStopEyeTrackingPICO{};
+	PFN_xrSetTrackingModePICO xrSetTrackingModePICO{};
+	PFN_xrGetFaceTrackingDataPICO xrGetFaceTrackingDataPICO{};
+
+	XrSession s;
+	bool started{};
 
 public:
 	using packet_type = wivrn::from_headset::tracking::fb_face2;
+	pico_face_tracker() = default;
 	pico_face_tracker(instance & inst, session & s);
+	~pico_face_tracker();
 
+	void start();
+	void stop();
 	void get_weights(XrTime time, packet_type & out_expressions);
 };
 } // namespace xr

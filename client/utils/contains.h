@@ -26,17 +26,9 @@ namespace utils
 template <typename Rng, typename T>
 bool contains(Rng && range, const T & value)
 {
-	if constexpr (std::is_convertible_v<T, const char *> and
-	              std::is_convertible_v<typename std::decay_t<Rng>::value_type, const char *>)
-	{
-		auto it = std::find_if(range.begin(), range.end(), [&](const char * i) { return strcmp(i, value) == 0; });
-		return it != range.end();
-	}
-	else
-	{
-		auto it = std::find(range.begin(), range.end(), value);
-		return it != range.end();
-	}
+	auto it = std::find(range.begin(), range.end(), value);
+
+	return it != range.end();
 }
 
 // Check if all values of range2 are in range1

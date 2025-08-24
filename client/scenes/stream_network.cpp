@@ -111,26 +111,8 @@ void scenes::stream::operator()(to_headset::application_list && apps)
 	std::ranges::sort(apps.applications, [](auto & l, auto & r) {
 		return una::casesens::collate_utf8(l.name, r.name) < 0;
 	});
-
 	auto locked = applications.lock();
-
-	locked->clear();
-	locked->reserve(apps.applications.size());
-	for (const auto & i: apps.applications)
-	{
-		locked->push_back(app{
-		        .id = std::move(i.id),
-		        .name = std::move(i.name),
-		});
-	}
-}
-
-void scenes::stream::operator()(to_headset::application_icon && icon)
-{
-	auto locked = applications.lock();
-
-	if (auto it = std::ranges::find(*locked, icon.id, &app::id); it != locked->end())
-		it->image = std::move(icon.image);
+	*locked = std::move(apps);
 }
 
 void scenes::stream::start_application(std::string appid)

@@ -19,30 +19,27 @@
 
 #pragma once
 
-#include "decoder.h"
-#include "wivrn_packets.h"
-
 #include <memory>
+#include <vulkan/vulkan.hpp>
+
+#ifdef __ANDROID__
+#include "decoder/android/android_decoder.h"
+using decoder_impl = ::wivrn::android::decoder;
+#else
+#include "decoder/ffmpeg/ffmpeg_decoder.h"
+using decoder_impl = ::wivrn::ffmpeg::decoder;
+#endif
+
+#include "wivrn_packets.h"
 #include <optional>
 #include <vector>
-#include <vulkan/vulkan_raii.hpp>
-
-namespace xr
-{
-class instance;
-}
-
-namespace scenes
-{
-class stream;
-}
 
 namespace wivrn
 {
 
 class shard_accumulator
 {
-	std::shared_ptr<decoder> decoder_;
+	std::shared_ptr<decoder_impl> decoder;
 
 public:
 	using data_shard = wivrn::to_headset::video_stream_data_shard;
@@ -53,7 +50,7 @@ public:
 		void reset(uint64_t frame_index);
 		bool empty() const;
 
-		std::optional<uint16_t> insert(data_shard &&, xr::instance & instance);
+		std::optional<uint16_t> insert(data_shard &&);
 
 		wivrn::from_headset::feedback feedback{};
 
@@ -73,22 +70,19 @@ private:
 	shard_set current;
 	shard_set next;
 	std::weak_ptr<scenes::stream> weak_scene;
-	xr::instance & instance;
 
 public:
 	explicit shard_accumulator(
 	        vk::raii::Device & device,
 	        vk::raii::PhysicalDevice & physical_device,
-	        xr::instance & instance,
 	        const wivrn::to_headset::video_stream_description::item & description,
 	        float fps,
 	        std::weak_ptr<scenes::stream> scene,
 	        uint8_t stream_index) :
-	        decoder_(decoder::make(device, physical_device, description, fps, stream_index, scene, this)),
+	        decoder(std::make_shared<decoder_impl>(device, physical_device, description, fps, stream_index, scene, this)),
 	        current(stream_index),
 	        next(stream_index),
-	        weak_scene(scene),
-	        instance(instance)
+	        weak_scene(scene)
 	{
 		next.reset(1);
 	}
@@ -97,20 +91,20 @@ public:
 
 	auto & desc() const
 	{
-		return decoder_->description;
+		return decoder->desc();
 	}
 
 	vk::Sampler sampler()
 	{
-		return decoder_->sampler();
+		return decoder->sampler();
 	}
 
-	const vk::Extent2D extent()
+	vk::Extent2D image_size()
 	{
-		return decoder_->extent();
+		return decoder->image_size();
 	}
 
-	using blit_handle = decoder::blit_handle;
+	using blit_handle = decoder_impl::blit_handle;
 
 private:
 	void try_submit_frame(std::optional<uint16_t> shard_idx);
