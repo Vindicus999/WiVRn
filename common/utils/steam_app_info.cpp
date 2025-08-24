@@ -18,7 +18,6 @@
 
 #include "steam_app_info.h"
 #include <bit>
-#include <cctype>
 #include <cstring>
 #include <fstream>
 #include <span>
@@ -90,8 +89,6 @@ void read_vdf(wivrn::steam_app_info::info & info, const std::string & prefix, st
 	while (type != 8)
 	{
 		std::string name{string_table.at(read<uint32_t>(bindata))};
-		for (char & c: name)
-			c = std::tolower(c);
 
 		// https://github.com/ValveResourceFormat/ValveKeyValue/blob/master/ValveKeyValue/ValveKeyValue/KeyValues1/KV1BinaryNodeType.cs
 		switch (type)

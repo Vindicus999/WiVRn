@@ -27,8 +27,7 @@ class vk_allocator : public singleton<vk_allocator>
 	VmaAllocator handle = nullptr;
 
 public:
-	const bool has_debug_utils;
-	vk_allocator(const VmaAllocatorCreateInfo &, bool has_debug_utils);
+	vk_allocator(const VmaAllocatorCreateInfo &);
 	~vk_allocator();
 
 	operator VmaAllocator()

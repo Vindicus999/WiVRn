@@ -29,9 +29,7 @@
 #include "wivrn_config.h"
 #include "wivrn_discover.h"
 #include "wivrn_packets.h"
-#include "xr/face_tracker.h"
 #include <vulkan/vulkan_raii.hpp>
-#include <openxr/openxr.h>
 
 #include <optional>
 #include <vector>
@@ -67,11 +65,6 @@ class lobby : public scene_impl<lobby>
 
 	std::optional<imgui_context> imgui_ctx;
 
-	std::optional<xr::hand_tracker> left_hand;
-	std::optional<xr::hand_tracker> right_hand;
-
-	xr::face_tracker face_tracker;
-
 	std::string selected_item;
 	std::unique_ptr<asset> license;
 
@@ -101,10 +94,8 @@ class lobby : public scene_impl<lobby>
 
 	XrAction recenter_left_action = XR_NULL_HANDLE;
 	XrAction recenter_right_action = XR_NULL_HANDLE;
-	// std::optional<glm::vec3> gui_recenter_position;
-	// std::optional<float> gui_recenter_distance;
-	// Which controller is used for recentering, position of the pointed point in the GUI, in GUI axes, and distance between the controller and the pointed point during recentering
-	std::optional<std::tuple<xr::spaces, glm::vec3, float>> recentering_context;
+	std::optional<glm::vec3> gui_recenter_position;
+	std::optional<float> gui_recenter_distance;
 	bool recenter_gui = true;
 	void move_gui(glm::vec3 head_position, glm::vec3 new_gui_position);
 
@@ -129,7 +120,6 @@ class lobby : public scene_impl<lobby>
 	ImTextureID about_picture;
 	ImTextureID default_icon;
 	std::unordered_map<std::string, ImTextureID> app_icons;
-	std::optional<XrTime> timestamp_start_application;
 
 	virtual_keyboard keyboard;
 
@@ -146,7 +136,7 @@ class lobby : public scene_impl<lobby>
 	void draw_features_status(XrTime predicted_display_time);
 	void gui_connecting(locked_notifiable<pin_request_data> & request);
 	void gui_enter_pin(locked_notifiable<pin_request_data> & request);
-	void gui_connected(XrTime predicted_display_time);
+	void gui_connected();
 	void gui_server_list();
 	void gui_new_server();
 	void gui_settings();
@@ -162,7 +152,7 @@ class lobby : public scene_impl<lobby>
 	void connect(const configuration::server_data & data);
 	std::unique_ptr<wivrn_session> connect_to_session(wivrn_discover::service service, bool manual_connection);
 
-	std::optional<glm::vec3> check_recenter_gesture(xr::spaces space, const std::optional<std::array<xr::hand_tracker::joint, XR_HAND_JOINT_COUNT_EXT>> & joints);
+	std::optional<glm::vec3> check_recenter_gesture(const std::array<xr::hand_tracker::joint, XR_HAND_JOINT_COUNT_EXT> & joints);
 	std::optional<glm::vec3> check_recenter_action(XrTime predicted_display_time, glm::vec3 head_position);
 	std::optional<glm::vec3> check_recenter_gui(glm::vec3 head_position, glm::quat head_orientation);
 

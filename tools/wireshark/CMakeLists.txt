@@ -11,7 +11,7 @@ set_target_properties(wivrn-dissector PROPERTIES
 target_link_libraries(wivrn-dissector PRIVATE epan wivrn-common)
 set_target_properties(wivrn-dissector PROPERTIES CXX_VISIBILITY_PRESET hidden)
 
-if (WIVRN_USE_SYSTEM_OPENXR)
+if (OpenXR_FOUND)
 	target_link_libraries(wivrn-dissector PRIVATE OpenXR::headers)
 else()
 	FetchContent_MakeAvailable(openxr_loader)

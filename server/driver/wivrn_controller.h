@@ -23,9 +23,7 @@
 
 #include "hand_joints_list.h"
 #include "pose_list.h"
-#include "utils/thread_safe.h"
 
-#include <fstream>
 #include <mutex>
 #include <vector>
 
@@ -66,10 +64,5 @@ public:
 	void update_hand_tracking(const from_headset::hand_tracking &, const clock_offset &);
 
 	void reset_history();
-
-	static thread_safe<std::ofstream> * tracking_dump();
 };
-
 } // namespace wivrn
-
-std::ostream & operator<<(std::ostream & out, const xrt_space_relation & rel);

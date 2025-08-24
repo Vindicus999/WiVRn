@@ -18,15 +18,19 @@
 
 #include "pico_body_tracker.h"
 #include "spdlog/spdlog.h"
-#include "xr/instance.h"
-#include "xr/session.h"
-#include "xr/to_string.h"
+#include "xr/xr.h"
 #include <openxr/openxr.h>
 
 static_assert(xr::pico_body_tracker::joint_whitelist.size() <= wivrn::from_headset::body_tracking::max_tracked_poses);
 
-xr::pico_body_tracker::pico_body_tracker(instance & inst, session & s) :
-        handle(inst.get_proc<PFN_xrDestroyBodyTrackerBD>("xrDestroyBodyTrackerBD"))
+static PFN_xrDestroyBodyTrackerBD xrDestroyBodyTrackerBD{};
+
+XrResult xr::destroy_pico_body_tracker(XrBodyTrackerBD id)
+{
+	return xrDestroyBodyTrackerBD(id);
+}
+
+xr::pico_body_tracker::pico_body_tracker(instance & inst, session & s)
 {
 	auto xrCreateBodyTrackerBD = inst.get_proc<PFN_xrCreateBodyTrackerBD>("xrCreateBodyTrackerBD");
 	xrLocateBodyJointsBD = inst.get_proc<PFN_xrLocateBodyJointsBD>("xrLocateBodyJointsBD");
@@ -41,6 +45,10 @@ xr::pico_body_tracker::pico_body_tracker(instance & inst, session & s) :
 	CHECK_XR(xrCreateBodyTrackerBD(s, &create_info, &id));
 }
 
+size_t xr::pico_body_tracker::count() const
+{
+	return joint_whitelist.size();
+}
 std::optional<std::array<wivrn::from_headset::body_tracking::pose, wivrn::from_headset::body_tracking::max_tracked_poses>> xr::pico_body_tracker::locate_spaces(XrTime time, XrSpace reference)
 {
 	if (!xrLocateBodyJointsBD)

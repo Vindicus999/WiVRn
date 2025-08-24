@@ -23,12 +23,19 @@
 #include "xr/session.h"
 #include <cassert>
 
-xr::hand_tracker::hand_tracker(instance & inst, session & session, const XrHandTrackerCreateInfoEXT & info) :
-        handle(inst.get_proc<PFN_xrDestroyHandTrackerEXT>("xrDestroyHandTrackerEXT"))
+static PFN_xrDestroyHandTrackerEXT xrDestroyHandTrackerEXT{};
+
+XrResult xr::destroy_hand_tracker(XrHandTrackerEXT id)
 {
-	auto xrCreateHandTrackerEXT = inst.get_proc<PFN_xrCreateHandTrackerEXT>("xrCreateHandTrackerEXT");
+	return xrDestroyHandTrackerEXT(id);
+}
+
+xr::hand_tracker::hand_tracker(instance & inst, session & session, const XrHandTrackerCreateInfoEXT & info)
+{
+	static auto xrCreateHandTrackerEXT = inst.get_proc<PFN_xrCreateHandTrackerEXT>("xrCreateHandTrackerEXT");
 	assert(xrCreateHandTrackerEXT);
 	xrLocateHandJointsEXT = inst.get_proc<PFN_xrLocateHandJointsEXT>("xrLocateHandJointsEXT");
+	xrDestroyHandTrackerEXT = inst.get_proc<PFN_xrDestroyHandTrackerEXT>("xrDestroyHandTrackerEXT");
 	CHECK_XR(xrCreateHandTrackerEXT(session, &info, &id));
 }
 

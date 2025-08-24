@@ -41,7 +41,7 @@ namespace wivrn
 // Default port for server to listen, both TCP and UDP
 static const int default_port = 9757;
 
-static constexpr int protocol_revision = 1;
+static constexpr int protocol_revision = 2;
 
 enum class device_id : uint8_t
 {
@@ -239,11 +239,6 @@ struct headset_info_packet
 	uint32_t num_generic_trackers;
 	std::vector<video_codec> supported_codecs; // from preferred to least preferred
 	std::string system_name;
-
-	// Used for the application list
-	std::string language;
-	std::string country;
-	std::string variant;
 };
 
 struct handshake
@@ -680,14 +675,9 @@ struct application_list
 	{
 		std::string id;
 		std::string name;
+		std::vector<std::byte> image; // In PNG
 	};
 	std::vector<application> applications;
-};
-
-struct application_icon
-{
-	std::string id;
-	std::vector<std::byte> image; // In PNG
 };
 
 using packets = std::variant<
@@ -703,7 +693,6 @@ using packets = std::variant<
         timesync_query,
         tracking_control,
         refresh_rate_change,
-        application_list,
-        application_icon>;
+        application_list>;
 } // namespace to_headset
 } // namespace wivrn
