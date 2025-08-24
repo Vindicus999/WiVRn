@@ -345,9 +345,9 @@ imgui_context::imgui_context(
 
 	ImGui_ImplVulkan_InitInfo init_info = {
 	        .Instance = *application::get_vulkan_instance(),
-	        .PhysicalDevice = *physical_device,
-	        .Device = *device,
-	        .QueueFamily = queue_family_index,
+	        .PhysicalDevice = *application::get_physical_device(),
+	        .Device = *application::get_device(),
+	        .QueueFamily = application::queue_family_index(),
 	        .Queue = *queue.get_unsafe(),
 	        .RenderPass = *renderpass,
 	        .MinImageCount = 2,
@@ -718,7 +718,7 @@ void imgui_context::new_frame(XrTime display_time)
 	ImPlot::SetCurrentContext(plot_context);
 
 	if (last_display_time)
-		io.DeltaTime = std::clamp((display_time - last_display_time) * 1e-9f, 0.001f, 0.0166f);
+		io.DeltaTime = std::min((display_time - last_display_time) * 1e-9f, 0.0166f);
 	last_display_time = display_time;
 
 	// Uses the window list from last frame
@@ -1099,13 +1099,6 @@ ImTextureID imgui_context::load_texture(const std::string & filename)
 
 void imgui_context::free_texture(ImTextureID texture)
 {
-	// Make sure we are done using the texture
-	std::vector<vk::Fence> fences;
-	for (auto & f: command_buffers)
-		fences.push_back(*f.fence);
-	if (auto result = device.waitForFences(fences, true, 1'000'000'000); result != vk::Result::eSuccess)
-		spdlog::error("vkWaitForfences: {}", vk::to_string(result));
-
 	textures.erase(texture);
 }
 

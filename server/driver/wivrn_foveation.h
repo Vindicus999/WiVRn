@@ -24,7 +24,6 @@
 #include "xrt/xrt_defines.h"
 #include "xrt/xrt_device.h"
 
-#include "utils/singleton.h"
 #include <vulkan/vulkan_raii.hpp>
 
 struct render_resources;
@@ -35,7 +34,7 @@ namespace wivrn
 struct clock_offset;
 struct wivrn_vk_bundle;
 
-class wivrn_foveation : public singleton<wivrn_foveation>
+class wivrn_foveation
 {
 	std::mutex mutex;
 
@@ -54,8 +53,8 @@ class wivrn_foveation : public singleton<wivrn_foveation>
 
 	vk::raii::CommandPool command_pool;
 	vk::raii::CommandBuffer cmd;
-	buffer_allocation gpu_buffer;
 	buffer_allocation host_buffer;
+	vk::Buffer gpu_buffer = nullptr;
 
 	// parameters used for last computation
 	struct P
@@ -81,8 +80,6 @@ public:
 	void update_tracking(const from_headset::tracking &, const clock_offset &);
 	void update_foveation_center_override(const from_headset::override_foveation_center &);
 	std::array<to_headset::foveation_parameter, 2> get_parameters();
-
-	vk::Buffer get_gpu_buffer();
 
 	vk::CommandBuffer update_foveation_buffer(
 	        vk::Buffer target,

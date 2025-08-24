@@ -19,81 +19,37 @@
 
 #pragma once
 
-#include <spdlog/spdlog.h>
-#include <type_traits>
 #include <utility>
-#include <variant>
 #include <openxr/openxr.h>
 
 namespace utils
 {
-
-template <typename T, auto Deleter = nullptr>
+template <typename T, XrResult deleter(T)>
 class handle
 {
-public:
-	// true if the deleter is provided when constructing the object
-	// typically if it's from an OpenXR extension
-	static constexpr bool runtime_deleter = Deleter == nullptr;
-
 protected:
 	static const inline T null_value = 0;
 
 	T id = null_value;
-	[[no_unique_address]] std::conditional_t<runtime_deleter, XrResult (*)(T), std::monostate> deleter;
 
 public:
-	template <typename = void>
-	        requires(not runtime_deleter)
-	handle()
-	{}
-
-	template <typename = void>
-	        requires(not runtime_deleter)
+	handle() {}
 	handle(T id) :
-	        id(id)
-	{}
-
-	template <typename = void>
-	        requires(runtime_deleter)
-	handle(XrResult (*deleter)(T)) :
-	        deleter(deleter)
-	{
-		assert(deleter);
-	}
-
-	template <typename = void>
-	        requires(runtime_deleter)
-	handle(T id, XrResult (*deleter)(T)) :
-	        id(id), deleter(deleter)
-	{
-		assert(deleter);
-	}
-
+	        id(id) {}
 	~handle()
 	{
 		if (id != null_value)
-		{
-			XrResult res = XR_SUCCESS;
-			if constexpr (runtime_deleter)
-				res = deleter(id);
-			else
-				res = Deleter(id);
-			if (not XR_SUCCEEDED(res))
-				spdlog::warn("Failed to destroy {}", typeid(T).name());
-		}
+			deleter(id);
 	}
 
 	handle(handle && other) noexcept :
-	        id(other.id), deleter(other.deleter)
+	        id(other.id)
 	{
 		other.id = null_value;
 	}
 
 	handle & operator=(handle && other) noexcept
 	{
-		if constexpr (runtime_deleter)
-			std::swap(deleter, other.deleter);
 		std::swap(id, other.id);
 		return *this;
 	}

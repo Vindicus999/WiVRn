@@ -20,7 +20,6 @@
 
 #include "wivrn_packets.h"
 
-#include "utils/handle.h"
 #include "xr/meta_body_tracking_fidelity.h"
 #include <array>
 #include <optional>
@@ -31,10 +30,15 @@ namespace xr
 class instance;
 class session;
 
-class fb_body_tracker : public utils::handle<XrBodyTrackerFB>
+class fb_body_tracker
 {
+	XrSession s;
+	XrBodyTrackerFB handle{};
+
+	PFN_xrCreateBodyTrackerFB xrCreateBodyTrackerFB{};
 	PFN_xrRequestBodyTrackingFidelityMETA xrRequestBodyTrackingFidelityMETA{};
 	PFN_xrLocateBodyJointsFB xrLocateBodyJointsFB{};
+	PFN_xrDestroyBodyTrackerFB xrDestroyBodyTrackerFB{};
 
 	bool full_body{};
 	bool hip{};
@@ -55,7 +59,13 @@ public:
 	};
 	static std::vector<XrFullBodyJointMETA> get_whitelisted_joints(bool full_body, bool hip);
 
-	fb_body_tracker(instance & inst, session & s, bool full_body, bool hip);
+	fb_body_tracker() = default;
+	fb_body_tracker(instance & inst, session & s);
+	~fb_body_tracker();
+
+	void start(bool lower_body, bool hip);
+	void stop();
+	size_t count() const;
 
 	std::optional<std::array<wivrn::from_headset::body_tracking::pose, wivrn::from_headset::body_tracking::max_tracked_poses>> locate_spaces(XrTime time, XrSpace reference);
 };

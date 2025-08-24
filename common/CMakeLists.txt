@@ -1,4 +1,4 @@
-if (WIVRN_USE_SYSTEM_BOOST)
+if (BOOST_FOUND)
     add_library(Boost::pfr ALIAS Boost::headers)
 elseif (WIVRN_BUILD_CLIENT)
     FetchContent_MakeAvailable(boost)
@@ -7,7 +7,6 @@ else()
 endif()
 
 if (GIT_DESC)
-    string(REGEX REPLACE "^v([0-9])" "\\1" GIT_DESC ${GIT_DESC})
     configure_file(version.cpp.in version.cpp)
 else ()
     add_custom_target(wivrn-version ALL
@@ -51,7 +50,7 @@ if (WIVRN_BUILD_DASHBOARD OR WIVRN_BUILD_SERVER)
         utils/ini.cpp
         application.cpp
     )
-    target_link_libraries(wivrn-common-server PRIVATE nlohmann_json::nlohmann_json PNG::PNG PkgConfig::librsvg-2.0 LibArchive::LibArchive PUBLIC wivrn-common-base)
+    target_link_libraries(wivrn-common-server PRIVATE nlohmann_json::nlohmann_json PNG::PNG PkgConfig::librsvg-2.0 PUBLIC wivrn-common-base)
 
     if (WIVRN_BUILD_TEST)
         add_executable(list-apps

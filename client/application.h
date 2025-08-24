@@ -28,11 +28,14 @@
 #include "utils/thread_safe.h"
 #include "vk/vk_allocator.h"
 #include "wifi_lock.h"
-#include "xr/actionset.h"
-#include "xr/instance.h"
-#include "xr/session.h"
-#include "xr/swapchain.h"
-#include "xr/system.h"
+#include "xr/fb_body_tracker.h"
+#include "xr/fb_face_tracker2.h"
+#include "xr/hand_tracker.h"
+#include "xr/htc_body_tracker.h"
+#include "xr/htc_face_tracker.h"
+#include "xr/pico_body_tracker.h"
+#include "xr/pico_face_tracker.h"
+#include "xr/xr.h"
 #include <atomic>
 #include <boost/locale/generator.hpp>
 #include <boost/locale/gnu_gettext.hpp>
@@ -123,7 +126,12 @@ class application : public singleton<application>
 	xr::actionset xr_actionset;
 	std::vector<std::tuple<XrAction, XrActionType, std::string>> actions;
 
-	std::vector<std::pair<XrPath, xr::space>> generic_trackers;
+	bool hand_tracking_supported = false;
+	xr::hand_tracker left_hand;
+	xr::hand_tracker right_hand;
+
+	std::variant<std::monostate, xr::fb_face_tracker2, xr::htc_face_tracker, xr::pico_face_tracker> face_tracker;
+	std::variant<std::monostate, xr::fb_body_tracker, xr::htc_body_tracker, xr::pico_body_tracker> body_tracker;
 
 	bool eye_gaze_supported = false;
 
@@ -133,6 +141,7 @@ class application : public singleton<application>
 	bool session_focused = false;
 	bool session_visible = false;
 	bool debug_extensions_found = false;
+	std::vector<std::string> xr_extensions;
 	std::vector<const char *> vk_device_extensions;
 	std::atomic<bool> exit_requested = false;
 	std::filesystem::path config_path;
@@ -262,6 +271,16 @@ public:
 		return std::make_pair(position, orientation);
 	}
 
+	static XrPath string_to_path(const std::string & s)
+	{
+		return instance().xr_instance.string_to_path(s);
+	}
+
+	static std::string path_to_string(XrPath p)
+	{
+		return instance().xr_instance.path_to_string(p);
+	}
+
 	void run();
 
 	static void push_scene(std::shared_ptr<scene>);
@@ -332,6 +351,16 @@ public:
 		// #endif
 	}
 
+	static XrTime now()
+	{
+		return instance().xr_instance.now();
+	}
+
+	static uint32_t queue_family_index()
+	{
+		return instance().vk_queue_family_index;
+	}
+
 	static thread_safe<vk::raii::Queue> & get_queue()
 	{
 		return instance().vk_queue;
@@ -347,19 +376,24 @@ public:
 		return intent;
 	}
 
+	static vk::raii::PhysicalDevice & get_physical_device()
+	{
+		return instance().vk_physical_device;
+	}
+
 	static const vk::PhysicalDeviceProperties & get_physical_device_properties()
 	{
 		return instance().physical_device_properties;
 	}
 
+	static vk::raii::Device & get_device()
+	{
+		return instance().vk_device;
+	}
+
 	static vk::raii::Instance & get_vulkan_instance()
 	{
 		return instance().vk_instance;
-	}
-
-	static xr::system & get_system()
-	{
-		return instance().xr_system_id;
 	}
 
 	static vk::raii::PipelineCache & get_pipeline_cache()
@@ -382,6 +416,21 @@ public:
 		return instance().last_scene_cpu_time;
 	}
 
+	static bool get_hand_tracking_supported()
+	{
+		return instance().hand_tracking_supported;
+	}
+
+	static bool get_face_tracking_supported()
+	{
+		return !std::holds_alternative<std::monostate>(instance().face_tracker);
+	}
+
+	static bool get_body_tracking_supported()
+	{
+		return !std::holds_alternative<std::monostate>(instance().body_tracker);
+	}
+
 	static bool get_eye_gaze_supported()
 	{
 		return instance().eye_gaze_supported;
@@ -392,9 +441,29 @@ public:
 		return instance().openxr_post_processing_supported;
 	}
 
-	static auto & get_generic_trackers()
+	static xr::hand_tracker & get_left_hand()
 	{
-		return instance().generic_trackers;
+		return instance().left_hand;
+	}
+
+	static xr::hand_tracker & get_right_hand()
+	{
+		return instance().right_hand;
+	}
+
+	static auto & get_face_tracker()
+	{
+		return instance().face_tracker;
+	}
+
+	static auto & get_body_tracker()
+	{
+		return instance().body_tracker;
+	}
+
+	static const std::vector<std::string> & get_xr_extensions()
+	{
+		return instance().xr_extensions;
 	}
 
 	static const std::vector<const char *> & get_vk_device_extensions()

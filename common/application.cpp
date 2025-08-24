@@ -20,6 +20,7 @@
 #include "application.h"
 
 #include "utils/flatpak.h"
+#include "utils/load_icon.h"
 #include "utils/steam_app_info.h"
 #include "utils/xdg_base_directory.h"
 #include "utils/xdg_icon_lookup.h"
@@ -50,18 +51,19 @@ std::filesystem::path home()
 
 std::pair<std::string, std::optional<std::filesystem::path>> find_steam()
 {
-	auto h = home();
-	// Flatpak Steam
-	if (std::filesystem::exists(h / ".var/app/com.valvesoftware.Steam/.steam/steam"))
-		return {"flatpak run com.valvesoftware.Steam", h / ".var/app/com.valvesoftware.Steam/.steam/steam"};
-
 	// system Steam
 	if (std::filesystem::exists(xdg_data_home() / "Steam"))
 		return {"steam", xdg_data_home() / "Steam"};
 
+	auto h = home();
+
 	// system Steam (accessed from flatpak)
 	if (std::filesystem::exists(h / ".local/share/Steam"))
 		return {"steam", h / ".local/share/Steam"};
+
+	// Flatpak Steam
+	if (std::filesystem::exists(h / ".var/app/com.valvesoftware.Steam/.steam/steam"))
+		return {"flatpak run com.valvesoftware.Steam", h / ".var/app/com.valvesoftware.Steam/.steam/steam"};
 
 	return {};
 }
@@ -83,17 +85,17 @@ steam_app_info read_steam_app_info(const std::filesystem::path & root)
 	return {};
 }
 
-std::optional<std::filesystem::path> find_steam_icon(const std::filesystem::path & root, int app_id, const steam_app_info & info)
+std::vector<std::byte> load_steam_icon(const std::filesystem::path & root, int app_id, const steam_app_info & info)
 {
 	const auto & app_info = info.get(app_id);
 
 	try
 	{
 		std::string icon{std::get<std::string_view>(app_info.at("common.clienticon"))};
-		auto icon_path = root / "steam/games" / (icon + ".ico");
 
-		if (std::filesystem::exists(icon_path))
-			return icon_path;
+		auto image = load_icon(root / "steam/games" / (icon + ".ico"), 128);
+		if (not image.empty())
+			return image;
 	}
 	catch (...)
 	{
@@ -101,21 +103,20 @@ std::optional<std::filesystem::path> find_steam_icon(const std::filesystem::path
 
 	try
 	{
-		std::string icon{std::get<std::string_view>(app_info.at("common.linuxclienticon"))};
+		std::string icon{std::get<std::string_view>(app_info.at("common.LinuxClientIcon"))};
 
-		auto icon_path = root / "steam/games" / (icon + ".zip");
-
-		if (std::filesystem::exists(icon_path))
-			return icon_path;
+		auto image = load_icon(root / "steam/games" / (icon + ".zip"), 128);
+		if (not image.empty())
+			return image;
 	}
 	catch (...)
 	{
 	}
 
-	return std::nullopt;
+	return {};
 }
 
-void read_steam_vr_apps(std::unordered_map<std::string, application> & res)
+void read_steam_vr_apps(std::unordered_map<std::string, application> & res, bool load_icons)
 {
 	auto [command, root] = find_steam();
 	if (not root)
@@ -165,17 +166,20 @@ void read_steam_vr_apps(std::unordered_map<std::string, application> & res)
 				}
 			}
 
-			try
+			if (load_icons)
 			{
-				const char prefix[] = "steam.app.";
-				if (app_key.starts_with(prefix))
+				try
 				{
-					uint32_t app_id = stoll(app_key.substr(strlen(prefix)));
-					app.icon_path = find_steam_icon(*root, app_id, info);
+					const char prefix[] = "steam.app.";
+					if (app_key.starts_with(prefix))
+					{
+						uint32_t app_id = stoll(app_key.substr(strlen(prefix)));
+						app.image = load_steam_icon(*root, app_id, info);
+					}
 				}
-			}
-			catch (...)
-			{
+				catch (...)
+				{
+				}
 			}
 
 			if (not app.exec.empty())
@@ -277,7 +281,7 @@ bool contains(std::string_view entries, std::string_view val, char sep = ';')
 	return false;
 }
 
-std::optional<application> do_desktop_entry(const std::filesystem::path & filename)
+std::optional<application> do_desktop_entry(const std::filesystem::path & filename, bool load_icons)
 {
 	auto data = read_file(filename);
 	std::optional<application> res;
@@ -319,11 +323,12 @@ std::optional<application> do_desktop_entry(const std::filesystem::path & filena
 			res->exec = unescape(item.value);
 		if (item.key == "Path")
 			res->path = unescape(item.value);
-		if (item.key == "Icon")
+		if (item.key == "Icon" and load_icons)
 		{
 			try
 			{
-				res->icon_path = xdg_icon_lookup(std::string{item.value}, 256);
+				if (auto filename = xdg_icon_lookup(std::string{item.value}, 256))
+					res->image = load_icon(*filename, 256);
 			}
 			catch (...)
 			{}
@@ -336,7 +341,7 @@ std::optional<application> do_desktop_entry(const std::filesystem::path & filena
 	return res;
 }
 
-void do_data_dir(std::filesystem::path dir, std::unordered_map<std::string, application> & res)
+void do_data_dir(std::filesystem::path dir, std::unordered_map<std::string, application> & res, bool load_icons)
 {
 	dir = dir / "applications";
 	if (not std::filesystem::is_directory(dir))
@@ -359,28 +364,29 @@ void do_data_dir(std::filesystem::path dir, std::unordered_map<std::string, appl
 		if (res.contains(file_id))
 			continue;
 
-		auto app = do_desktop_entry(entry.path());
+		auto app = do_desktop_entry(entry.path(), load_icons);
 		if (app)
 			res.emplace(std::move(file_id), std::move(*app));
 	}
 }
 } // namespace
 
-std::unordered_map<std::string, application> list_applications()
+std::unordered_map<std::string, application> list_applications(bool include_steam, bool load_icons)
 {
 	std::unordered_map<std::string, application> res;
 
-	read_steam_vr_apps(res);
+	if (include_steam)
+		read_steam_vr_apps(res, load_icons);
 
-	do_data_dir(xdg_data_home(), res);
+	do_data_dir(xdg_data_home(), res, load_icons);
 
 	for (auto && dir: xdg_data_dirs())
-		do_data_dir(std::move(dir), res);
+		do_data_dir(std::move(dir), res, load_icons);
 
 	if (wivrn::is_flatpak())
 	{
 		// Try to guess host data dirs
-		do_data_dir("/run/host/usr/share", res);
+		do_data_dir("/run/host/usr/share", res, load_icons);
 	}
 
 	return res;

@@ -28,7 +28,6 @@
 #include "util/u_builders.h"
 #include "util/u_logging.h"
 #include "util/u_system.h"
-#include "utils/load_icon.h"
 #include "utils/scoped_lock.h"
 
 #include "audio/audio_setup.h"
@@ -172,12 +171,6 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 		throw;
 	}
 
-	(*this)(from_headset::get_application_list{
-	        .language = get_info().language,
-	        .country = get_info().country,
-	        .variant = get_info().variant,
-	});
-
 	static_roles.head = xdevs[xdev_count++] = &hmd;
 
 	if (hmd.supported.face_tracking)
@@ -240,31 +233,24 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 		xdevs[xdev_count++] = htc_face_tracker.get();
 	}
 
-	auto num_generic_trackers = get_info().num_generic_trackers;
-	generic_trackers.reserve(num_generic_trackers);
+	num_generic_trackers = get_info().num_generic_trackers;
+	enabled_trackers.fill(false);
 	if (num_generic_trackers > 0)
 	{
-		if (num_generic_trackers > from_headset::body_tracking::max_tracked_poses)
-		{
-			U_LOG_W("reported generic trackers %d larger than maximum %lu",
-			        num_generic_trackers,
-			        from_headset::body_tracking::max_tracked_poses);
-			num_generic_trackers = from_headset::body_tracking::max_tracked_poses;
-		}
-		if (num_generic_trackers + xdev_count > std::size(xdevs))
-		{
-			U_LOG_W("Too many generic trackers: %d, only %lu will be active",
-			        num_generic_trackers,
-			        std::size(xdevs) - xdev_count);
-			num_generic_trackers = std::size(xdevs) - xdev_count;
-		}
 		U_LOG_I("Creating %d generic trackers", num_generic_trackers);
+
+		if (num_generic_trackers > generic_trackers.size())
+			throw std::out_of_range(
+			        std::format("{} generic trackers is larger than maximum {}",
+			                    num_generic_trackers,
+			                    generic_trackers.size()));
 
 		for (int i = 0; i < num_generic_trackers; ++i)
 		{
 			auto dev = std::make_unique<wivrn_generic_tracker>(i, &hmd, *this);
 			xdevs[xdev_count++] = dev.get();
-			generic_trackers.push_back(std::move(dev));
+			generic_trackers[i] = std::move(dev);
+			enabled_trackers[i] = true;
 		}
 	}
 
@@ -549,10 +535,12 @@ void wivrn_session::operator()(from_headset::body_tracking && body_tracking)
 {
 	auto offset = offset_est.get_offset();
 
-	assert(generic_trackers.size() <= from_headset::body_tracking::max_tracked_poses);
-	for (int i = 0; i < generic_trackers.size(); i++)
+	for (int i = 0; i < num_generic_trackers; i++)
 	{
-		auto pose = body_tracking.poses ? (*body_tracking.poses)[i] : from_headset::body_tracking::pose{};
+		auto pose = body_tracking.poses ? body_tracking.poses->at(i) : from_headset::body_tracking::pose{
+		                                                                       .pose = {},
+		                                                                       .flags = 0,
+		                                                               };
 		generic_trackers[i]->update_tracking(body_tracking, pose, offset);
 	}
 }
@@ -617,10 +605,12 @@ void wivrn_session::set_enabled(device_id id, bool enabled)
 	if (tracking_control.set_enabled(to_tracking_control(id), enabled) and enabled)
 		tracking_control.send(*connection, true);
 }
-void wivrn_session::update_tracker_enabled()
+void wivrn_session::set_tracker_enabled(int index, bool enabled)
 {
-	bool active = std::ranges::any_of(generic_trackers, [](auto & t) { return t->is_active(); });
-	if (tracking_control.set_enabled(to_headset::tracking_control::id::generic_tracker, active) and active)
+	assert(index < std::size(enabled_trackers));
+	enabled_trackers[index] = enabled;
+	bool keep_active = std::ranges::any_of(enabled_trackers, [](bool b) { return b; });
+	if (tracking_control.set_enabled(to_headset::tracking_control::id::generic_tracker, keep_active))
 		tracking_control.send(*connection, true);
 }
 
@@ -746,48 +736,15 @@ void wivrn_session::operator()(from_headset::get_application_list && request)
 	        .country = std::move(request.country),
 	        .variant = std::move(request.variant),
 	};
-
-	auto apps = list_applications();
-
-	for (const auto & [id, app]: apps)
+	for (auto && [id, app]: list_applications())
 	{
 		response.applications.emplace_back(
 		        std::move(id),
 		        // FIXME: use locale
-		        app.name.at(""));
+		        app.name.at(""),
+		        app.image);
 	}
 	send_control(std::move(response));
-
-	for (const auto & [id, app]: apps)
-	{
-		if (app.icon_path)
-		{
-			try
-			{
-				const auto & icons = load_icon(*app.icon_path);
-
-				if (icons.empty())
-					continue;
-
-				const auto & largest_icon = std::ranges::max(icons, [](const wivrn::icon & a, const wivrn::icon & b) {
-					if (a.bpp < b.bpp)
-						return true;
-					if (a.bpp > b.bpp)
-						return false;
-					return a.width * a.height < b.width * b.height;
-				});
-
-				send_control(to_headset::application_icon{
-				        .id = id,
-				        .image = largest_icon.png_data,
-				});
-			}
-			catch (std::exception & e)
-			{
-				U_LOG_W("Error loading icon %s: %s", app.icon_path->c_str(), e.what());
-			}
-		}
-	}
 }
 
 void wivrn_session::operator()(const from_headset::start_app & request)

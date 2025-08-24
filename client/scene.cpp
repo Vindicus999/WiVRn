@@ -51,6 +51,8 @@ scene::scene(key, const meta & current_meta, std::span<const vk::Format> support
         queue_family_index(application::instance().vk_queue_family_index),
         current_meta(current_meta)
 {
+	passthrough_supported = system.passthrough_supported();
+
 	swapchain_format = vk::Format::eUndefined;
 	spdlog::info("Supported swapchain formats:");
 
@@ -441,7 +443,7 @@ std::pair<entt::entity, components::node &> scene::load_gltf(const std::filesyst
 	node.layer_mask = layer_mask;
 
 	assert(renderer);
-	scene_loader loader(device, physical_device, queue, queue_family_index, renderer->get_default_material());
+	scene_loader loader(device, physical_device, queue, application::queue_family_index(), renderer->get_default_material());
 
 	loader.add_prefab(world, loader(path), entity);
 

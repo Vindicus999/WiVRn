@@ -290,7 +290,6 @@ Kirigami.ScrollablePage {
             SelectGame {}
 
             SteamLaunchOptions {
-                visible: WivrnServer.steamCommand != ""
                 Layout.topMargin: 2 * Kirigami.Units.largeSpacing
             }
 

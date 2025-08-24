@@ -18,6 +18,7 @@
  */
 
 #include "render/render_interface.h"
+#include "vk/vk_mini_helpers.h"
 
 #include "wivrn_foveation.h"
 
@@ -43,13 +44,22 @@ bool render_distortion_images_ensure(struct render_resources * r,
                                      bool pre_rotate)
 {
 	if (r->distortion.buffer == VK_NULL_HANDLE)
-		r->distortion.buffer = wivrn::wivrn_foveation::instance().get_gpu_buffer();
+	{
+		return vk_buffer_init(vk,
+		                      sizeof(render_compute_distortion_foveation_data),
+		                      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+		                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+		                      &r->distortion.buffer,
+		                      &r->distortion.device_memory);
+	}
 	return true;
 }
 
 void render_distortion_images_fini(struct render_resources * r)
 {
-	r->distortion.buffer = VK_NULL_HANDLE;
+	auto * vk = r->vk;
+	D(Buffer, r->distortion.buffer);
+	DF(Memory, r->distortion.device_memory);
 }
 
 // a, b: parameters computed by solve_foveation
@@ -310,34 +320,20 @@ wivrn_foveation::wivrn_foveation(wivrn_vk_bundle & bundle, const xrt_hmd_parts &
                 .commandPool = *command_pool,
                 .commandBufferCount = 1,
         })[0])),
-        gpu_buffer(
+        host_buffer(
                 bundle.device,
                 {
                         .size = sizeof(render_compute_distortion_foveation_data),
-                        .usage = vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer,
+                        .usage = vk::BufferUsageFlagBits::eTransferSrc,
                 },
                 VmaAllocationCreateInfo{
-                        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT,
+                        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
                         .usage = VMA_MEMORY_USAGE_AUTO,
-                },
-                "foveation storage buffer")
+                })
 {
-	if (not(gpu_buffer.properties() & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
-	{
-		host_buffer = buffer_allocation(
-		        bundle.device,
-		        {
-		                .size = gpu_buffer.info().size,
-		                .usage = vk::BufferUsageFlagBits::eTransferSrc,
-		        },
-		        {
-		                .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
-		                .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
-		        },
-		        "foveation staging buffer");
-	}
 	bundle.name(command_pool, "foveation command pool");
 	bundle.name(cmd, "foveation command buffer");
+	bundle.name(vk::Buffer(host_buffer), "foveation staging buffer");
 }
 
 void wivrn_foveation::update_tracking(const from_headset::tracking & tracking, const clock_offset & offset)
@@ -393,7 +389,7 @@ std::array<to_headset::foveation_parameter, 2> wivrn_foveation::get_parameters()
 }
 
 static void fill_ubo(
-        std::span<uint32_t> ubo,
+        uint32_t * ubo,
         const std::vector<uint16_t> & params,
         bool flip,
         size_t offset,
@@ -402,9 +398,9 @@ static void fill_ubo(
 {
 	assert(params.size() % 2 == 1);
 	const int n_ratio = (params.size() - 1) / 2;
-	ubo[0] = offset;
+	*ubo = offset;
 	if (flip)
-		ubo[0] += size;
+		*ubo += size;
 	for (auto [i, n]: std::ranges::enumerate_view(params))
 	{
 		const int n_source = std::abs(n_ratio - int(i)) + 1;
@@ -415,12 +411,12 @@ static void fill_ubo(
 				ubo[1] = ubo[0] - n_source;
 			else
 				ubo[1] = ubo[0] + n_source;
-			ubo = ubo.subspan(1);
+			++ubo;
 			--count;
 		}
 	}
-	if (not ubo.empty())
-		std::ranges::fill(ubo, ubo[0]);
+	if (count > 0)
+		std::fill(ubo + 1, ubo + count + 1, *ubo);
 }
 
 template <typename T>
@@ -438,11 +434,6 @@ static bool operator==(const xrt_fov & a, const xrt_fov & b)
 	return a.angle_left == b.angle_left and a.angle_right == b.angle_right and a.angle_up == b.angle_up and a.angle_down == b.angle_down;
 }
 
-vk::Buffer wivrn_foveation::get_gpu_buffer()
-{
-	return gpu_buffer;
-}
-
 vk::CommandBuffer wivrn_foveation::update_foveation_buffer(
         vk::Buffer target,
         bool flip_y,
@@ -451,6 +442,14 @@ vk::CommandBuffer wivrn_foveation::update_foveation_buffer(
 {
 	if (not target)
 		return nullptr;
+
+	if (target != gpu_buffer)
+	{
+		command_pool.reset();
+		cmd.begin({});
+		cmd.copyBuffer(host_buffer, target, vk::BufferCopy{.size = sizeof(render_compute_distortion_foveation_data)});
+		cmd.end();
+	}
 
 	// Check if the last value is still valid
 	std::lock_guard lock(mutex);
@@ -468,15 +467,6 @@ vk::CommandBuffer wivrn_foveation::update_foveation_buffer(
 	)
 		return nullptr;
 
-	assert(target == gpu_buffer);
-	if (host_buffer)
-	{
-		command_pool.reset();
-		cmd.begin({});
-		cmd.copyBuffer(host_buffer, target, vk::BufferCopy{.size = sizeof(render_compute_distortion_foveation_data)});
-		cmd.end();
-	}
-
 	last = {
 	        .gaze = gaze,
 	        .flip_y = flip_y,
@@ -488,7 +478,7 @@ vk::CommandBuffer wivrn_foveation::update_foveation_buffer(
 
 	compute_params(source, fovs);
 
-	auto ubo = host_buffer ? host_buffer.data<render_compute_distortion_foveation_data>() : gpu_buffer.data<render_compute_distortion_foveation_data>();
+	auto ubo = (render_compute_distortion_foveation_data *)host_buffer.map();
 	for (size_t view = 0; view < 2; ++view)
 	{
 		bool flip = false;
@@ -505,7 +495,7 @@ vk::CommandBuffer wivrn_foveation::update_foveation_buffer(
 			offset = source[view].offset.w;
 			extent = source[view].extent.w;
 		}
-		fill_ubo(std::span(ubo->x + view * RENDER_FOVEATION_BUFFER_DIMENSIONS, RENDER_FOVEATION_BUFFER_DIMENSIONS), params[view].x, flip, offset, extent, foveated_width);
+		fill_ubo(ubo->x + view * RENDER_FOVEATION_BUFFER_DIMENSIONS, params[view].x, flip, offset, extent, foveated_width);
 
 		if (source[view].extent.h < 0)
 		{
@@ -519,10 +509,8 @@ vk::CommandBuffer wivrn_foveation::update_foveation_buffer(
 			offset = source[view].offset.h;
 			extent = source[view].extent.h;
 		}
-		fill_ubo(std::span(ubo->y + view * RENDER_FOVEATION_BUFFER_DIMENSIONS, RENDER_FOVEATION_BUFFER_DIMENSIONS), params[view].y, flip, offset, extent, foveated_height);
+		fill_ubo(ubo->y + view * RENDER_FOVEATION_BUFFER_DIMENSIONS, params[view].y, flip, offset, extent, foveated_height);
 	}
-	if (host_buffer)
-		return *cmd;
-	return nullptr;
+	return *cmd;
 }
 } // namespace wivrn

@@ -18,6 +18,7 @@
 #include "hostname.h"
 #include "protocol_version.h"
 #include "start_application.h"
+#include "utils/flatpak.h"
 #include "utils/overloaded.h"
 #include "version.h"
 #include "wivrn_config.h"
@@ -127,37 +128,46 @@ int create_listen_socket()
 	return fd;
 }
 
-static bool pressure_vessel_openxr_support()
+static std::filesystem::path flatpak_app_path()
 {
-	auto pv_var = std::getenv("PRESSURE_VESSEL_IMPORT_OPENXR_1_RUNTIMES");
-	return pv_var and pv_var == std::string_view("1");
-}
+	if (auto value = flatpak_key(flatpak::section::instance, "app-path"))
+	{
+		std::filesystem::path path = *value;
+		while (path != "" and path != path.parent_path() and path.filename() != "io.github.wivrn.wivrn")
+			path = path.parent_path();
 
-static void append_delim(std::string & to, std::string_view what, char delim)
-{
-	if (not to.empty())
-		to += delim;
-	to += what;
+		return path;
+	}
+
+	return "/";
 }
 
 static std::string steam_command()
 {
-	std::string command;
+	std::string pressure_vessel_filesystems_rw = "$XDG_RUNTIME_DIR/" XRT_IPC_MSG_SOCK_FILENAME;
+	std::string vr_override;
 
-	if (not pressure_vessel_openxr_support())
-		command = "PRESSURE_VESSEL_IMPORT_OPENXR_1_RUNTIMES=1";
-
-	if (auto p = active_runtime::openvr_compat_path().string(); not p.empty())
+	// Check if in a flatpak
+	if (is_flatpak())
+	{
+		std::string app_path = flatpak_app_path().string();
+		// /usr and /var are remapped by steam
+		if (app_path.starts_with("/var"))
+			pressure_vessel_filesystems_rw += ":" + app_path;
+	}
+	else if (auto p = active_runtime::openvr_compat_path().string(); not p.empty())
 	{
 		// /usr cannot be shared in pressure vessel container
 		if (p.starts_with("/usr"))
-			append_delim(command, " VR_OVERRIDE=/run/host" + p, ' ');
+			vr_override = " VR_OVERRIDE=/run/host" + p;
 		else if (p.starts_with("/var"))
-			append_delim(command, "PRESSURE_VESSEL_FILESYSTEMS_RW=" + p, ' ');
+			pressure_vessel_filesystems_rw += ":" + p;
 	}
 
-	if (not command.empty())
-		command += " %command%";
+	std::string command = "PRESSURE_VESSEL_FILESYSTEMS_RW=" + pressure_vessel_filesystems_rw + vr_override + " %command%";
+
+	if (auto p = active_runtime::manifest_path().string(); p.starts_with("/usr"))
+		command = "XR_RUNTIME_JSON=/run/host" + p + " " + command;
 
 	return command;
 }
@@ -425,7 +435,7 @@ gboolean headset_connected_success(void *)
 	}
 	catch (std::exception & e)
 	{
-		std::cerr << "Failed to start application: " << e.what() << std::endl;
+		std::cerr << "Failed to start application: " << e.what();
 	}
 
 	delay_next_try = default_delay_next_try;
@@ -678,18 +688,14 @@ void on_json_configuration(WivrnServer * server, const GParamSpec * pspec, gpoin
 	std::filesystem::path config_new = config;
 	config_new += ".new";
 
-	{
-		std::ofstream file(config_new);
-		file.write(json, strlen(json));
-	}
+	std::ofstream file(config_new);
+	file.write(json, strlen(json));
 
 	std::error_code ec;
 	std::filesystem::rename(config_new, config, ec);
 
 	if (ec)
 		std::cerr << "Failed to save configuration: " << ec.message() << std::endl;
-
-	wivrn_server_set_steam_command(dbus_server, steam_command().c_str());
 }
 
 void expose_known_keys_on_dbus()
@@ -878,8 +884,7 @@ int inner_main(int argc, char * argv[], bool show_instructions)
 	std::cerr << "WiVRn " << wivrn::git_version << " starting" << std::endl;
 	if (show_instructions)
 	{
-		if (auto command = steam_command(); not command.empty())
-			std::cerr << "For Steam games, set command to " << command << std::endl;
+		std::cerr << "For Steam games, set command to " << steam_command() << std::endl;
 	}
 
 	std::filesystem::create_directories(socket_path().parent_path());
@@ -969,7 +974,6 @@ int main(int argc, char * argv[])
 
 	std::string config_file;
 	app.add_option("-f", config_file, "configuration file")->option_text("FILE")->check(CLI::ExistingFile);
-	auto version_flag = app.add_flag("--version")->description("print version and exit");
 	auto no_active_runtime = app.add_flag("--no-manage-active-runtime")->description("don't set the active runtime on connection");
 	auto early_active_runtime = app.add_flag("--early-active-runtime")->description("forcibly manages the active runtime even if no headset present");
 	auto no_instructions = app.add_flag("--no-instructions")->group("");
@@ -981,12 +985,6 @@ int main(int argc, char * argv[])
 #endif
 
 	CLI11_PARSE(app, argc, argv);
-
-	if (*version_flag)
-	{
-		std::cout << "WiVRn version " << wivrn::git_version << std::endl;
-		return 0;
-	}
 
 	if (not config_file.empty())
 		configuration::set_config_file(config_file);

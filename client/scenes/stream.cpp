@@ -17,9 +17,11 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "constants.h"
-#include "xr/body_tracker.h"
-#include "xr/face_tracker.h"
+#include "utils/overloaded.h"
+#include "xr/fb_body_tracker.h"
 #include "xr/fb_face_tracker2.h"
+#include "xr/htc_body_tracker.h"
+#include "xr/pico_body_tracker.h"
 #include "xr/space.h"
 #include <glm/gtc/matrix_access.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -40,7 +42,6 @@
 #include "utils/ranges.h"
 #include "vk/pipeline.h"
 #include "vk/shader.h"
-#include "vk/specialization_constants.h"
 #include "wivrn_packets.h"
 #include <algorithm>
 #include <mutex>
@@ -188,11 +189,7 @@ std::shared_ptr<scenes::stream> scenes::stream::create(std::unique_ptr<wivrn_ses
 	self->network_session = std::move(network_session);
 
 	self->network_session->send_control([&]() {
-		from_headset::headset_info_packet info{
-		        .language = application::get_messages_info().language,
-		        .country = application::get_messages_info().country,
-		        .variant = application::get_messages_info().variant,
-		};
+		from_headset::headset_info_packet info{};
 
 		auto view = self->system.view_configuration_views(self->viewconfig)[0];
 		view = override_view(view, guess_model());
@@ -254,42 +251,39 @@ std::shared_ptr<scenes::stream> scenes::stream::create(std::unique_ptr<wivrn_ses
 
 		if (config.check_feature(feature::face_tracking))
 		{
-			switch (self->system.face_tracker_supported())
-			{
-				case xr::face_tracker_type::none:
-					info.face_tracking = from_headset::face_type::none;
-					break;
-				case xr::face_tracker_type::fb:
-				case xr::face_tracker_type::pico:
-					info.face_tracking = from_headset::face_type::fb2;
-					break;
-				case xr::face_tracker_type::htc:
-					info.face_tracking = from_headset::face_type::htc;
-					break;
-			}
+			info.face_tracking = std::visit(utils::overloaded{
+			                                        [](std::monostate &) {
+				                                        return from_headset::face_type::none;
+			                                        },
+			                                        [](xr::fb_face_tracker2 &) {
+				                                        return from_headset::face_type::fb2;
+			                                        },
+			                                        [](xr::htc_face_tracker &) {
+				                                        return from_headset::face_type::htc;
+			                                        },
+			                                        [](xr::pico_face_tracker &) {
+				                                        return from_headset::face_type::fb2;
+			                                        },
+			                                },
+			                                application::get_face_tracker());
 		}
 
 		info.num_generic_trackers = 0;
 		if (config.check_feature(feature::body_tracking))
 		{
-			switch (self->system.body_tracker_supported())
-			{
-				case xr::body_tracker_type::none:
-					break;
-				case xr::body_tracker_type::fb:
-					info.num_generic_trackers = xr::fb_body_tracker::get_whitelisted_joints(config.fb_lower_body, config.fb_hip).size();
-					break;
-				case xr::body_tracker_type::htc:
-					info.num_generic_trackers = application::get_generic_trackers().size();
-					break;
-				case xr::body_tracker_type::pico:
-					info.num_generic_trackers = xr::pico_body_tracker::joint_whitelist.size();
-					break;
-			}
+			info.num_generic_trackers = std::visit(utils::overloaded{
+			                                               [&](std::monostate &) {
+				                                               return size_t(0);
+			                                               },
+			                                               [&](auto & b) {
+				                                               return b.count();
+			                                               },
+			                                       },
+			                                       application::get_body_tracker());
 		}
 
 		info.palm_pose = application::space(xr::spaces::palm_left) or application::space(xr::spaces::palm_right);
-		info.passthrough = self->system.passthrough_supported() != xr::passthrough_type::none;
+		info.passthrough = self->system.passthrough_supported() != xr::system::passthrough_type::no_passthrough;
 		info.system_name = std::string(self->system.properties().systemName);
 
 		audio::get_audio_description(info);
@@ -315,6 +309,15 @@ std::shared_ptr<scenes::stream> scenes::stream::create(std::unique_ptr<wivrn_ses
 				spdlog::warn("Failed to get visibility mask: ", e.what());
 			}
 		}
+	}
+
+	{
+		const auto & info = application::get_messages_info();
+		self->network_session->send_control(from_headset::get_application_list{
+		        .language = info.language,
+		        .country = info.country,
+		        .variant = info.variant,
+		});
 	}
 
 	{
@@ -360,7 +363,7 @@ std::shared_ptr<scenes::stream> scenes::stream::create(std::unique_ptr<wivrn_ses
 		{
 			self->haptics_actions.emplace(id, haptics_action{
 			                                          .action = action.first,
-			                                          .path = self->instance.string_to_path(path),
+			                                          .path = application::string_to_path(path),
 			                                  });
 		}
 	}
@@ -391,7 +394,7 @@ std::shared_ptr<scenes::stream> scenes::stream::create(std::unique_ptr<wivrn_ses
 
 void scenes::stream::on_focused()
 {
-	gui_status_last_change = instance.now();
+	gui_status_last_change = application::now();
 
 	auto views = system.view_configuration_views(viewconfig);
 	// stream_view = override_view(views[0], guess_model());
@@ -399,7 +402,7 @@ void scenes::stream::on_focused()
 	height = views[0].recommendedImageRectHeight;
 
 	renderer.emplace(device, physical_device, queue, commandpool);
-	loader.emplace(device, physical_device, queue, queue_family_index, renderer->get_default_material());
+	loader.emplace(device, physical_device, queue, application::queue_family_index(), renderer->get_default_material());
 
 	std::string profile = controller_name();
 	input.emplace(
@@ -467,11 +470,8 @@ void scenes::stream::on_focused()
 	                  swapchain_imgui,
 	                  std::vector{vp});
 
-	if (application::get_config().enable_stream_gui)
-	{
-		plots_toggle_1 = get_action("plots_toggle_1").first;
-		plots_toggle_2 = get_action("plots_toggle_2").first;
-	}
+	plots_toggle_1 = get_action("plots_toggle_1").first;
+	plots_toggle_2 = get_action("plots_toggle_2").first;
 	recenter_left = get_action("recenter_left").first;
 	recenter_right = get_action("recenter_right").first;
 	foveation_pitch = get_action("foveation_pitch").first;
@@ -494,8 +494,6 @@ void scenes::stream::on_unfocused()
 	loader.reset();
 	renderer.reset();
 	clear_swapchains();
-	left_hand.reset();
-	right_hand.reset();
 
 	imgui_ctx.reset();
 	swapchain_imgui = xr::swapchain();
@@ -526,16 +524,16 @@ void scenes::stream::push_blit_handle(shard_accumulator * decoder, std::shared_p
 		{
 			if (decoder != decoders[stream].decoder.get())
 				return;
-			handle->feedback.received_from_decoder = instance.now();
+			handle->feedback.received_from_decoder = application::now();
 			std::swap(handle, decoders[stream].latest_frames[handle->feedback.frame_index % decoders[stream].latest_frames.size()]);
 		}
 
 		if (state_ != state::streaming and std::ranges::all_of(decoders, [](accumulator_images & i) {
-			    return i.alpha() or not i.empty();
+			    return i.alpha() or not i.frames().empty();
 		    }))
 		{
 			state_ = state::streaming;
-			spdlog::info("Stream scene ready at t={}", instance.now());
+			spdlog::info("Stream scene ready at t={}", application::now());
 		}
 	}
 
@@ -550,14 +548,15 @@ bool scenes::stream::accumulator_images::alpha() const
 	return decoder->desc().channels == wivrn::to_headset::video_stream_description::channels_t::alpha;
 }
 
-bool scenes::stream::accumulator_images::empty() const
+std::vector<uint64_t> scenes::stream::accumulator_images::frames() const
 {
+	std::vector<uint64_t> result;
 	for (const auto & frame: latest_frames)
 	{
 		if (frame)
-			return false;
+			result.push_back(frame->feedback.frame_index);
 	}
-	return true;
+	return result;
 }
 
 std::vector<std::shared_ptr<shard_accumulator::blit_handle>> scenes::stream::common_frame(XrTime display_time)
@@ -767,15 +766,7 @@ void scenes::stream::render(const XrFrameState & frame_state)
 	}
 
 	if (state_ == state::stalled)
-	{
-		network_session->send_control(from_headset::get_application_list{
-		        .language = application::get_messages_info().language,
-		        .country = application::get_messages_info().country,
-		        .variant = application::get_messages_info().variant,
-		});
-
 		application::pop_scene();
-	}
 
 	assert(swapchain);
 	for (auto & i: decoders)
@@ -808,19 +799,51 @@ void scenes::stream::render(const XrFrameState & frame_state)
 
 			const auto & description = i.decoder->desc();
 			vk::Extent2D image_size = i.decoder->image_size();
+			std::array useful_size{
+			        float(description.width) / image_size.width,
+			        float(description.height) / image_size.height,
+			};
 			spdlog::info("useful size: {}x{} with buffer {}x{}",
 			             description.width,
 			             description.height,
 			             image_size.width,
 			             image_size.height);
 
-			auto vert_constants = make_specialization_constants(
-			        float(description.width) / image_size.width,
-			        float(description.height) / image_size.height);
+			std::array specialization_constants_desc{
+			        vk::SpecializationMapEntry{
+			                .constantID = 0,
+			                .offset = 0,
+			                .size = sizeof(float),
+			        },
+			        vk::SpecializationMapEntry{
+			                .constantID = 1,
+			                .offset = sizeof(float),
+			                .size = sizeof(float),
+			        }};
 
-			auto frag_constants = make_specialization_constants(
-			        VkBool32(need_srgb_conversion(guess_model())),
-			        VkBool32(i.alpha()));
+			vk::SpecializationInfo vert_specialization_info;
+			vert_specialization_info.setMapEntries(specialization_constants_desc);
+			vert_specialization_info.setData<float>(useful_size);
+
+			std::array<VkBool32, 2> constants = {
+			        need_srgb_conversion(guess_model()),
+			        i.alpha(),
+			};
+			std::array frag_specialization_constant_desc = {
+			        vk::SpecializationMapEntry{
+			                .constantID = 0,
+			                .offset = 0,
+			                .size = sizeof(constants[0]),
+			        },
+			        vk::SpecializationMapEntry{
+			                .constantID = 1,
+			                .offset = sizeof(constants[0]),
+			                .size = sizeof(constants[1]),
+			        },
+			};
+			vk::SpecializationInfo frag_specialization_info;
+			frag_specialization_info.setMapEntries(frag_specialization_constant_desc);
+			frag_specialization_info.setData<VkBool32>(constants);
 
 			// Create graphics pipeline
 			vk::raii::ShaderModule vertex_shader = load_shader(device, "stream.vert");
@@ -838,13 +861,13 @@ void scenes::stream::render(const XrFrameState & frame_state)
 			                           .stage = vk::ShaderStageFlagBits::eVertex,
 			                           .module = *vertex_shader,
 			                           .pName = "main",
-			                           .pSpecializationInfo = vert_constants,
+			                           .pSpecializationInfo = &vert_specialization_info,
 			                   },
 			                   {
 			                           .stage = vk::ShaderStageFlagBits::eFragment,
 			                           .module = *fragment_shader,
 			                           .pName = "main",
-			                           .pSpecializationInfo = frag_constants,
+			                           .pSpecializationInfo = &frag_specialization_info,
 			                   }},
 			        .VertexBindingDescriptions = {},
 			        .VertexAttributeDescriptions = {},
@@ -930,7 +953,7 @@ void scenes::stream::render(const XrFrameState & frame_state)
 		if (not blit_handle or not *i.blit_pipeline)
 			continue;
 
-		blit_handle->feedback.blitted = instance.now();
+		blit_handle->feedback.blitted = application::now();
 		if (blit_handle->feedback.blitted - blit_handle->feedback.received_from_decoder > 1'000'000'000)
 			state_ = stream::state::stalled;
 		++blit_handle->feedback.times_displayed;
@@ -979,10 +1002,6 @@ void scenes::stream::render(const XrFrameState & frame_state)
 	uint16_t x_offset = 0;
 	for (auto & out: decoder_output)
 	{
-		vk::Extent2D decoder_out_size{
-		        .width = decoder_out_image.info().extent.width,
-		        .height = decoder_out_image.info().extent.height,
-		};
 		command_buffer.beginRenderPass(
 		        {
 		                .renderPass = *blit_render_pass,
@@ -1291,7 +1310,10 @@ void scenes::stream::setup(const to_headset::video_stream_description & descript
 	}
 
 	// Create outputs for the decoders
+	decoder_out_size = vk::Extent2D{video_width, video_height};
 	{
+		decoder_out_format = vk::Format::eA8B8G8R8SrgbPack32;
+
 		vk::ImageCreateInfo image_info{
 		        .flags = vk::ImageCreateFlags{},
 		        .imageType = vk::ImageType::e2D,
@@ -1315,7 +1337,7 @@ void scenes::stream::setup(const to_headset::video_stream_description & descript
 		vk::ImageViewCreateInfo image_view_info{
 		        .image = vk::Image{decoder_out_image},
 		        .viewType = vk::ImageViewType::e2D,
-		        .format = image_info.format,
+		        .format = vk::Format::eA8B8G8R8SrgbPack32,
 		        .components = {},
 		        .subresourceRange = {
 		                .aspectMask = vk::ImageAspectFlagBits::eColor,
@@ -1339,8 +1361,8 @@ void scenes::stream::setup(const to_headset::video_stream_description & descript
 			                .renderPass = *blit_render_pass,
 			                .attachmentCount = 1,
 			                .pAttachments = &*output.image_view,
-			                .width = image_info.extent.width,
-			                .height = image_info.extent.height,
+			                .width = decoder_out_size.width,
+			                .height = decoder_out_size.height,
 			                .layers = 1,
 			        });
 		}
@@ -1365,7 +1387,7 @@ void scenes::stream::setup(const to_headset::video_stream_description & descript
 		spdlog::info("Creating decoder size {}x{} offset {},{}", item.width, item.height, item.offset_x, item.offset_y);
 
 		decoders.push_back(accumulator_images{
-		        .decoder = std::make_unique<shard_accumulator>(device, physical_device, instance, item, description.fps, shared_from_this(), stream_index),
+		        .decoder = std::make_unique<shard_accumulator>(device, physical_device, item, description.fps, shared_from_this(), stream_index),
 		});
 	}
 }
@@ -1407,6 +1429,8 @@ void scenes::stream::setup_reprojection_swapchain(uint32_t swapchain_width, uint
 	        device,
 	        physical_device,
 	        decoder_out_image,
+	        vk::Extent2D{.width = video_width, .height = video_height},
+	        2,
 	        swapchain_images,
 	        extent,
 	        swapchain.format());

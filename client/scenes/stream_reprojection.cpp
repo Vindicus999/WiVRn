@@ -24,7 +24,6 @@
 #include "vk/allocation.h"
 #include "vk/pipeline.h"
 #include "vk/shader.h"
-#include "vk/specialization_constants.h"
 #include <array>
 #include <glm/glm.hpp>
 #include <glm/gtx/quaternion.hpp>
@@ -38,7 +37,13 @@ struct stream_reprojection::vertex
 	alignas(8) glm::vec2 position;
 	// input texture coordinates
 	alignas(8) glm::vec2 uv;
-	int32_t shading_rate;
+};
+
+struct SgsrSpecializationConstants
+{
+	VkBool32 use_edge_direction;
+	float edge_threshold;
+	float edge_sharpness;
 };
 
 void stream_reprojection::ensure_vertices(size_t num_vertices)
@@ -69,16 +74,16 @@ stream_reprojection::vertex * stream_reprojection::get_vertices(size_t view)
 stream_reprojection::stream_reprojection(
         vk::raii::Device & device,
         vk::raii::PhysicalDevice & physical_device,
-        image_allocation & input_image,
+        vk::Image input_image_,
+        vk::Extent2D input_extent,
+        uint32_t view_count,
         std::vector<vk::Image> output_images_,
         vk::Extent2D output_extent,
         vk::Format format) :
-        view_count(input_image.info().arrayLayers),
+        view_count(view_count),
         device(device),
-        input_extent{
-                .width = input_image.info().extent.width,
-                .height = input_image.info().extent.height,
-        },
+        input_image(input_image_),
+        input_extent(input_extent),
         output_images(std::move(output_images_)),
         output_extent(output_extent)
 {
@@ -139,7 +144,7 @@ stream_reprojection::stream_reprojection(
 		vk::ImageViewCreateInfo iv_info{
 		        .image = input_image,
 		        .viewType = vk::ImageViewType::e2D,
-		        .format = input_image.info().format,
+		        .format = vk::Format::eA8B8G8R8SrgbPack32,
 		        .components = {
 		                .r = vk::ComponentSwizzle::eIdentity,
 		                .g = vk::ComponentSwizzle::eIdentity,
@@ -214,30 +219,50 @@ stream_reprojection::stream_reprojection(
 
 	renderpass = vk::raii::RenderPass(device, renderpass_info.get());
 
-	const auto & vk_device_extensions = application::get_vk_device_extensions();
-	bool fragment_shading_rate = false;
-	if (utils::contains(vk_device_extensions, VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME) and
-	    utils::contains(vk_device_extensions, VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME))
-	{
-		const auto & [prop, rate_prop] = physical_device.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceFragmentShadingRatePropertiesKHR>();
-		const auto & [feat, fragment_feat] = physical_device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceFragmentShadingRateFeaturesKHR>();
-		fragment_shading_rate = rate_prop.fragmentShadingRateNonTrivialCombinerOps and
-		                        fragment_feat.primitiveFragmentShadingRate and
-		                        fragment_feat.attachmentFragmentShadingRate;
-	}
-
 	// Vertex shader
-	vk::raii::ShaderModule vertex_shader = load_shader(device, fragment_shading_rate ? "reprojection_vsr.vert" : "reprojection.vert");
+	vk::raii::ShaderModule vertex_shader = load_shader(device, "reprojection.vert");
 
 	// Fragment shader
+	std::string fragment_shader_name = "reprojection.frag";
 
-	const configuration::sgsr_settings & sgsr = application::get_config().sgsr;
-	auto sgsr_specialization = make_specialization_constants(
-	        VkBool32(sgsr.use_edge_direction),
-	        float(sgsr.edge_threshold / 255.f),
-	        float(sgsr.edge_sharpness));
+	vk::SpecializationInfo fragment_specialization_info;
+	SgsrSpecializationConstants fragment_specialization_constants;
+	std::vector<vk::SpecializationMapEntry> fragment_specialization_constants_desc;
+	const configuration::sgsr_settings sgsr = application::get_config().sgsr;
+	if (sgsr.enabled)
+	{
+		fragment_shader_name = "reprojection_sgsr.frag";
 
-	vk::raii::ShaderModule fragment_shader = load_shader(device, sgsr.enabled ? "reprojection_sgsr.frag" : "reprojection.frag");
+		fragment_specialization_constants = {
+		        .use_edge_direction = sgsr.use_edge_direction,
+		        .edge_threshold = float(sgsr.edge_threshold / 255.0),
+		        .edge_sharpness = sgsr.edge_sharpness,
+		};
+
+		fragment_specialization_constants_desc = {
+		        vk::SpecializationMapEntry{
+		                .constantID = 0,
+		                .offset = offsetof(SgsrSpecializationConstants, use_edge_direction),
+		                .size = sizeof(fragment_specialization_constants.use_edge_direction),
+		        },
+		        vk::SpecializationMapEntry{
+		                .constantID = 1,
+		                .offset = offsetof(SgsrSpecializationConstants, edge_threshold),
+		                .size = sizeof(fragment_specialization_constants.edge_threshold),
+		        },
+		        vk::SpecializationMapEntry{
+		                .constantID = 2,
+		                .offset = offsetof(SgsrSpecializationConstants, edge_sharpness),
+		                .size = sizeof(fragment_specialization_constants.edge_sharpness),
+		        },
+		};
+
+		fragment_specialization_info.setMapEntries(fragment_specialization_constants_desc);
+		fragment_specialization_info.setDataSize(sizeof(fragment_specialization_constants));
+		fragment_specialization_info.setPData(&fragment_specialization_constants);
+	}
+
+	vk::raii::ShaderModule fragment_shader = load_shader(device, fragment_shader_name);
 
 	// Create graphics pipeline
 	vk::PipelineLayoutCreateInfo pipeline_layout_info;
@@ -245,7 +270,7 @@ stream_reprojection::stream_reprojection(
 
 	layout = vk::raii::PipelineLayout(device, pipeline_layout_info);
 
-	vk::pipeline_builder pipeline_info_builder{
+	vk::pipeline_builder pipeline_info{
 	        .flags = {},
 	        .Stages = {
 	                {
@@ -257,7 +282,7 @@ stream_reprojection::stream_reprojection(
 	                        .stage = vk::ShaderStageFlagBits::eFragment,
 	                        .module = *fragment_shader,
 	                        .pName = "main",
-	                        .pSpecializationInfo = sgsr.enabled ? sgsr_specialization.info() : nullptr,
+	                        .pSpecializationInfo = &fragment_specialization_info,
 	                },
 	        },
 	        .VertexBindingDescriptions = {
@@ -279,12 +304,6 @@ stream_reprojection::stream_reprojection(
 	                        .binding = 0,
 	                        .format = vk::Format::eR32G32Sfloat,
 	                        .offset = offsetof(vertex, uv),
-	                },
-	                {
-	                        .location = 2,
-	                        .binding = 0,
-	                        .format = vk::Format::eR32Sint,
-	                        .offset = offsetof(vertex, shading_rate),
 	                },
 	        },
 	        .InputAssemblyState = {{
@@ -317,48 +336,6 @@ stream_reprojection::stream_reprojection(
 	        .renderPass = *renderpass,
 	        .subpass = 0,
 	};
-
-	vk::GraphicsPipelineCreateInfo pipeline_info(pipeline_info_builder);
-
-	// Variable fragment shading
-	std::array combiner{
-	        vk::FragmentShadingRateCombinerOpKHR::eMax,
-	        vk::FragmentShadingRateCombinerOpKHR::eMax,
-	};
-	vk::PipelineFragmentShadingRateStateCreateInfoKHR shading{
-	        .fragmentSize = vk::Extent2D{1, 1},
-	        .combinerOps = combiner,
-	};
-	if (fragment_shading_rate)
-	{
-		pipeline_info.pNext = &shading;
-
-		spdlog::info("Available fragment shading rates:");
-		for (const auto rate: physical_device.getFragmentShadingRatesKHR())
-		{
-			if (rate.sampleCounts & vk::SampleCountFlagBits::e1)
-			{
-				spdlog::info("\tfragment size: {}x{}", rate.fragmentSize.width, rate.fragmentSize.height);
-				int flags = 0;
-				if (rate.fragmentSize.width == 4)
-					flags |= 8;
-				else if (rate.fragmentSize.width == 2)
-					flags |= 4;
-				if (rate.fragmentSize.height == 4)
-					flags |= 2;
-				else if (rate.fragmentSize.height == 2)
-					flags |= 1;
-				for (int y = std::bit_width(rate.fragmentSize.height) - 1; y < 3; ++y)
-				{
-					for (int x = std::bit_width(rate.fragmentSize.width) - 1; x < 3; ++x)
-					{
-						if (fragment_sizes[x][y] == 0)
-							fragment_sizes[x][y] = flags;
-					}
-				}
-			}
-		}
-	}
 
 	pipeline = vk::raii::Pipeline(device, application::get_pipeline_cache(), pipeline_info);
 
@@ -413,21 +390,6 @@ static size_t required_vertices(const wivrn::to_headset::foveation_parameter & p
 	return (2 * (p.x.size() + 1) + 1) * p.y.size();
 }
 
-int32_t stream_reprojection::shading_rate(int pixels_x, int pixels_y)
-{
-	int x = 0;
-	if (pixels_x >= 2)
-		x = 1;
-	if (pixels_x >= 4)
-		x = 2;
-	int y = 0;
-	if (pixels_y >= 2)
-		y = 1;
-	if (pixels_y >= 4)
-		y = 2;
-	return fragment_sizes[x][y];
-}
-
 void stream_reprojection::reproject(vk::raii::CommandBuffer & command_buffer,
                                     const std::array<wivrn::to_headset::foveation_parameter, 2> & foveation,
                                     int destination)
@@ -463,12 +425,10 @@ void stream_reprojection::reproject(vk::raii::CommandBuffer & command_buffer,
 				*vertices++ = {
 				        .position = out * out_pixel_size - glm::vec2(1),
 				        .uv = in * in_pixel_size,
-				        .shading_rate = shading_rate(ratio_x, ratio_y),
 				};
 				*vertices++ = {
 				        .position = (out + glm::vec2(0, n_out_y * ratio_y)) * out_pixel_size - glm::vec2(1),
 				        .uv = (in + glm::vec2(0, n_out_y)) * in_pixel_size,
-				        .shading_rate = shading_rate(ratio_x, ratio_y),
 				};
 				in.x += n_out_x;
 				out.x += n_out_x * ratio_x;
