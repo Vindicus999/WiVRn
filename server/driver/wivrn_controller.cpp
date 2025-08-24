@@ -498,7 +498,9 @@ static std::ostream & operator<<(std::ostream & out, const xrt_space_relation_cs
 		}
 	}
 	out << "x,y,z,";
-	out << "qw,qx,qy,qz";
+	out << "qw,qx,qy,qz,";
+	out << "vx,vy,vz,";
+	out << "avx,avy,avz";
 	return out;
 }
 
@@ -506,13 +508,17 @@ static std::ostream & operator<<(std::ostream & out, const xrt_space_relation & 
 {
 	const auto & pos = rel.pose.position;
 	const auto & o = rel.pose.orientation;
+	const auto & v = rel.linear_velocity;
+	const auto & av = rel.angular_velocity;
 	for (const auto & [value, name]: magic_enum::enum_entries<xrt_space_relation_flags>())
 	{
 		if (value and value != XRT_SPACE_RELATION_BITMASK_ALL)
 			out << bool(rel.relation_flags & value) << ',';
 	}
 	out << pos.x << ',' << pos.y << ',' << pos.z << ',';
-	out << o.w << ',' << o.x << ',' << o.y << ',' << o.z;
+	out << o.w << ',' << o.x << ',' << o.y << ',' << o.z << ',';
+	out << v.x << ',' << v.y << ',' << v.z << ',';
+	out << av.x << ',' << av.y << ',' << av.z;
 	return out;
 }
 
@@ -598,7 +604,8 @@ wivrn_controller::wivrn_controller(int hand_id,
 
 	if (hand_id == 0)
 	{
-		SET_INPUT(GENERIC, HAND_TRACKING_LEFT);
+		inputs[WIVRN_CONTROLLER_HAND_TRACKING_LEFT].name = XRT_INPUT_HT_UNOBSTRUCTED_LEFT;
+		inputs[WIVRN_CONTROLLER_HAND_TRACKING_LEFT].active = true;
 		SET_INPUT(TOUCH, MENU_CLICK);
 		SET_INPUT(TOUCH, X_CLICK);
 		SET_INPUT(TOUCH, Y_CLICK);
@@ -607,7 +614,8 @@ wivrn_controller::wivrn_controller(int hand_id,
 	}
 	else
 	{
-		SET_INPUT(GENERIC, HAND_TRACKING_RIGHT);
+		inputs[WIVRN_CONTROLLER_HAND_TRACKING_RIGHT].name = XRT_INPUT_HT_UNOBSTRUCTED_RIGHT;
+		inputs[WIVRN_CONTROLLER_HAND_TRACKING_RIGHT].active = true;
 		SET_INPUT(TOUCH, SYSTEM_CLICK);
 		SET_INPUT(TOUCH, A_CLICK);
 		SET_INPUT(TOUCH, B_CLICK);
@@ -780,8 +788,8 @@ xrt_result_t wivrn_controller::get_hand_tracking(xrt_input_name name, int64_t de
 {
 	switch (name)
 	{
-		case XRT_INPUT_GENERIC_HAND_TRACKING_LEFT:
-		case XRT_INPUT_GENERIC_HAND_TRACKING_RIGHT: {
+		case XRT_INPUT_HT_UNOBSTRUCTED_LEFT:
+		case XRT_INPUT_HT_UNOBSTRUCTED_RIGHT: {
 			*out_timestamp_ns = desired_timestamp_ns;
 			std::chrono::nanoseconds extrapolation_time;
 			std::tie(extrapolation_time, *out_value) = joints.get_at(desired_timestamp_ns);

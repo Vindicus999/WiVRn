@@ -32,40 +32,65 @@
 #include "stream.h"
 #include "utils/i18n.h"
 #include "utils/overloaded.h"
+#include "utils/ranges.h"
 #include "version.h"
+#include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <filesystem>
 #include <glm/gtc/quaternion.hpp>
 #include <ranges>
 #include <spdlog/fmt/fmt.h>
 #include <string>
+#include <utility>
 #include <utils/strings.h>
 
 #include "IconsFontAwesome6.h"
 
-static void ScrollWhenDraggingOnVoid()
+using namespace std::chrono_literals;
+
+// https://github.com/ocornut/imgui/issues/3379#issuecomment-2943903877
+static void ScrollWhenDragging()
 {
 	ImVec2 delta{0.0f, -ImGui::GetIO().MouseDelta.y};
+	const ImGuiMouseButton mouse_button = ImGuiMouseButton_Left;
 
-	// https://github.com/ocornut/imgui/issues/3379#issuecomment-1678718752
 	ImGuiContext & g = *ImGui::GetCurrentContext();
 	ImGuiWindow * window = g.CurrentWindow;
-	bool hovered = false;
-	bool held = false;
-	static bool held_prev = false;
-
-	// Don't drag for the first frame because the current controller might have just changed and have a large delta
-
 	ImGuiID id = window->GetID("##scrolldraggingoverlay");
 	ImGui::KeepAliveID(id);
-	if (g.HoveredId == 0) // If nothing hovered so far in the frame (not same as IsAnyItemHovered()!)
-		ImGui::ButtonBehavior(window->Rect(), id, &hovered, &held, ImGuiButtonFlags_MouseButtonLeft);
-	if (held and held_prev and delta.x != 0.0f)
-		ImGui::SetScrollX(window, window->Scroll.x + delta.x);
-	if (held and held_prev and delta.y != 0.0f)
-		ImGui::SetScrollY(window, window->Scroll.y + delta.y);
 
-	held_prev = held;
+	static int active_id;
+	static ImVec2 cumulated_delta;
+
+	bool HoveredIdAllowOverlap_backup = std::exchange(g.HoveredIdAllowOverlap, true);
+	bool ActiveIdAllowOverlap_backup = std::exchange(g.ActiveIdAllowOverlap, true);
+	if (active_id == 0 and ImGui::ItemHoverable(window->Rect(), 0, g.CurrentItemFlags) and ImGui::IsMouseClicked(mouse_button, ImGuiInputFlags_None, /*id*/ ImGuiKeyOwner_Any))
+	{
+		active_id = id;
+
+		// Don't scroll on the first step, in case the active controller just changed
+		delta = {};
+		cumulated_delta = {};
+	}
+
+	if (not g.IO.MouseDown[mouse_button])
+		active_id = 0;
+
+	if (active_id == id)
+	{
+		if (delta.x != 0.0f)
+			ImGui::SetScrollX(window, window->Scroll.x + delta.x);
+		if (delta.y != 0.0f)
+			ImGui::SetScrollY(window, window->Scroll.y + delta.y);
+
+		cumulated_delta += delta;
+		if (std::max(std::abs(cumulated_delta.x), std::abs(cumulated_delta.y)) > 50)
+			ImGui::ClearActiveID();
+	}
+
+	g.HoveredIdAllowOverlap = HoveredIdAllowOverlap_backup;
+	g.ActiveIdAllowOverlap = ActiveIdAllowOverlap_backup;
 }
 
 static void CenterTextH(const std::string & text)
@@ -145,6 +170,54 @@ static void display_recentering_tip(imgui_context & ctx, const std::string & tip
 	ImGui::End();
 	ImGui::PopStyleVar(2);
 	ImGui::PopFont();
+}
+
+// Display a button with an image and a text centred horizontally
+static bool icon(const std::string & text, ImTextureRef tex_ref, const ImVec2 & image_size, ImGuiButtonFlags flags = 0, const ImVec2 & size_arg = ImVec2(0, 0), const ImVec2 & uv0 = ImVec2(0, 0), const ImVec2 & uv1 = ImVec2(1, 1), const ImVec4 & tint_col = ImVec4(1, 1, 1, 1))
+{
+	// Based on ImGui::ButtonEx and ImGui::ImageButtonEx
+	ImGuiWindow * window = ImGui::GetCurrentWindow();
+	const ImGuiStyle & style = ImGui::GetStyle();
+
+	if (window->SkipItems)
+		return false;
+
+	const ImVec2 label_size = ImGui::CalcTextSize(text.c_str(), nullptr, true);
+
+	ImVec2 size = ImGui::CalcItemSize(
+	        size_arg,
+	        std::max(image_size.x, label_size.x) + style.FramePadding.x * 2.0f,
+	        image_size.y + style.ItemInnerSpacing.y + label_size.y + style.FramePadding.y * 2.0f);
+
+	const ImRect bb(window->DC.CursorPos, window->DC.CursorPos + size);
+
+	ImRect image_pos(
+	        {(bb.Min.x + bb.Max.x - image_size.x) / 2, bb.Min.y + style.FramePadding.y},
+	        {(bb.Min.x + bb.Max.x + image_size.x) / 2, bb.Min.y + style.FramePadding.y + image_size.y});
+
+	ImRect label_pos(
+	        {bb.Min.x + style.FramePadding.x, image_pos.Max.y + style.ItemInnerSpacing.y},
+	        {bb.Max.x - style.FramePadding.x, bb.Max.y - style.FramePadding.y});
+
+	ImGui::ItemSize(bb);
+
+	ImGuiID id = window->GetID(text.c_str());
+	if (!ImGui::ItemAdd(bb, id))
+		return false;
+
+	bool hovered, held;
+	bool pressed = ImGui::ButtonBehavior(bb, id, &hovered, &held, flags);
+
+	// Render
+	const ImU32 col = ImGui::GetColorU32((held && hovered) ? ImGuiCol_ButtonActive : hovered ? ImGuiCol_ButtonHovered
+	                                                                                         : ImGuiCol_Button);
+	ImGui::RenderNavCursor(bb, id);
+	ImGui::RenderFrame(bb.Min, bb.Max, col, true, style.FrameRounding);
+
+	window->DrawList->AddImage(tex_ref, image_pos.Min, image_pos.Max, uv0, uv1, ImGui::GetColorU32(tint_col));
+	ImGui::RenderTextClipped(label_pos.Min, label_pos.Max, text.c_str(), NULL, &label_size, style.ButtonTextAlign, &bb);
+
+	return pressed;
 }
 
 std::string openxr_post_processing_flag_name(XrCompositionLayerSettingsFlagsFB flag)
@@ -307,6 +380,11 @@ void scenes::lobby::gui_connected()
 	if (not next_scene)
 	{
 		current_tab = tab::server_list;
+
+		for (const auto & [app_id, app_icon]: app_icons)
+			imgui_ctx->free_texture(app_icon);
+		app_icons.clear();
+
 		return;
 	}
 
@@ -328,21 +406,82 @@ void scenes::lobby::gui_connected()
 	}
 	else
 	{
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {20, 0});
 		ImGui::BeginChild("Main", ImGui::GetWindowSize() - ImGui::GetCursorPos() - ImVec2(0, disconnect_size.y + 80), 0);
+
+		ImGui::Indent(20);
 		if (server_name.empty())
 			ImGui::Text("%s", _S("Start an application on your computer or select one to start streaming."));
 		else
 			ImGui::Text("%s", fmt::format(_F("Start an application on {} or select one to start streaming."), server_name).c_str());
-		for (const auto & app: apps->applications)
+		ImGui::Unindent();
+
+		float icon_width = 400;
+		float icon_spacing = ImGui::GetStyle().ItemSpacing.x;
+		float usable_window_width = ImGui::GetWindowSize().x - ImGui::GetCurrentWindow()->ScrollbarSizes.x;
+
+		int icons_per_line = (usable_window_width + icon_spacing) / (icon_width + icon_spacing);
+		float icon_line_width = icons_per_line * icon_width + (icons_per_line - 1) * icon_spacing;
+
+		ImGui::Indent((usable_window_width - icon_line_width) / 2);
+
+		auto t0 = std::chrono::steady_clock::now();
+		for (const auto [index, app]: utils::enumerate(apps->applications))
 		{
-			if (ImGui::Button(fmt::format(ICON_FA_PLAY "##{}", app.id).c_str()))
+			ImTextureID texture = [&]() -> ImTextureID {
+				if (app.image.empty())
+					return default_icon;
+				else
+				{
+					auto it = app_icons.find(app.id);
+					if (it == app_icons.end())
+					{
+						// Don't load too many textures at the same time to keep the GUI responsive
+						if (std::chrono::steady_clock::now() - t0 > 10ms)
+							return default_icon;
+
+						try
+						{
+							it = app_icons.emplace(app.id, imgui_ctx->load_texture(app.image)).first;
+						}
+						catch (std::exception & e)
+						{
+							spdlog::warn("Unable to load icon for \"{}\": {}", app.id, e.what());
+
+							app.image.clear();
+							return default_icon;
+						}
+					}
+					return it->second;
+				}
+			}();
+
+			ImGui::PushStyleColor(ImGuiCol_Button, 0);
+			if (icon(app.name + "##" + app.id, texture, {256, 256}, 0, {icon_width, 0}))
 				next_scene->start_application(app.id);
 			imgui_ctx->vibrate_on_hover();
-			ImGui::SameLine();
-			ImGui::Text("%s", app.name.c_str());
+			ImGui::PopStyleColor(); // ImGuiCol_Button
+
+			if (index % 3 != 2)
+				ImGui::SameLine();
 		}
-		ScrollWhenDraggingOnVoid();
+		ImGui::Unindent();
+
+		std::vector<std::pair<std::string, ImTextureID>> to_be_removed;
+		for (const auto & [app_id, app_icon]: app_icons)
+		{
+			if (not std::ranges::contains(apps->applications, app_id, &to_headset::application_list::application::id))
+				to_be_removed.emplace_back(app_id, app_icon);
+		}
+		for (const auto & [app_id, app_icon]: to_be_removed)
+		{
+			imgui_ctx->free_texture(app_icon);
+			app_icons.erase(app_id);
+		}
+
+		ScrollWhenDragging();
 		ImGui::EndChild();
+		ImGui::PopStyleVar(); // ImGuiStyleVar_WindowPadding
 	}
 	ImGui::PopStyleVar();
 
@@ -358,7 +497,7 @@ void scenes::lobby::gui_connected()
 		current_tab = tab::server_list;
 	}
 	imgui_ctx->vibrate_on_hover();
-	ImGui::PopStyleColor(3);
+	ImGui::PopStyleColor(3); // ImGuiCol_Button, ImGuiCol_ButtonHovered, ImGuiCol_ButtonActive
 }
 
 void scenes::lobby::gui_new_server()
@@ -1746,14 +1885,14 @@ std::vector<std::pair<int, XrCompositionLayerQuad>> scenes::lobby::draw_gui(XrTi
 	}
 	else if (current_tab == tab::connected)
 	{
-		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {20, 20});
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {0, 20});
 		ImGui::SetNextWindowSize({1400, 900});
 		ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10);
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {10, 10});
 		ImGui::Begin("WiVRn", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
 		gui_connected();
 		ImGui::End();
-		ImGui::PopStyleVar(3); // ImGuiStyleVar_WindowPadding
+		ImGui::PopStyleVar(3); // ImGuiStyleVar_WindowPadding, ImGuiStyleVar_FrameRounding, ImGuiStyleVar_FramePadding
 	}
 	else
 	{
@@ -1816,7 +1955,7 @@ std::vector<std::pair<int, XrCompositionLayerQuad>> scenes::lobby::draw_gui(XrTi
 
 		ImGui::Dummy(ImVec2(0, 20));
 
-		ScrollWhenDraggingOnVoid();
+		ScrollWhenDragging();
 		ImGui::EndChild();
 		ImGui::PopStyleVar(2); // ImGuiStyleVar_FrameRounding, ImGuiStyleVar_WindowPadding
 

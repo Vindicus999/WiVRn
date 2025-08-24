@@ -1,45 +1,47 @@
-From a8d3eae0afd8b61aacc18824982c5b6066b5e4d6 Mon Sep 17 00:00:00 2001
+From 437469e6a4de72ab69719cce92b841e4de19156f Mon Sep 17 00:00:00 2001
 From: Patrick Nicolas <patricknicolas@laposte.net>
 Date: Wed, 11 Sep 2024 22:56:29 +0200
-Subject: [PATCH 06/11] Convert to YCbCr in Monado
+Subject: [PATCH 06/10] Convert to YCbCr in Monado
 
 ---
- src/xrt/compositor/main/comp_renderer.c      |   6 +-
- src/xrt/compositor/main/comp_target.h        |   3 +-
- src/xrt/compositor/render/render_compute.c   | 104 +++++++++++++------
- src/xrt/compositor/render/render_interface.h |  15 ++-
- src/xrt/compositor/render/render_resources.c |  35 +++++--
- src/xrt/compositor/shaders/distortion.comp   |  62 +++++++----
- src/xrt/compositor/util/comp_render.h        |  12 ++-
- src/xrt/compositor/util/comp_render_cs.c     |  19 ++--
- 8 files changed, 175 insertions(+), 81 deletions(-)
+ src/xrt/compositor/main/comp_renderer.c       |   6 +-
+ src/xrt/compositor/main/comp_target.h         |   3 +-
+ src/xrt/compositor/render/render_compute.c    | 104 ++++++++++++------
+ src/xrt/compositor/render/render_interface.h  |  15 ++-
+ src/xrt/compositor/render/render_resources.c  |  35 ++++--
+ src/xrt/compositor/shaders/distortion.comp    |  62 +++++++----
+ .../compositor/util/comp_high_level_render.c  |   6 +-
+ .../compositor/util/comp_high_level_render.h  |   9 +-
+ src/xrt/compositor/util/comp_render.h         |  11 +-
+ src/xrt/compositor/util/comp_render_cs.c      |  19 +++-
+ 10 files changed, 184 insertions(+), 86 deletions(-)
 
 diff --git a/src/xrt/compositor/main/comp_renderer.c b/src/xrt/compositor/main/comp_renderer.c
-index 06d1cb72a..80678b9f1 100644
+index c6f589466..0895ff694 100644
 --- a/src/xrt/compositor/main/comp_renderer.c
 +++ b/src/xrt/compositor/main/comp_renderer.c
-@@ -1022,7 +1022,8 @@ dispatch_compute(struct comp_renderer *r,
+@@ -933,7 +933,8 @@ dispatch_compute(struct comp_renderer *r,
  
  	// Target Vulkan resources..
  	VkImage target_image = r->c->target->images[r->acquired_buffer].handle;
--	VkImageView target_image_view = r->c->target->images[r->acquired_buffer].view;
-+	VkImageView target_image_view_y = r->c->target->images[r->acquired_buffer].view;
-+	VkImageView target_image_view_cbcr = r->c->target->images[r->acquired_buffer].view_cbcr;
+-	VkImageView target_storage_view = r->c->target->images[r->acquired_buffer].view;
++	VkImageView target_storage_view_y = r->c->target->images[r->acquired_buffer].view;
++	VkImageView target_storage_view_cbcr = r->c->target->images[r->acquired_buffer].view_cbcr;
  
  	// Target view information.
- 	struct render_viewport_data views[XRT_MAX_VIEWS];
-@@ -1033,7 +1034,8 @@ dispatch_compute(struct comp_renderer *r,
- 	comp_render_cs_initial_init( //
- 	    &data,                   // data
- 	    target_image,            // target_image
--	    target_image_view,       // target_unorm_view
-+	    target_image_view_y,     // target_unorm_view_y
-+	    target_image_view_cbcr,  // target_unorm_view_cbcr
- 	    fast_path,               // fast_path
- 	    do_timewarp);            // do_timewarp
+ 	struct render_viewport_data target_viewport_datas[XRT_MAX_VIEWS];
+@@ -949,7 +950,8 @@ dispatch_compute(struct comp_renderer *r,
+ 	    eye_poses,                       //
+ 	    fovs,                            //
+ 	    target_image,                    //
+-	    target_storage_view,             //
++	    target_storage_view_y,           //
++	    target_storage_view_cbcr,        //
+ 	    target_viewport_datas);          //
  
+ 	// Everything is ready, submit to the queue.
 diff --git a/src/xrt/compositor/main/comp_target.h b/src/xrt/compositor/main/comp_target.h
-index 143d41639..98301d596 100644
+index 2122f46e7..53dcd631b 100644
 --- a/src/xrt/compositor/main/comp_target.h
 +++ b/src/xrt/compositor/main/comp_target.h
 @@ -62,7 +62,8 @@ enum comp_target_display_timing_usage
@@ -583,11 +585,68 @@ index 08b44d4cf..e1dd1cb58 100644
 +	vec2 cbcr = mix(mix(cbcrs[0], cbcrs[1], 0.5), mix(cbcrs[2], cbcrs[3], 0.5), 0.5);
 +	imageStore(chroma, ivec2(offset.xy/2 + gl_GlobalInvocationID.xy), vec4(cbcr.x, cbcr.y, 0, 0));
  }
+diff --git a/src/xrt/compositor/util/comp_high_level_render.c b/src/xrt/compositor/util/comp_high_level_render.c
+index f1c9aa145..2e5e048a5 100644
+--- a/src/xrt/compositor/util/comp_high_level_render.c
++++ b/src/xrt/compositor/util/comp_high_level_render.c
+@@ -192,14 +192,16 @@ chl_frame_state_cs_set_views(struct chl_frame_state *frame_state,
+ void
+ chl_frame_state_cs_set_target(struct chl_frame_state *frame_state,
+                               VkImage target_image,
+-                              VkImageView target_storage_view,
++                              VkImageView target_storage_view_y,
++                              VkImageView target_storage_view_cbcr,
+                               const struct render_viewport_data views[XRT_MAX_VIEWS])
+ {
+ 	// Add the target info.
+ 	comp_render_cs_add_target( //
+ 	    &frame_state->data,    // data
+ 	    target_image,          // target_image
+-	    target_storage_view);  // target_unorm_view
++	    target_storage_view_y,
++	    target_storage_view_cbcr);  // target_unorm_view
+ 
+ 	for (uint32_t i = 0; i < frame_state->view_count; i++) {
+ 		// Which image of the scratch images for this view are we using.
+diff --git a/src/xrt/compositor/util/comp_high_level_render.h b/src/xrt/compositor/util/comp_high_level_render.h
+index 46edfd669..ba5f3f45f 100644
+--- a/src/xrt/compositor/util/comp_high_level_render.h
++++ b/src/xrt/compositor/util/comp_high_level_render.h
+@@ -187,7 +187,8 @@ chl_frame_state_cs_set_views(struct chl_frame_state *frame_state,
+ void
+ chl_frame_state_cs_set_target(struct chl_frame_state *frame_state,
+                               VkImage target_image,
+-                              VkImageView target_storage_view,
++                              VkImageView target_storage_view_y,
++                              VkImageView target_storage_view_cbcr,
+                               const struct render_viewport_data views[XRT_MAX_VIEWS]);
+ 
+ /*!
+@@ -204,7 +205,8 @@ chl_frame_state_cs_default_pipeline(struct chl_frame_state *frame_state,
+                                     const struct xrt_pose eye_poses[XRT_MAX_VIEWS],
+                                     const struct xrt_fov fovs[XRT_MAX_VIEWS],
+                                     VkImage target_image,
+-                                    VkImageView target_storage_view,
++                                    VkImageView target_storage_view_y,
++                                    VkImageView target_storage_view_cbcr,
+                                     const struct render_viewport_data target_viewport_datas[XRT_MAX_VIEWS])
+ {
+ 	chl_frame_state_cs_set_views( //
+@@ -217,7 +219,8 @@ chl_frame_state_cs_default_pipeline(struct chl_frame_state *frame_state,
+ 	chl_frame_state_cs_set_target( //
+ 	    frame_state,               //
+ 	    target_image,              //
+-	    target_storage_view,       //
++	    target_storage_view_y,     //
++	    target_storage_view_cbcr,  //
+ 	    target_viewport_datas);    //
+ 
+ 	// Start the compute pipeline.
 diff --git a/src/xrt/compositor/util/comp_render.h b/src/xrt/compositor/util/comp_render.h
-index 0afe87393..550c014a0 100644
+index 334464256..f4a9140a2 100644
 --- a/src/xrt/compositor/util/comp_render.h
 +++ b/src/xrt/compositor/util/comp_render.h
-@@ -189,7 +189,8 @@ struct comp_render_dispatch_data
+@@ -202,7 +202,8 @@ struct comp_render_dispatch_data
  			VkImage image;
  
  			//! Target image view for distortion.
@@ -597,17 +656,15 @@ index 0afe87393..550c014a0 100644
  		} cs;
  	} target;
  };
-@@ -465,7 +466,8 @@ comp_render_gfx_dispatch(struct render_gfx *render,
+@@ -503,14 +504,15 @@ comp_render_gfx_dispatch(struct render_gfx *render,
+  * @param target_storage_view Corresponding image view
+  */
  static inline void
- comp_render_cs_initial_init(struct comp_render_dispatch_data *data,
-                             VkImage target_image,
--                            VkImageView target_storage_view,
-+                            VkImageView target_storage_view_y,
-+                            VkImageView target_storage_view_cbcr,
-                             bool fast_path,
-                             bool do_timewarp)
+-comp_render_cs_add_target(struct comp_render_dispatch_data *data, VkImage target_image, VkImageView target_storage_view)
++comp_render_cs_add_target(struct comp_render_dispatch_data *data, VkImage target_image, VkImageView target_storage_view_y, VkImageView target_storage_view_cbcr)
  {
-@@ -476,7 +478,8 @@ comp_render_cs_initial_init(struct comp_render_dispatch_data *data,
+ 	// Error tracking.
+ 	data->target.initialized = true;
  
  	// When writing into the target.
  	data->target.cs.image = target_image;
@@ -617,7 +674,7 @@ index 0afe87393..550c014a0 100644
  }
  
  /*!
-@@ -565,7 +568,8 @@ comp_render_cs_layer(struct render_compute *render,
+@@ -607,7 +609,8 @@ comp_render_cs_layer(struct render_compute *render,
                       const struct xrt_pose *world_pose,
                       const struct xrt_pose *eye_pose,
                       const VkImage target_image,
@@ -628,7 +685,7 @@ index 0afe87393..550c014a0 100644
                       bool do_timewarp);
  
 diff --git a/src/xrt/compositor/util/comp_render_cs.c b/src/xrt/compositor/util/comp_render_cs.c
-index d9d9ea8a4..29c645bff 100644
+index 4e20b32f0..b2d3ce10d 100644
 --- a/src/xrt/compositor/util/comp_render_cs.c
 +++ b/src/xrt/compositor/util/comp_render_cs.c
 @@ -347,7 +347,8 @@ crc_clear_output(struct render_compute *render, const struct comp_render_dispatc
@@ -700,5 +757,5 @@ index d9d9ea8a4..29c645bff 100644
  		    d->do_timewarp);              //
  	}
 -- 
-2.50.0
+2.50.1
 

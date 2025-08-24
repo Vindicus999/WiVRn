@@ -20,12 +20,14 @@
 #include "image_loader.h"
 #include "wivrn_config.h"
 
-#include <cstdint>
 #if WIVRN_USE_LIBKTX
 #include <ktxvulkan.h>
 #endif
+#include <chrono>
+#include <cstdint>
 #include <memory>
 #include <span>
+#include <spdlog/fmt/chrono.h>
 #include <spdlog/spdlog.h>
 #include <stdexcept>
 #include <vulkan/vulkan_raii.hpp>
@@ -160,21 +162,20 @@ int bytes_per_pixel(vk::Format format)
 }
 } // namespace
 
-image_loader::image_loader(vk::raii::PhysicalDevice physical_device, vk::raii::Device & device, vk::raii::Queue & queue, vk::raii::CommandPool & cb_pool) :
+image_loader::image_loader(vk::raii::PhysicalDevice physical_device, vk::raii::Device & device, thread_safe<vk::raii::Queue> & queue, vk::raii::CommandPool & cb_pool) :
         device(device),
         queue(queue),
         cb_pool(cb_pool)
 {
 #if WIVRN_USE_LIBKTX
-	vdi = ktxVulkanDeviceInfo_Create(*physical_device, *device, *queue, *cb_pool, nullptr);
+	ktxVulkanDeviceInfo_Construct(&vdi, *physical_device, *device, *queue.get_unsafe(), *cb_pool, nullptr);
 #endif
 }
 
 image_loader::~image_loader()
 {
 #if WIVRN_USE_LIBKTX
-	if (vdi)
-		ktxVulkanDeviceInfo_Destroy(vdi);
+	ktxVulkanDeviceInfo_Destruct(&vdi);
 #endif
 }
 
@@ -381,7 +382,7 @@ void image_loader::do_load_raw(const void * pixels, vk::Extent3D extent, vk::For
 	vk::SubmitInfo info;
 	info.setCommandBuffers(*cb);
 	auto fence = device.createFence(vk::FenceCreateInfo{});
-	queue.submit(info, *fence);
+	queue.lock()->submit(info, *fence);
 	if (auto result = device.waitForFences(*fence, true, 1'000'000'000); result != vk::Result::eSuccess)
 		throw std::runtime_error("vkWaitForfences: " + vk::to_string(result));
 
@@ -414,21 +415,28 @@ void image_loader::do_load_ktx(std::span<const std::byte> bytes)
 
 	if (err != KTX_SUCCESS)
 	{
-		spdlog::info("ktxTexture_CreateFromMemory: error {}", (int)err);
+		spdlog::warn("ktxTexture_CreateFromMemory: error {}", (int)err);
 		throw std::runtime_error("ktxTexture_CreateFromMemory");
 	}
 
 	if (ktxTexture_NeedsTranscoding(texture))
 	{
 		// TODO
+		spdlog::warn("ktxTexture_NeedsTranscoding");
+		throw std::runtime_error("ktxTexture_NeedsTranscoding");
 	}
 
-	err = ktxTexture_VkUploadEx(texture, vdi, &vk_texture, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	{
+		auto _ = queue.lock(); // ktxTexture_VkUploadEx uses the queue internally (in ktxTexture_VkUploadEx_WithSuballocator)
+		// TODO: patch vkloader.c to accept a mutex
+		err = ktxTexture_VkUploadEx(texture, &vdi, &vk_texture, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	}
+
 	if (err != KTX_SUCCESS)
 	{
 		// TODO try uncompressing the texture
 		ktxTexture_Destroy(texture);
-		spdlog::info("ktxTexture_CreateFromMemory: error {}", (int)err);
+		spdlog::warn("ktxTexture_CreateFromMemory: error {}", (int)err);
 		throw std::runtime_error("ktxTexture_VkUploadEx");
 	}
 
@@ -469,6 +477,41 @@ void image_loader::do_load_ktx(std::span<const std::byte> bytes)
 static constexpr bool starts_with(std::span<const std::byte> data, std::span<const uint8_t> prefix)
 {
 	return data.size() >= prefix.size() && !memcmp(data.data(), prefix.data(), prefix.size());
+}
+
+template <typename T>
+void premultiply_alpha_aux(T * pixels, float alpha_scale, int width, int height)
+{
+	for (int i = 0, n = width * height; i < n; i++)
+	{
+		float alpha = pixels[4 * i + 3] * alpha_scale;
+
+		pixels[4 * i + 0] = pixels[4 * i + 0] * alpha;
+		pixels[4 * i + 1] = pixels[4 * i + 1] * alpha;
+		pixels[4 * i + 2] = pixels[4 * i + 2] * alpha;
+	}
+}
+
+static void premultiply_alpha(void * pixels, vk::Extent3D extent, vk::Format format)
+{
+	switch (format)
+	{
+		case vk::Format::eR8G8B8A8Srgb: // TODO: sRGB
+		case vk::Format::eR8G8B8A8Unorm:
+			premultiply_alpha_aux<uint8_t>((uint8_t *)pixels, 1. / 255., extent.width, extent.height);
+			break;
+
+		case vk::Format::eR16G16B16A16Unorm:
+			premultiply_alpha_aux<uint16_t>((uint16_t *)pixels, 1. / 65535., extent.width, extent.height);
+			break;
+
+		case vk::Format::eR32G32B32A32Sfloat:
+			premultiply_alpha_aux<float>((float *)pixels, 1, extent.width, extent.height);
+			break;
+
+		default:
+			break;
+	}
 }
 
 // Load a PNG/JPEG/KTX2 file
@@ -516,6 +559,8 @@ void image_loader::load(std::span<const std::byte> bytes, bool srgb)
 		extent.width = w;
 		extent.height = h;
 		extent.depth = 1;
+
+		premultiply_alpha(pixels.get(), extent, format);
 
 		do_load_raw(pixels.get(), extent, format);
 	}

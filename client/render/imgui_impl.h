@@ -18,6 +18,8 @@
 
 #pragma once
 
+#include "render/growable_descriptor_pool.h"
+#include "utils/thread_safe.h"
 #include "wivrn_config.h"
 #include "xr/hand_tracker.h"
 #include "xr/space.h"
@@ -46,7 +48,7 @@ class imgui_context
 	{
 		vk::raii::Sampler sampler;
 		std::shared_ptr<vk::raii::ImageView> image_view;
-		vk::raii::DescriptorSet descriptor_set;
+		std::shared_ptr<vk::raii::DescriptorSet> descriptor_set;
 	};
 
 public:
@@ -118,11 +120,11 @@ private:
 	vk::raii::PhysicalDevice physical_device;
 	vk::raii::Device & device;
 	uint32_t queue_family_index;
-	vk::raii::Queue & queue;
+	thread_safe<vk::raii::Queue> & queue;
 
 	vk::raii::Pipeline pipeline = nullptr;
-	vk::raii::DescriptorPool descriptor_pool;
 	vk::raii::DescriptorSetLayout ds_layout;
+	growable_descriptor_pool descriptor_pool;
 	vk::raii::RenderPass renderpass;
 	vk::raii::CommandPool command_pool;
 
@@ -177,7 +179,7 @@ public:
 	        vk::raii::PhysicalDevice physical_device,
 	        vk::raii::Device & device,
 	        uint32_t queue_family_index,
-	        vk::raii::Queue & queue,
+	        thread_safe<vk::raii::Queue> & queue,
 	        std::span<controller> controllers,
 	        xr::swapchain & swapchain,
 	        std::vector<viewport> layers);
@@ -207,6 +209,8 @@ public:
 
 	ImTextureID load_texture(const std::string & filename, vk::raii::Sampler && sampler);
 	ImTextureID load_texture(const std::string & filename);
+	ImTextureID load_texture(const std::span<const std::byte> & bytes, vk::raii::Sampler && sampler);
+	ImTextureID load_texture(const std::span<const std::byte> & bytes);
 	void free_texture(ImTextureID);
 	void set_current();
 

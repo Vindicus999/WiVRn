@@ -177,11 +177,11 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 		static_roles.face = &hmd;
 
 	roles.left = left_controller_index = xdev_count++;
-	static_roles.hand_tracking.left = xdevs[left_controller_index] = &left_controller;
+	static_roles.hand_tracking.unobstructed.left = xdevs[left_controller_index] = &left_controller;
 	xdevs[left_hand_interaction_index = xdev_count++] = &left_hand_interaction;
 
 	roles.right = right_controller_index = xdev_count++;
-	static_roles.hand_tracking.right = xdevs[right_controller_index] = &right_controller;
+	static_roles.hand_tracking.unobstructed.right = xdevs[right_controller_index] = &right_controller;
 	xdevs[right_hand_interaction_index = xdev_count++] = &right_hand_interaction;
 
 #if WIVRN_FEATURE_STEAMVR_LIGHTHOUSE
@@ -197,11 +197,13 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 			{
 				case XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER:
 					roles.left = xdev_count;
-					static_roles.hand_tracking.left = lhdev;
+					static_roles.hand_tracking.unobstructed.left = nullptr;
+					static_roles.hand_tracking.conforming.left = lhdev;
 					break;
 				case XRT_DEVICE_TYPE_RIGHT_HAND_CONTROLLER:
 					roles.right = xdev_count;
-					static_roles.hand_tracking.right = lhdev;
+					static_roles.hand_tracking.unobstructed.right = nullptr;
+					static_roles.hand_tracking.conforming.right = lhdev;
 					break;
 				default:
 					break;
@@ -739,7 +741,8 @@ void wivrn_session::operator()(from_headset::get_application_list && request)
 		response.applications.emplace_back(
 		        std::move(id),
 		        // FIXME: use locale
-		        app.name.at(""));
+		        app.name.at(""),
+		        app.image);
 	}
 	send_control(std::move(response));
 }

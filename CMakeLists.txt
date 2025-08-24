@@ -42,7 +42,7 @@ auto_option(WIVRN_USE_X264 "Enable x264 software encoder" AUTO)
 auto_option(WIVRN_USE_PIPEWIRE "Enable pipewire backend" AUTO)
 auto_option(WIVRN_USE_PULSEAUDIO "Enable pulseaudio backend" AUTO)
 
-set(OVR_COMPAT_SEARCH_PATH "/usr/local/lib/OpenComposite:/usr/lib/OpenComposite:/opt/OpenComposite:/opt/opencomposite:/opt/xrizer"
+set(OVR_COMPAT_SEARCH_PATH "/opt/xrizer:/usr/local/lib/OpenComposite:/usr/lib/OpenComposite:/opt/OpenComposite:/opt/opencomposite"
     CACHE STRING "List of places to search for the OpenVR compatibility layer, separated by :")
 
 option(WIVRN_FEATURE_DEBUG_GUI "Enable Monado debug GUI" OFF)
@@ -181,6 +181,11 @@ if (WIVRN_BUILD_SERVER)
     pkg_check_modules(glib2 REQUIRED IMPORTED_TARGET glib-2.0 gio-2.0 gio-unix-2.0)
 
     pkg_check_modules(libnotify REQUIRED IMPORTED_TARGET libnotify)
+endif()
+
+if (WIVRN_BUILD_DASHBOARD OR WIVRN_BUILD_SERVER)
+    pkg_check_modules(librsvg-2.0 REQUIRED IMPORTED_TARGET librsvg-2.0)
+    find_package(PNG)
 endif()
 
 if (WIVRN_BUILD_DASHBOARD)
