@@ -1,4 +1,4 @@
-From 7a3b7758a1ae3b0d9c7a48280f279f8e99b8b678 Mon Sep 17 00:00:00 2001
+From fee8044b7304f789f5bb6f1b3b442d57847dba7b Mon Sep 17 00:00:00 2001
 From: rcelyte <rcelyte@battletrains.org>
 Date: Mon, 17 Jun 2024 04:32:36 +0000
 Subject: [PATCH] d/solarxr: Add SolarXR IPC driver
@@ -28,7 +28,7 @@ Subject: [PATCH] d/solarxr: Add SolarXR IPC driver
  create mode 100644 src/xrt/drivers/solarxr/solarxr_ipc_socket.h
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index c84143343c..da462f4c3f 100644
+index f4f13fbb2..755bebb33 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -343,6 +343,7 @@ option_with_deps(XRT_BUILD_DRIVER_VIVE "Enable driver for HTC Vive, Vive Pro, Va
@@ -39,7 +39,7 @@ index c84143343c..da462f4c3f 100644
  option(XRT_BUILD_DRIVER_SIMULATED "Enable simulated driver" ON)
  
  option(XRT_BUILD_SAMPLES "Enable compiling sample code implementations that will not be linked into any final targets" ON)
-@@ -443,6 +444,7 @@ list(
+@@ -446,6 +447,7 @@ list(
  	"TWRAP"
  	"XREAL_AIR"
  	"STEAMVR_LIGHTHOUSE"
@@ -47,7 +47,7 @@ index c84143343c..da462f4c3f 100644
  	)
  
  # Package name needs to be known by the native code itself.
-@@ -672,6 +674,7 @@ message(STATUS "#    DRIVER_VIVE:                 ${XRT_BUILD_DRIVER_VIVE}")
+@@ -678,6 +680,7 @@ message(STATUS "#    DRIVER_VIVE:                 ${XRT_BUILD_DRIVER_VIVE}")
  message(STATUS "#    DRIVER_WMR:                  ${XRT_BUILD_DRIVER_WMR}")
  message(STATUS "#    DRIVER_XREAL_AIR:            ${XRT_BUILD_DRIVER_XREAL_AIR}")
  message(STATUS "#    DRIVER_STEAMVR_LIGHTHOUSE:   ${XRT_BUILD_DRIVER_STEAMVR_LIGHTHOUSE}")
@@ -56,10 +56,10 @@ index c84143343c..da462f4c3f 100644
  # cmake-format: on
  
 diff --git a/src/xrt/drivers/CMakeLists.txt b/src/xrt/drivers/CMakeLists.txt
-index 0d422f16e4..5a823014d3 100644
+index 90dc4970f..a41d25117 100644
 --- a/src/xrt/drivers/CMakeLists.txt
 +++ b/src/xrt/drivers/CMakeLists.txt
-@@ -494,6 +494,23 @@ if(XRT_BUILD_DRIVER_STEAMVR_LIGHTHOUSE)
+@@ -510,6 +510,23 @@ if(XRT_BUILD_DRIVER_STEAMVR_LIGHTHOUSE)
  	list(APPEND ENABLED_HEADSET_DRIVERS steamvr_lh)
  endif()
  
@@ -85,7 +85,7 @@ index 0d422f16e4..5a823014d3 100644
  	# but it never gets linked into a final target.
 diff --git a/src/xrt/drivers/solarxr/feeder.c b/src/xrt/drivers/solarxr/feeder.c
 new file mode 100644
-index 0000000000..55e235608c
+index 000000000..55e235608
 --- /dev/null
 +++ b/src/xrt/drivers/solarxr/feeder.c
 @@ -0,0 +1,286 @@
@@ -377,7 +377,7 @@ index 0000000000..55e235608c
 +}
 diff --git a/src/xrt/drivers/solarxr/feeder.h b/src/xrt/drivers/solarxr/feeder.h
 new file mode 100644
-index 0000000000..d5ef6a8b5f
+index 000000000..d5ef6a8b5
 --- /dev/null
 +++ b/src/xrt/drivers/solarxr/feeder.h
 @@ -0,0 +1,33 @@
@@ -416,7 +416,7 @@ index 0000000000..d5ef6a8b5f
 +                   bool (*filter)(struct xrt_device *device)); // thread safe
 diff --git a/src/xrt/drivers/solarxr/protocol.c b/src/xrt/drivers/solarxr/protocol.c
 new file mode 100644
-index 0000000000..01181b84a9
+index 000000000..01181b84a
 --- /dev/null
 +++ b/src/xrt/drivers/solarxr/protocol.c
 @@ -0,0 +1,383 @@
@@ -805,7 +805,7 @@ index 0000000000..01181b84a9
 +}
 diff --git a/src/xrt/drivers/solarxr/protocol.h b/src/xrt/drivers/solarxr/protocol.h
 new file mode 100644
-index 0000000000..b630d26b41
+index 000000000..b630d26b4
 --- /dev/null
 +++ b/src/xrt/drivers/solarxr/protocol.h
 @@ -0,0 +1,245 @@
@@ -1056,7 +1056,7 @@ index 0000000000..b630d26b41
 +read_solarxr_bone(struct solarxr_bone *out, const uint8_t buffer[], size_t buffer_len, const solarxr_bone_t *ref);
 diff --git a/src/xrt/drivers/solarxr/solarxr_device.c b/src/xrt/drivers/solarxr/solarxr_device.c
 new file mode 100644
-index 0000000000..f6bf6ce53a
+index 000000000..3fc8f74a0
 --- /dev/null
 +++ b/src/xrt/drivers/solarxr/solarxr_device.c
 @@ -0,0 +1,1145 @@
@@ -2143,7 +2143,7 @@ index 0000000000..f6bf6ce53a
 +			tracker->base.get_tracked_pose = solarxr_generic_tracker_get_tracked_pose;
 +			tracker->base.destroy = solarxr_generic_tracker_destroy;
 +			tracker->base.inputs[0].name = XRT_INPUT_GENERIC_TRACKER_POSE;
-+			m_relation_history_create(&tracker->history, NULL);
++			m_relation_history_create(&tracker->history);
 +			tracker->role = SOLARXR_BODY_PART_NONE;
 +			tracker->parent = device;
 +			tracker->weak_ref = &device->trackers[i];
@@ -2207,7 +2207,7 @@ index 0000000000..f6bf6ce53a
 +}
 diff --git a/src/xrt/drivers/solarxr/solarxr_interface.h b/src/xrt/drivers/solarxr/solarxr_interface.h
 new file mode 100644
-index 0000000000..15916484ff
+index 000000000..15916484f
 --- /dev/null
 +++ b/src/xrt/drivers/solarxr/solarxr_interface.h
 @@ -0,0 +1,40 @@
@@ -2253,7 +2253,7 @@ index 0000000000..15916484ff
 +#endif
 diff --git a/src/xrt/drivers/solarxr/solarxr_ipc_message.h b/src/xrt/drivers/solarxr/solarxr_ipc_message.h
 new file mode 100644
-index 0000000000..0d97b51118
+index 000000000..0d97b5111
 --- /dev/null
 +++ b/src/xrt/drivers/solarxr/solarxr_ipc_message.h
 @@ -0,0 +1,74 @@
@@ -2333,7 +2333,7 @@ index 0000000000..0d97b51118
 +}
 diff --git a/src/xrt/drivers/solarxr/solarxr_ipc_socket.c b/src/xrt/drivers/solarxr/solarxr_ipc_socket.c
 new file mode 100644
-index 0000000000..b889a76163
+index 000000000..b889a7616
 --- /dev/null
 +++ b/src/xrt/drivers/solarxr/solarxr_ipc_socket.c
 @@ -0,0 +1,255 @@
@@ -2594,7 +2594,7 @@ index 0000000000..b889a76163
 +}
 diff --git a/src/xrt/drivers/solarxr/solarxr_ipc_socket.h b/src/xrt/drivers/solarxr/solarxr_ipc_socket.h
 new file mode 100644
-index 0000000000..aaebfdd547
+index 000000000..aaebfdd54
 --- /dev/null
 +++ b/src/xrt/drivers/solarxr/solarxr_ipc_socket.h
 @@ -0,0 +1,49 @@
@@ -2648,10 +2648,10 @@ index 0000000000..aaebfdd547
 +	return atomic_load(&state->ipc_handle) != XRT_IPC_HANDLE_INVALID;
 +}
 diff --git a/src/xrt/targets/common/CMakeLists.txt b/src/xrt/targets/common/CMakeLists.txt
-index e2b9ba79d1..1fbf5f436f 100644
+index e7655456a..c42697d0e 100644
 --- a/src/xrt/targets/common/CMakeLists.txt
 +++ b/src/xrt/targets/common/CMakeLists.txt
-@@ -201,6 +201,10 @@ if(XRT_BUILD_DRIVER_SIMULAVR)
+@@ -205,6 +205,10 @@ if(XRT_BUILD_DRIVER_SIMULAVR)
  	target_link_libraries(target_lists PRIVATE drv_svr)
  endif()
  
@@ -2663,4 +2663,5 @@ index e2b9ba79d1..1fbf5f436f 100644
  # Instance
  #
 -- 
-GitLab
+2.50.1
+
