@@ -35,6 +35,10 @@ finish-args:
   # Set the active OpenXR / OpenVR runtime
   - --filesystem=xdg-config/openxr:create
   - --filesystem=xdg-config/openvr:create
+  # SlimeVR
+  - --filesystem=xdg-run/SlimeVRInput
+  - --filesystem=xdg-run/SlimeVRRpc
+  - --filesystem=xdg-run/app/dev.slimevr.SlimeVR
   # Let outside application access the WiVRn socket
   - --filesystem=xdg-run/wivrn:create
   - --own-name=io.github.wivrn.Server
@@ -343,6 +347,7 @@ modules:
       - -DWIVRN_BUILD_SERVER_LIBRARY=ON
       - -DWIVRN_BUILD_DASHBOARD=OFF
       - -DWIVRN_BUILD_WIVRNCTL=OFF
+      - -DWIVRN_FEATURE_SOLARXR=ON
       - -DWIVRN_WERROR=ON
       - -DFETCHCONTENT_FULLY_DISCONNECTED=ON
       - -DFETCHCONTENT_BASE_DIR=deps
