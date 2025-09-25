@@ -13,7 +13,7 @@ if (WIVRN_USE_LIBKTX)
     FetchContent_MakeAvailable(libktx)
 endif()
 
-if (NOT BOOST_FOUND)
+if (NOT WIVRN_USE_SYSTEM_BOOST)
     FetchContent_MakeAvailable(boost)
 endif()
 
@@ -51,7 +51,7 @@ if(ANDROID)
 else()
     add_executable(wivrn)
 
-    if (OpenXR_FOUND)
+    if (WIVRN_USE_SYSTEM_OPENXR)
         target_link_libraries(wivrn OpenXR::openxr_loader OpenXR::headers)
     else()
         FetchContent_MakeAvailable(openxr_loader)
@@ -91,7 +91,22 @@ file(GLOB_RECURSE VULKAN_SHADERS CONFIGURE_DEPENDS "*.glsl")
 target_sources(wivrn PRIVATE ${LOCAL_SOURCE} ${VULKAN_SHADERS})
 wivrn_compile_glsl(wivrn SHADERS ${VULKAN_SHADERS})
 
-target_link_libraries(wivrn Vulkan::Vulkan spdlog::spdlog glm::glm fastgltf FreetypeHarfbuzz stb Boost::url Boost::locale)
+target_link_libraries(wivrn
+    Boost::locale
+    Boost::url
+    EnTT::EnTT
+    fastgltf
+    FreetypeHarfbuzz
+    glm::glm
+    imspinner
+    simdjson
+    spdlog::spdlog
+    stb
+    uni-algo
+    Vulkan::Vulkan
+    wivrn-common
+    wivrn-external
+)
 
 if (WIVRN_USE_LIBKTX)
     target_link_libraries(wivrn ktx_read)
@@ -106,10 +121,6 @@ target_include_directories(wivrn PRIVATE .)
 if(NOT ANDROID)
     install(TARGETS wivrn)
 endif()
-
-target_link_libraries(wivrn simdjson uni-algo wivrn-common wivrn-external)
-
-
 
 ##############################################################################
 # Dear ImGui
@@ -140,10 +151,6 @@ target_link_libraries(wivrn-imgui FreetypeHarfbuzz)
 target_link_libraries(wivrn wivrn-imgui)
 
 
-##############################################################################
-# EnTT
-#
-target_link_libraries(wivrn EnTT::EnTT)
 
 ##############################################################################
 # Vulkan Validation Layer
@@ -230,7 +237,7 @@ add_custom_command(OUTPUT ${ASSETS_DIR}/wivrn.png
     DEPENDS ${IMG_SRC_DIR}/wivrn.svg ${WIVRN_CSS_ABS})
 
 add_custom_target(assets ALL DEPENDS
-        ${ASSETS_DIR}/wivrn.png)
+    ${ASSETS_DIR}/wivrn.png)
 
 add_dependencies(wivrn assets)
 
@@ -251,8 +258,8 @@ if(ANDROID)
     add_custom_target(assets-android ALL DEPENDS
         ${ASSETS_DIR}/wivrn.ktx2
         ${ASSETS_DIR}/WoodFloor051_1K-JPG_Color.ktx2
-        ${ASSETS_DIR}/vr_splash.png)
-
+        ${ASSETS_DIR}/vr_splash.png
+    )
     add_dependencies(assets-android assets)
     add_dependencies(wivrn assets-android)
 endif()

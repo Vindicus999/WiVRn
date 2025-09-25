@@ -21,7 +21,10 @@
 #include "stream.h"
 #include "utils/overloaded.h"
 #include "wivrn_packets.h"
+#include "xr/body_tracker.h"
+#include "xr/face_tracker.h"
 #include "xr/fb_body_tracker.h"
+#include "xr/to_string.h"
 #include <magic_enum.hpp>
 #include <ranges>
 #include <spdlog/spdlog.h>
@@ -377,7 +380,6 @@ void scenes::stream::tracking()
 	std::vector<from_headset::tracking> tracking;
 	std::vector<from_headset::tracking> tracking_pool; // pre-allocated objects
 	std::vector<from_headset::hand_tracking> hands;
-	std::array<bool, 2> should_skip_simple_controllers{};
 	std::vector<from_headset::body_tracking> body;
 	std::vector<XrView> views;
 
@@ -385,31 +387,14 @@ void scenes::stream::tracking()
 	std::vector<serialization_packet> packets;
 
 	const bool hand_tracking = config.check_feature(feature::hand_tracking);
+	std::optional<xr::hand_tracker> left_hand;
+	std::optional<xr::hand_tracker> right_hand;
 
 	const bool face_tracking = config.check_feature(feature::face_tracking);
-	auto & face_tracker = application::get_face_tracker();
-	if (face_tracking)
-	{
-		// We can't start the face tracking on application initialisation like we do for
-		// other face trackers due to a Pico runtime bug where face tracking freezes when
-		// the headset is taken off or the application is quit.
-		if (auto * face_pico = std::get_if<xr::pico_face_tracker>(&face_tracker))
-			face_pico->start();
-	}
+	xr::face_tracker face_tracker;
 
 	const bool body_tracking = config.check_feature(feature::body_tracking);
-	auto & body_tracker = application::get_body_tracker();
-	if (body_tracking)
-	{
-		if (auto * body_fb = std::get_if<xr::fb_body_tracker>(&body_tracker))
-		{
-			// TODO maybe handle reconnection better, if the settings are changed since
-			// last connection to running server, the tracker count will mismatch and
-			// stuff might break
-			body_fb->stop();
-			body_fb->start(config.fb_lower_body, config.fb_hip);
-		}
-	}
+	xr::body_tracker body_tracker;
 
 	locate_spaces_functor locate_spaces{instance, world_space};
 
@@ -433,11 +418,50 @@ void scenes::stream::tracking()
 			timer t(instance);
 			int samples = 0;
 
-			to_headset::tracking_control control;
+			auto control = *tracking_control.lock();
+			bool interaction_profile_changed = this->interaction_profile_changed.exchange(false);
+
+			if (control.enabled[size_t(tid::left_hand)])
 			{
-				std::lock_guard lock(tracking_control_mutex);
-				control = tracking_control;
+				if (not left_hand and system.hand_tracking_supported())
+					left_hand = session.create_hand_tracker(XR_HAND_LEFT_EXT);
 			}
+			else
+				left_hand.reset();
+
+			if (control.enabled[size_t(tid::right_hand)])
+			{
+				if (not right_hand and system.hand_tracking_supported())
+					right_hand = session.create_hand_tracker(XR_HAND_RIGHT_EXT);
+			}
+			else
+				right_hand.reset();
+
+			if (face_tracking and control.enabled[size_t(tid::face)])
+			{
+				if (std::holds_alternative<std::monostate>(face_tracker))
+					face_tracker = xr::make_face_tracker(instance, system, session);
+			}
+			else
+				face_tracker.emplace<std::monostate>();
+
+			if (body_tracking and control.enabled[size_t(tid::generic_tracker)])
+			{
+				if (std::holds_alternative<std::monostate>(body_tracker))
+					body_tracker = xr::make_body_tracker(
+					        instance,
+					        system,
+					        session,
+					        application::get_generic_trackers(),
+					        config.fb_lower_body,
+					        config.fb_hip);
+			}
+			else
+				body_tracker.emplace<std::monostate>();
+
+			if (interaction_profile_changed)
+				if (auto htc = std::get_if<xr::htc_body_tracker>(&body_tracker))
+					htc->update_active();
 
 			XrDuration prediction = std::clamp<XrDuration>(control.max_offset.count(), 0, 80'000'000);
 			auto period = std::max<XrDuration>(display_time_period.load(), 1'000'000);
@@ -469,9 +493,9 @@ void scenes::stream::tracking()
 					    (Δt == 0 or Δt >= prediction - 2 * period))
 					{
 						last_hand_sample = t0;
-						if (control.enabled[size_t(tid::left_hand)])
+						if (left_hand)
 						{
-							auto joints = locate_hands(application::get_left_hand(), world_space, t0 + Δt);
+							auto joints = locate_hands(*left_hand, world_space, t0 + Δt);
 							hands.emplace_back(
 							        t0,
 							        t0 + Δt,
@@ -479,9 +503,9 @@ void scenes::stream::tracking()
 							        joints);
 						}
 
-						if (control.enabled[size_t(tid::right_hand)])
+						if (right_hand)
 						{
-							auto joints = locate_hands(application::get_right_hand(), world_space, t0 + Δt);
+							auto joints = locate_hands(*right_hand, world_space, t0 + Δt);
 							hands.emplace_back(
 							        t0,
 							        t0 + Δt,
@@ -498,37 +522,33 @@ void scenes::stream::tracking()
 					}
 					locate_spaces.resolve(session, t0 + Δt, packet.device_poses);
 
-					if (body_tracking)
-						std::visit(utils::overloaded{
-						                   [](std::monostate &) {},
-						                   [&](auto & b) {
-							                   if (t0 >= last_body_sample + period and
-							                       (Δt == 0 or Δt >= prediction - 2 * period))
+					std::visit(utils::overloaded{
+					                   [](std::monostate &) {},
+					                   [&](auto & b) {
+						                   if (t0 >= last_body_sample + period and
+						                       (Δt == 0 or Δt >= prediction - 2 * period))
+						                   {
+							                   last_body_sample = t0;
+							                   if (control.enabled[size_t(tid::generic_tracker)])
 							                   {
-								                   last_body_sample = t0;
-								                   if (control.enabled[size_t(tid::generic_tracker)])
-								                   {
-									                   body.push_back(from_headset::body_tracking{
-									                           .production_timestamp = t0,
-									                           .timestamp = t0 + Δt,
-									                           .poses = b.locate_spaces(t0 + Δt, world_space),
-									                   });
-								                   }
+								                   body.push_back(from_headset::body_tracking{
+								                           .production_timestamp = t0,
+								                           .timestamp = t0 + Δt,
+								                           .poses = b.locate_spaces(t0 + Δt, world_space),
+								                   });
 							                   }
-						                   },
-						           },
-						           body_tracker);
+						                   }
+					                   },
+					           },
+					           body_tracker);
 
-					if (face_tracking && control.enabled[size_t(tid::face)])
-					{
-						std::visit(utils::overloaded{
-						                   [](std::monostate &) {},
-						                   [&](auto & ft) {
-							                   ft.get_weights(t0 + Δt, packet.face.emplace<typename std::remove_reference_t<decltype(ft)>::packet_type>());
-						                   },
-						           },
-						           face_tracker);
-					}
+					std::visit(utils::overloaded{
+					                   [](std::monostate &) {},
+					                   [&](auto & ft) {
+						                   ft.get_weights(t0 + Δt, packet.face.emplace<typename std::remove_reference_t<decltype(ft)>::packet_type>());
+					                   },
+					           },
+					           face_tracker);
 				}
 				catch (const std::system_error & e)
 				{
@@ -629,20 +649,17 @@ void scenes::stream::tracking()
 			exit();
 		}
 	}
-
-	if (auto * face_pico = std::get_if<xr::pico_face_tracker>(&face_tracker))
-		face_pico->stop();
 }
 
 void scenes::stream::operator()(to_headset::tracking_control && packet)
 {
-	std::lock_guard lock(tracking_control_mutex);
+	auto locked = tracking_control.lock();
 	auto m = size_t(to_headset::tracking_control::id::microphone);
 	if (audio_handle)
 		audio_handle->set_mic_state(packet.enabled[m]);
 
-	tracking_control = packet;
-	tracking_control.min_offset = std::min(tracking_control.min_offset, tracking_control.max_offset);
+	*locked = packet;
+	locked->min_offset = std::min(locked->min_offset, locked->max_offset);
 }
 
 static device_id derived_from(device_id target)
@@ -663,6 +680,7 @@ static device_id derived_from(device_id target)
 
 void scenes::stream::on_interaction_profile_changed(const XrEventDataInteractionProfileChanged &)
 {
+	interaction_profile_changed = true;
 	std::array path = {
 	        "/user/hand/left",
 	        "/user/hand/right",
