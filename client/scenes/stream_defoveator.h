@@ -19,42 +19,34 @@
 
 #pragma once
 
-#include "blitter.h"
 #include "vk/allocation.h"
 #include "wivrn_packets.h"
 #include <vulkan/vulkan_raii.hpp>
 #include <openxr/openxr.h>
 
-class stream_defoveator
+class stream_reprojection
 {
 	struct vertex;
-	static const uint32_t view_count = 2;
+	const uint32_t view_count;
 	// Vertex buffer
 	buffer_allocation buffer;
 	size_t vertices_size = 0;
 
 	vk::raii::Device & device;
-	vk::raii::PhysicalDevice & physical_device;
 
 	// Graphic pipeline
+	vk::raii::DescriptorSetLayout descriptor_set_layout = nullptr;
+	vk::raii::DescriptorPool descriptor_pool = nullptr;
+	vk::raii::PipelineLayout layout = nullptr;
 	vk::raii::RenderPass renderpass = nullptr;
-	vk::raii::DescriptorPool ds_pool = nullptr;
-	struct pipeline_t
-	{
-		vk::raii::DescriptorSetLayout descriptor_set_layout = nullptr;
-		vk::DescriptorSet ds;
-		vk::raii::PipelineLayout layout = nullptr;
-		vk::raii::Pipeline pipeline = nullptr;
-	};
-	pipeline_t pipeline_rgb[view_count];
-	pipeline_t pipeline_a[view_count];
+	vk::raii::Pipeline pipeline = nullptr;
 
-	// Allowed sizes for variable shading rate
-	// indices are for x, y
-	// 0 is 1 pixel
-	// 1 is 2 or 3 pixels
-	// 2 is 4 pixels or more
-	uint32_t fragment_sizes[3][3] = {};
+	// Source image
+	vk::raii::Sampler sampler = nullptr;
+	vk::Image input_image;
+	std::vector<vk::raii::ImageView> input_image_views;
+	std::vector<vk::DescriptorSet> descriptor_sets;
+	vk::Extent2D input_extent;
 
 	// Destination images
 	std::vector<vk::Image> output_images;
@@ -65,23 +57,22 @@ class stream_defoveator
 	void ensure_vertices(size_t num_vertices);
 	vertex * get_vertices(size_t view);
 
-	uint32_t shading_rate(int pixels_x, int pixels_y);
-	pipeline_t & ensure_pipeline(size_t view, vk::Sampler rgb, vk::Sampler a);
-
 public:
-	stream_defoveator(
+	stream_reprojection(
 	        vk::raii::Device & device,
 	        vk::raii::PhysicalDevice & physical_device,
+	        vk::Image input_image,
+	        vk::Extent2D input_extent,
+	        uint32_t view_count,
 	        std::vector<vk::Image> output_images,
 	        vk::Extent2D output_extent,
 	        vk::Format format);
 
-	stream_defoveator(const stream_defoveator &) = delete;
+	stream_reprojection(const stream_reprojection &) = delete;
 
-	void defoveate(
+	void reproject(
 	        vk::raii::CommandBuffer & command_buffer,
 	        const std::array<wivrn::to_headset::foveation_parameter, 2> & foveation,
-	        std::span<wivrn::blitter::output> inputs,
 	        int destination);
 
 	XrExtent2Di defoveated_size(const wivrn::to_headset::foveation_parameter &) const;

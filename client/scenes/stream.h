@@ -23,9 +23,8 @@
 #include "decoder/shard_accumulator.h"
 #include "render/imgui_impl.h"
 #include "scene.h"
-#include "scenes/blitter.h"
 #include "scenes/input_profile.h"
-#include "stream_defoveator.h"
+#include "stream_reprojection.h"
 #include "utils/thread_safe.h"
 #include "wifi_lock.h"
 #include "wivrn_client.h"
@@ -49,13 +48,6 @@ public:
 	};
 	static const size_t image_buffer_size = 3;
 
-	struct app
-	{
-		std::string id;
-		std::string name;
-		std::vector<std::byte> image;
-	};
-
 private:
 	static const size_t view_count = 2;
 
@@ -64,12 +56,16 @@ private:
 	struct accumulator_images
 	{
 		std::unique_ptr<wivrn::shard_accumulator> decoder;
-		// latest frames, rolling buffer
+		vk::raii::DescriptorSetLayout descriptor_set_layout = nullptr;
+		vk::DescriptorSet descriptor_set = nullptr;
+		vk::raii::PipelineLayout blit_pipeline_layout = nullptr;
+		vk::raii::Pipeline blit_pipeline = nullptr;
+		// latest frames from oldest to most recent
 		std::array<std::shared_ptr<wivrn::shard_accumulator::blit_handle>, image_buffer_size> latest_frames;
 
 		std::shared_ptr<wivrn::shard_accumulator::blit_handle> frame(uint64_t id) const;
 		bool alpha() const;
-		bool empty() const;
+		std::vector<uint64_t> frames() const;
 	};
 
 	wifi_lock::wifi wifi;
@@ -81,9 +77,9 @@ private:
 	std::unique_ptr<wivrn_session> network_session;
 	std::atomic<bool> exiting = false;
 	std::thread network_thread;
-	thread_safe<to_headset::tracking_control> tracking_control{};
+	std::mutex tracking_control_mutex;
+	to_headset::tracking_control tracking_control{};
 	std::array<std::atomic<interaction_profile>, 2> interaction_profiles; // left and right hand
-	std::atomic<bool> interaction_profile_changed = false;
 	std::atomic<bool> recenter_requested = false;
 	std::atomic<XrDuration> display_time_phase = 0;
 	std::atomic<XrDuration> display_time_period = 0;
@@ -94,10 +90,21 @@ private:
 	std::shared_mutex decoder_mutex;
 	std::optional<to_headset::video_stream_description> video_stream_description;
 	std::vector<accumulator_images> decoders; // Locked by decoder_mutex
+	vk::raii::DescriptorPool blit_descriptor_pool = nullptr;
+	vk::raii::RenderPass blit_render_pass = nullptr;
 
-	std::array<blitter, view_count> blitters;
+	vk::Extent2D decoder_out_size;
+	vk::Format decoder_out_format;
+	image_allocation decoder_out_image;
 
-	std::optional<stream_defoveator> defoveator;
+	struct renderpass_output
+	{
+		vk::raii::ImageView image_view = nullptr;
+		vk::raii::Framebuffer frame_buffer = nullptr;
+	};
+	std::array<renderpass_output, view_count> decoder_output;
+
+	std::optional<stream_reprojection> reprojector;
 
 	vk::raii::Fence fence = nullptr;
 	vk::raii::CommandBuffer command_buffer = nullptr;
@@ -118,8 +125,6 @@ private:
 
 	std::optional<audio> audio_handle;
 
-	std::optional<xr::hand_tracker> left_hand;
-	std::optional<xr::hand_tracker> right_hand;
 	std::optional<input_profile> input;
 	static inline const uint32_t layer_controllers = 1 << 0;
 	static inline const uint32_t layer_rays = 1 << 1;
@@ -171,7 +176,7 @@ private:
 	std::vector<std::shared_ptr<wivrn::shard_accumulator::blit_handle>> current_blit_handles;
 
 	// Last application list received from server
-	thread_safe<std::vector<app>> applications;
+	thread_safe<to_headset::application_list> applications;
 
 	stream();
 
@@ -197,7 +202,6 @@ public:
 	void operator()(to_headset::video_stream_description &&);
 	void operator()(to_headset::refresh_rate_change &&);
 	void operator()(to_headset::application_list &&);
-	void operator()(to_headset::application_icon &&);
 	void operator()(audio_data &&);
 
 	void push_blit_handle(wivrn::shard_accumulator * decoder, std::shared_ptr<wivrn::shard_accumulator::blit_handle> handle);

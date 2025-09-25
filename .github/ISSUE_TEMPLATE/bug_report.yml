@@ -64,8 +64,7 @@ body:
     attributes:
       label: Vulkan Info
       description: Provide the output of `vulkaninfo --summary` command.
-      render: text
-      placeholder: Attach the output as a file here.
+      placeholder: Add the output of vulkaninfo command here...
 
   - type: dropdown
     id: hmd
@@ -91,5 +90,4 @@ body:
     attributes:
       label: ADB Logs
       description: Provide the output of `adb logcat` command.
-      render: plain
-      placeholder: Attach the output of adb logcat as a file.
+      placeholder: Add the output of adb logcat command here...
