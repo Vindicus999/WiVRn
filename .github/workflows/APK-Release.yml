@@ -2,7 +2,7 @@ name: Release APK Only
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "apk-build" ]
 
 env:
   BUILD_TYPE: RelWithDebInfo
@@ -22,7 +22,7 @@ jobs:
     - uses: actions/checkout@v4
       with:
         # Checkout from upstream instead of WiVRn-APK to ensure the GIT_DESC variable is set correctly
-        repository: 'WiVRn/WiVRn'
+        repository: 'Vindicus999/WiVRn'
         ref: ${{ github.sha }}
         fetch-depth: 0
 
@@ -110,13 +110,13 @@ jobs:
         pattern: 'apk-*'
         merge-multiple: true
 
-    - name: Rename APK artifacts
-      run: |
-        cd apk
-        for f in *.apk; do
-          BASENAME=`echo ${f}|awk -F '-APK-' '{print $2}'`
-          mv "${f}" "org.meumeu.wivrn-${BASENAME}"
-        done
+    # - name: Rename APK artifacts
+    #   run: |
+    #     cd apk
+    #     for f in *.apk; do
+    #       BASENAME=`echo ${f}|awk -F '-APK-' '{print $2}'`
+    #       mv "${f}" "org.meumeu.wivrn-${BASENAME}"
+    #     done
 
     - name: Download APK debug artifacts
       uses: actions/download-artifact@v4
