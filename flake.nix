@@ -16,7 +16,6 @@
         extraBuildInputs = [
           # XRT_FEATURE_DEBUG_GUI requires SDL2
           pkgs.sdl2-compat
-
           pkgs.librsvg
           pkgs.libpng
         ];
