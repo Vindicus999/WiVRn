@@ -19,6 +19,7 @@
 
           pkgs.librsvg
           pkgs.libpng
+          pkgs.libarchive
         ];
         extraNativeBuildInputs = [
           pkgs.util-linux
