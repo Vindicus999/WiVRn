@@ -236,13 +236,8 @@ add_custom_command(OUTPUT ${ASSETS_DIR}/wivrn.png
     COMMAND ${RSVG_CONVERT} ${IMG_SRC_DIR}/wivrn.svg -w 540 -h 540 -o ${ASSETS_DIR}/wivrn.png ${RSVG_OPTS}
     DEPENDS ${IMG_SRC_DIR}/wivrn.svg ${WIVRN_CSS_ABS})
 
-add_custom_command(OUTPUT ${ASSETS_DIR}/wivrn-pride.png
-    COMMAND ${RSVG_CONVERT} ${IMG_SRC_DIR}/wivrn-pride.svg -w 540 -h 540 -o ${ASSETS_DIR}/wivrn-pride.png ${RSVG_OPTS}
-    DEPENDS ${IMG_SRC_DIR}/wivrn-pride.svg ${WIVRN_CSS_ABS})
-
 add_custom_target(assets ALL DEPENDS
     ${ASSETS_DIR}/wivrn.png
-    ${ASSETS_DIR}/wivrn-pride.png
 )
 
 add_dependencies(wivrn assets)
@@ -252,12 +247,9 @@ if(ANDROID)
     add_custom_command(OUTPUT ${ASSETS_DIR}/wivrn.ktx2
         COMMAND ${TOKTX} --encode astc --astc_blk_d 4x4 --astc_quality 100 --genmipmap ${ASSETS_DIR}/wivrn.ktx2 ${ASSETS_DIR}/wivrn.png
         DEPENDS ${ASSETS_DIR}/wivrn.png)
-    add_custom_command(OUTPUT ${ASSETS_DIR}/wivrn-pride.ktx2
-        COMMAND ${TOKTX} --encode astc --astc_blk_d 4x4 --astc_quality 100 --genmipmap ${ASSETS_DIR}/wivrn-pride.ktx2 ${ASSETS_DIR}/wivrn-pride.png
-        DEPENDS ${ASSETS_DIR}/wivrn-pride.png)
 
     add_custom_command(OUTPUT ${ASSETS_DIR}/default_icon.ktx2
-        COMMAND ${TOKTX} --encode astc --astc_blk_d 4x4 --astc_quality 100 --genmipmap ${ASSETS_DIR}/wivrn-pride.ktx2 ${ASSETS_DIR}/default_icon.png
+        COMMAND ${TOKTX} --encode astc --astc_blk_d 4x4 --astc_quality 100 --genmipmap ${ASSETS_DIR}/wivrn.ktx2 ${ASSETS_DIR}/default_icon.png
         DEPENDS ${ASSETS_DIR}/default_icon.png)
 
     add_custom_command(OUTPUT ${ASSETS_DIR}/WoodFloor051_1K-JPG_Color.ktx2
@@ -270,7 +262,6 @@ if(ANDROID)
 
     add_custom_target(assets-android ALL DEPENDS
         ${ASSETS_DIR}/wivrn.ktx2
-        ${ASSETS_DIR}/wivrn-pride.ktx2
         ${ASSETS_DIR}/WoodFloor051_1K-JPG_Color.ktx2
         ${ASSETS_DIR}/vr_splash.png
     )
