@@ -89,7 +89,7 @@ file(GLOB LOCAL_SOURCE CONFIGURE_DEPENDS
 
 file(GLOB_RECURSE VULKAN_SHADERS CONFIGURE_DEPENDS "*.glsl")
 target_sources(wivrn PRIVATE ${LOCAL_SOURCE} ${VULKAN_SHADERS})
-wivrn_compile_glsl(wivrn ${VULKAN_SHADERS})
+wivrn_compile_glsl(wivrn SHADERS ${VULKAN_SHADERS})
 
 target_link_libraries(wivrn Vulkan::Vulkan spdlog::spdlog glm::glm fastgltf FreetypeHarfbuzz stb Boost::url Boost::locale)
 
@@ -177,6 +177,9 @@ if(USE_ANDROID_VALIDATION_LAYER)
     file(COPY
         ${CMAKE_BINARY_DIR}/Vulkan-ValidationLayer/android-binaries-${VVL_VERSION}/${CMAKE_ANDROID_ARCH_ABI}
         DESTINATION ${CMAKE_ANDROID_LIB_DIRECTORIES})
+else()
+    # silence "Manually-specified variables were not used by the project" warning
+    set(_unused ${CMAKE_ANDROID_LIB_DIRECTORIES})
 endif()
 
 

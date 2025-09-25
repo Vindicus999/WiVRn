@@ -18,7 +18,7 @@
  */
 
 #include "application.h"
-#include "asset.h"
+
 #include "hardware.h"
 #include "openxr/openxr.h"
 #include "scene.h"
@@ -26,6 +26,7 @@
 #include "spdlog/spdlog.h"
 #include "utils/contains.h"
 #include "utils/files.h"
+#include "utils/i18n.h"
 #include "vk/check.h"
 #include "wifi_lock.h"
 #include "xr/actionset.h"
@@ -67,7 +68,6 @@ struct interaction_profile
 	std::string profile_name;
 	std::vector<std::string> required_extensions;
 	XrVersion min_version = XR_MAKE_VERSION(1, 0, 0);
-	XrVersion max_version = XR_MAKE_VERSION(2, 0, 0); // exclusive
 	std::vector<std::string> input_sources;
 	bool available;
 };
@@ -134,8 +134,7 @@ static std::vector<interaction_profile> interaction_profiles{
         },
         interaction_profile{
                 .profile_name = "/interaction_profiles/facebook/touch_controller_pro",
-                .required_extensions = {"XR_FB_touch_controller_pro"},
-                .max_version = XR_MAKE_VERSION(1, 1, 0),
+                .required_extensions = {XR_FB_TOUCH_CONTROLLER_PRO_EXTENSION_NAME},
                 .input_sources = {
                         "/user/hand/left/output/haptic",
                         "/user/hand/left/output/haptic_trigger_fb",
@@ -247,8 +246,7 @@ static std::vector<interaction_profile> interaction_profiles{
         },
         interaction_profile{
                 .profile_name = "/interaction_profiles/meta/touch_controller_plus",
-                .required_extensions = {"XR_META_touch_controller_plus"},
-                .max_version = XR_MAKE_VERSION(1, 1, 0),
+                .required_extensions = {XR_META_TOUCH_CONTROLLER_PLUS_EXTENSION_NAME},
                 .input_sources = {
                         "/user/hand/left/output/haptic",
                         "/user/hand/right/output/haptic",
@@ -971,7 +969,8 @@ void application::initialize_actions()
 	std::vector<std::string> sources;
 	for (auto & profile: interaction_profiles)
 	{
-		profile.available = utils::contains_all(xr_extensions, profile.required_extensions) and profile.min_version <= api_version and profile.max_version > api_version;
+		profile.available = std::ranges::all_of(profile.required_extensions, [&](auto & ext) { return xr_instance.has_extension(ext); }) and
+		                    profile.min_version <= api_version;
 
 		if (profile.profile_name.ends_with("khr/simple_controller"))
 		{
@@ -1352,50 +1351,47 @@ void application::initialize()
 	vk_cmdpool = vk::raii::CommandPool{vk_device, cmdpool_create_info};
 
 	initialize_actions();
+	load_locale();
+}
 
+void application::load_locale()
+{
 	gen.add_messages_domain("wivrn");
 	std::locale loc = gen("");
 
+	messages_info.encoding = "UTF-8";
+	if (config->locale.empty())
+	{
 #ifdef __ANDROID__
-	jni::klass java_util_Locale("java/util/Locale");
-	auto default_locale = java_util_Locale.call<jni::object<"java/util/Locale">>("getDefault");
+		jni::klass java_util_Locale("java/util/Locale");
+		auto default_locale = java_util_Locale.call<jni::object<"java/util/Locale">>("getDefault");
 
-	// if (auto language = default_locale.call<jni::string>("toString"))
-	if (auto language = default_locale.call<jni::string>("getLanguage"))
-		messages_info.language = language;
+		// if (auto language = default_locale.call<jni::string>("toString"))
+		if (auto language = default_locale.call<jni::string>("getLanguage"))
+			messages_info.language = language;
 
-	if (auto country = default_locale.call<jni::string>("getCountry"))
-		messages_info.country = country;
-
-	messages_info.encoding = "UTF-8";
-
+		if (auto country = default_locale.call<jni::string>("getCountry"))
+			messages_info.country = country;
 #else
-	auto & facet = std::use_facet<boost::locale::info>(loc);
-	messages_info.language = facet.language();
-	messages_info.country = facet.country();
-	messages_info.encoding = "UTF-8";
+		auto & facet = std::use_facet<boost::locale::info>(loc);
+		messages_info.language = facet.language();
+		messages_info.country = facet.country();
 #endif
+	}
+	else
+	{
+		auto pos = config->locale.find("_");
+		messages_info.language = config->locale.substr(0, pos);
+		if (pos != std::string::npos)
+			messages_info.country = config->locale.substr(pos + 1);
+	}
 
 	spdlog::info("Current locale: language {}, country {}, encoding {}", messages_info.language, messages_info.country, messages_info.encoding);
 
 	messages_info.paths.push_back("locale");
 
 	messages_info.domains.push_back(boost::locale::gnu_gettext::messages_info::domain("wivrn"));
-	messages_info.callback = [](const std::string & file_name, const std::string & encoding) {
-		std::vector<char> buffer;
-		try
-		{
-			asset file(file_name);
-			buffer.resize(file.size());
-			memcpy(buffer.data(), file.data(), file.size());
-		}
-		catch (...)
-		{
-		}
-
-		return buffer;
-	};
-
+	messages_info.callback = open_locale_file;
 	loc = std::locale(loc, boost::locale::gnu_gettext::create_messages_facet<char>(messages_info));
 
 	std::locale::global(loc);

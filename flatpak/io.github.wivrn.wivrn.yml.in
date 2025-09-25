@@ -25,17 +25,16 @@ finish-args:
   - --system-talk-name=org.freedesktop.hostname1
   # List applications from $XDG_DATA_DIRS
   - --filesystem=host-os:ro
-  - --filesystem=xdg-data:ro
-  # List flatpak Steam games
+  - --filesystem=xdg-data/applications:ro
+  # List Steam games
+  - --filesystem=xdg-data/Steam:ro
+  - --filesystem=~/.steam:ro
   - --filesystem=~/.var/app/com.valvesoftware.Steam:ro
   # Pipewire
   - --filesystem=xdg-run/pipewire-0
   # Set the active OpenXR / OpenVR runtime
   - --filesystem=xdg-config/openxr:create
   - --filesystem=xdg-config/openvr:create
-  # SlimeVR
-  - --filesystem=xdg-run/SlimeVRInput
-  - --filesystem=xdg-run/SlimeVRRpc
   # Let outside application access the WiVRn socket
   - --filesystem=xdg-run/wivrn:create
   - --own-name=io.github.wivrn.Server
@@ -282,7 +281,7 @@ modules:
     sources:
       - type: git
         url: https://gitlab.com/znixian/OpenOVR.git
-        tag: 538639b86c5c71223f11040b09479e5c0a83078c
+        tag: cff07db75c4823afe93ed7027b03d5f7bc86f164
 
   - name: xrizer
     buildsystem: simple
@@ -354,10 +353,6 @@ modules:
       - WIVRN_SRC1
         WIVRN_SRC2
         WIVRN_SRC3
-      - type: archive
-        url: BOOSTPFR_URL
-        dest: deps/boostpfr-src
-        sha256: BOOSTPFR_SHA256
       - type: git
         url: https://gitlab.freedesktop.org/monado/monado
         tag: MONADO_COMMIT
@@ -365,7 +360,6 @@ modules:
       - type: shell
         commands:
          - cd deps/monado-src && ../../patches/apply.sh ../../patches/monado/*
-         - cd deps/boostpfr-src && ../../patches/apply.sh ../../flatpak/boostpfr-gcc-12-internal-compiler-error.patch
 
   - name: wivrn
     buildsystem: cmake-ninja
@@ -380,7 +374,8 @@ modules:
       - -DWIVRN_USE_NVENC=ON
       - -DWIVRN_USE_VULKAN_ENCODE=ON
       - -DWIVRN_USE_PULSEAUDIO=OFF
-      - -DWIVRN_FEATURE_SOLARXR=ON
+      - -DWIVRN_USE_PIPEWIRE=ON
+      - -DWIVRN_USE_SYSTEM_BOOST=OFF
       - -DWIVRN_WERROR=ON
       - -DWIVRN_CHECK_CAPSYSNICE=OFF # Capabilities don't work inside flatpak
       - -DFETCHCONTENT_FULLY_DISCONNECTED=ON

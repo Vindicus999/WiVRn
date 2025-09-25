@@ -20,6 +20,9 @@
           pkgs.librsvg
           pkgs.libpng
         ];
+        extraNativeBuildInputs = [
+          pkgs.util-linux
+        ];
 
         package = pkgs.enableDebugging (pkgs.wivrn.overrideAttrs (finalAttrs: oldAttrs: {
           src = ./.;
@@ -40,11 +43,12 @@
               # Keep in sync with CMakeLists.txt monado rev
               rev = builtins.readFile ./monado-rev;
               # Nix will output the correct hash when it doesn't match
-              hash = "sha256-4P/ejRAitrYn8hXZPaDOcx27utfm+aVLjtqL6JxZYAg=";
+              hash = "sha256-asb4uwuu+UEgznlOoAka+xG6Zj68lPHWiPN072LpTQQ=";
             };
           };
 
           buildInputs = oldAttrs.buildInputs ++ extraBuildInputs;
+          nativeBuildInputs = oldAttrs.nativeBuildInputs ++ extraNativeBuildInputs;
 
           dontWrapQtApps = true;
 

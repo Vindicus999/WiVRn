@@ -56,16 +56,7 @@ public:
 	bool fb_lower_body = false;
 	bool fb_hip = true;
 
-	// Snapdragon Game Super Resolution
-	struct sgsr_settings
-	{
-		bool enabled = false;
-		float upscaling_factor = 1.5;
-		bool use_edge_direction = true;
-		float edge_threshold = 4.0;
-		float edge_sharpness = 2.0;
-	};
-	sgsr_settings sgsr{};
+	bool enable_stream_gui = true;
 
 	// XR_FB_composition_layer_settings extension flags
 	struct openxr_post_processing_settings
@@ -83,6 +74,8 @@ public:
 
 	bool first_run = true;
 
+	std::string locale;
+
 	bool check_feature(feature f) const;
 	void set_feature(feature f, bool state);
 
@@ -90,7 +83,6 @@ private:
 	mutable std::mutex mutex;
 	std::map<feature, bool> features;
 
-	void parse_sgsr_options(simdjson::simdjson_result<simdjson::dom::object> root);
 	void parse_openxr_post_processing_options(simdjson::simdjson_result<simdjson::dom::object> root);
 
 public:
