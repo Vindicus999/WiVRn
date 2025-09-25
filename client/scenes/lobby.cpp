@@ -911,9 +911,7 @@ void scenes::lobby::on_focused()
 
 	imgui_ctx.emplace(physical_device, device, queue_family_index, queue, imgui_inputs, swapchain_imgui, vps);
 
-	auto t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-	auto tm = std::localtime(&t);
-	std::string image = tm->tm_mon == 5 ? "wivrn-pride" : "wivrn";
+	std::string image = "wivrn";
 	try
 	{
 		about_picture = imgui_ctx->load_texture(image + ".ktx2");
