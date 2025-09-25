@@ -35,7 +35,6 @@
 #include "xr/htc_face_tracker.h"
 #include "xr/pico_body_tracker.h"
 #include "xr/pico_face_tracker.h"
-#include "xr/xr.h"
 #include <atomic>
 #include <boost/locale/generator.hpp>
 #include <boost/locale/gnu_gettext.hpp>
