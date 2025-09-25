@@ -267,16 +267,37 @@ wivrn_rasterize_svg(SOURCE ${IMAGES_SRC_DIR}/wivrn-christmas.svg     DESTINATION
 wivrn_rasterize_svg(SOURCE ${ASSETS_SRC_DIR}/passthrough.svg         DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/passthrough.png         WIDTH 256 HEIGHT 256)
 wivrn_rasterize_svg(SOURCE ${ASSETS_SRC_DIR}/default-environment.svg DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/default-environment.png WIDTH 256 HEIGHT 256)
 
-wivrn_generate_ktx(        SOURCE ${CMAKE_CURRENT_BINARY_DIR}/wivrn.png                 DESTINATION ${ASSETS_DIR}/wivrn.ktx2                          TARGET wivrn)
-wivrn_generate_ktx(        SOURCE ${CMAKE_CURRENT_BINARY_DIR}/wivrn-pride.png           DESTINATION ${ASSETS_DIR}/wivrn-pride.ktx2                    TARGET wivrn)
-wivrn_generate_ktx(        SOURCE ${CMAKE_CURRENT_BINARY_DIR}/wivrn-christmas.png       DESTINATION ${ASSETS_DIR}/wivrn-christmas.ktx2                TARGET wivrn)
-wivrn_generate_ktx(        SOURCE ${ASSETS_SRC_DIR}/default_icon.png                    DESTINATION ${ASSETS_DIR}/default_icon.ktx2                   TARGET wivrn)
-wivrn_generate_ktx(        SOURCE ${CMAKE_CURRENT_BINARY_DIR}/passthrough.png           DESTINATION ${ASSETS_DIR}/passthrough.ktx2                    TARGET wivrn)
-wivrn_generate_ktx(        SOURCE ${CMAKE_CURRENT_BINARY_DIR}/default-environment.png   DESTINATION ${ASSETS_DIR}/default-environment.ktx2            TARGET wivrn)
-if(WIVRN_COMPRESS_GLB)
-    wivrn_gltf_transform_uastc(SOURCE ${ASSETS_SRC_DIR}/ground.glb                      DESTINATION ${ASSETS_DIR}/ground.glb                          TARGET wivrn ZSTD 20)
-else()
-    wivrn_copy_file(       SOURCE ${ASSETS_SRC_DIR}/ground.glb                          DESTINATION ${ASSETS_DIR}/ground.glb                          TARGET wivrn)
+add_custom_target(assets ALL DEPENDS
+    ${ASSETS_DIR}/wivrn.png
+)
+
+add_dependencies(wivrn assets)
+
+if(ANDROID)
+    find_program(TOKTX toktx REQUIRED)
+    add_custom_command(OUTPUT ${ASSETS_DIR}/wivrn.ktx2
+        COMMAND ${TOKTX} --encode astc --astc_blk_d 4x4 --astc_quality 100 --genmipmap ${ASSETS_DIR}/wivrn.ktx2 ${ASSETS_DIR}/wivrn.png
+        DEPENDS ${ASSETS_DIR}/wivrn.png)
+
+    add_custom_command(OUTPUT ${ASSETS_DIR}/default_icon.ktx2
+        COMMAND ${TOKTX} --encode astc --astc_blk_d 4x4 --astc_quality 100 --genmipmap ${ASSETS_DIR}/wivrn.ktx2 ${ASSETS_DIR}/default_icon.png
+        DEPENDS ${ASSETS_DIR}/default_icon.png)
+
+    add_custom_command(OUTPUT ${ASSETS_DIR}/WoodFloor051_1K-JPG_Color.ktx2
+        COMMAND ${TOKTX} --encode astc --astc_blk_d 12x12 --astc_quality 100 --genmipmap ${ASSETS_DIR}/WoodFloor051_1K-JPG_Color.ktx2 ${AST_SRC_DIR}/WoodFloor051_1K-JPG_Color.jpg
+        DEPENDS ${AST_SRC_DIR}/WoodFloor051_1K-JPG_Color.jpg)
+
+    add_custom_command(OUTPUT ${ASSETS_DIR}/vr_splash.png
+        COMMAND ${CMAKE_COMMAND} -E copy ${ASSETS_DIR}/wivrn.png ${ASSETS_DIR}/vr_splash.png
+        DEPENDS ${ASSETS_DIR}/wivrn.png)
+
+    add_custom_target(assets-android ALL DEPENDS
+        ${ASSETS_DIR}/wivrn.ktx2
+        ${ASSETS_DIR}/WoodFloor051_1K-JPG_Color.ktx2
+        ${ASSETS_DIR}/vr_splash.png
+    )
+    add_dependencies(assets-android assets)
+    add_dependencies(wivrn assets-android)
 endif()
 
 wivrn_webxr_download()
