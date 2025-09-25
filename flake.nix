@@ -18,7 +18,6 @@
           pkgs.sdl2-compat
           pkgs.librsvg
           pkgs.libpng
-          pkgs.libarchive
         ];
         extraNativeBuildInputs = [
           pkgs.util-linux
