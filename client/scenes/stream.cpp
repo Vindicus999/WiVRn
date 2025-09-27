@@ -151,8 +151,9 @@ static const std::array supported_depth_formats{
         vk::Format::eX8D24UnormPack32,
 };
 
-scenes::stream::stream() :
+scenes::stream::stream(std::string server_name) :
         scene_impl<stream>(supported_color_formats, supported_depth_formats),
+        apps{*this, std::move(server_name)},
         blitters{blitter(device, 0), blitter(device, 1)}
 {
 }
@@ -185,9 +186,9 @@ static from_headset::visibility_mask_changed::masks get_visibility_mask(xr::inst
 	return res;
 }
 
-std::shared_ptr<scenes::stream> scenes::stream::create(std::unique_ptr<wivrn_session> network_session, float guessed_fps)
+std::shared_ptr<scenes::stream> scenes::stream::create(std::unique_ptr<wivrn_session> network_session, float guessed_fps, std::string server_name)
 {
-	std::shared_ptr<stream> self{new stream};
+	std::shared_ptr<stream> self{new stream{std::move(server_name)}};
 	self->network_session = std::move(network_session);
 
 	self->network_session->send_control([&]() {
@@ -730,6 +731,8 @@ bool scenes::stream::is_gui_interactable() const
 		case gui_status::stats:
 		case gui_status::settings:
 		case gui_status::foveation_settings:
+		case gui_status::applications:
+		case gui_status::application_launcher:
 			return true;
 
 		case gui_status::hidden:
@@ -777,6 +780,7 @@ void scenes::stream::render(const XrFrameState & frame_state)
 		        .variant = application::get_messages_info().variant,
 		});
 
+		gui_status = stream::gui_status::hidden;
 		application::pop_scene();
 	}
 
@@ -1000,6 +1004,8 @@ void scenes::stream::render(const XrFrameState & frame_state)
 				break;
 			case gui_status::stats:
 			case gui_status::settings:
+			case gui_status::applications:
+			case gui_status::application_launcher:
 				dimming = dimming + frame_state.predictedDisplayPeriod / (1e9 * constants::stream::fade_duration);
 				break;
 		}
@@ -1085,12 +1091,14 @@ void scenes::stream::render(const XrFrameState & frame_state)
 				case gui_status::hidden:
 				case gui_status::compact:
 				case gui_status::overlay_only:
-					gui_status = gui_status::stats;
+					gui_status = next_gui_status;
 					break;
 
 				case gui_status::stats:
 				case gui_status::settings:
 				case gui_status::foveation_settings:
+				case gui_status::applications:
+				case gui_status::application_launcher:
 					gui_status = gui_status::hidden;
 					break;
 			}
