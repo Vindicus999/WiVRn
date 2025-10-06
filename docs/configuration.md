@@ -8,6 +8,8 @@ Files are read from
 
 Files later in the list replace top-level values from previous ones.
 
+If you installed WiVRn from a flatpack, the config is in `$HOME/.var/app/io.github.wivrn.wivrn/config/wivrn/config.json`.
+
 All elements are optional and have default values.
 
 ## `scale`
@@ -158,7 +160,8 @@ Json object of additional options to pass directly to ffmpeg `avcodec_open2`'s `
 
 ## `encoder-passthrough`
 
-The single encoder used for passthrough (transparency), contains the same elements as the other encoders, except for width/height and offsets.
+The single encoder used for passthrough (transparency), contains the same elements as the other encoders, except for width/height and offsets which are ignored.
+Default values are those computed for the first encoder.
 
 ## `application`
 Default value: unset
