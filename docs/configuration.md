@@ -8,6 +8,8 @@ Files are read from
 
 Files later in the list replace top-level values from previous ones.
 
+If you installed WiVRn from a flatpack, the config is in `$HOME/.var/app/io.github.wivrn.wivrn/config/wivrn/config.json`.
+
 All elements are optional and have default values.
 
 ## `scale`
@@ -61,8 +63,8 @@ Identifier of the encoder, one of
 ### `codec`
 Default value: first supported by both headset and encoder of `av1`, `h264`, `h265`.
 
-One of `h264`, `h265` or `av1`.
-Not all encoders support every codec, `x264` and `vulkan` only support `h264`.
+One of `h264`, `h265`, `av1`, `raw`.
+Not all encoders support every codec, `x264` and `vulkan` only support `h264`. For `raw` codec, only `raw` encoder can be used.
 
 ### `width`, `height`, `offset_x`, `offset_y` (advanced)
 Default values: full image (`width` = 1, `height` = 1, `offset_x` = 0, `offset_y` = 0)
@@ -158,7 +160,8 @@ Json object of additional options to pass directly to ffmpeg `avcodec_open2`'s `
 
 ## `encoder-passthrough`
 
-The single encoder used for passthrough (transparency), contains the same elements as the other encoders, except for width/height and offsets.
+The single encoder used for passthrough (transparency), contains the same elements as the other encoders, except for width/height and offsets which are ignored.
+Default values are those computed for the first encoder.
 
 ## `application`
 Default value: unset

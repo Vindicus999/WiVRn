@@ -603,6 +603,85 @@ void scenes::stream::gui_foveation_settings(float predicted_display_period)
 	});
 }
 
+void scenes::stream::gui_applications()
+{
+	auto now = instance.now();
+	if (now - running_application_req > 1'000'000'000)
+	{
+		running_application_req = now;
+		network_session->send_control(from_headset::get_running_applications{});
+	}
+
+	ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10);
+	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {10, 10});
+	ImGui::PushFont(nullptr, constants::gui::font_size_large);
+	CenterTextH(_("Running XR applications:"));
+	ImGui::PopFont();
+	auto apps = running_applications.lock();
+	ImVec2 button_size(ImGui::GetWindowSize().x - ImGui::GetCursorPosX() - 20, 0);
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 20));
+	ImGui::Spacing();
+	std::ranges::sort(apps->applications, [](auto & l, auto & r) {
+		if (l.overlay == r.overlay)
+			return false;
+		return r.overlay;
+	});
+	bool overlay = false;
+	for (const auto & app: apps->applications)
+	{
+		if (app.overlay and not overlay)
+		{
+			ImGui::Separator();
+			CenterTextH(_S("Overlays"));
+			overlay = true;
+		}
+		int colors = 1;
+		ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32_BLACK_TRANS);
+		ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0);
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 20));
+		if (app.active or app.overlay)
+		{
+			ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32_BLACK_TRANS);
+			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32_BLACK_TRANS);
+			colors += 2;
+		}
+		ImGui::SetNextItemAllowOverlap();
+		const bool clicked = RadioButtonWithoutCheckBox(
+		        std::format("{}{}##{}", app.active ? ICON_FA_CHEVRON_RIGHT " " : "  ", app.name, app.id).c_str(),
+		        app.active,
+		        button_size);
+		if (clicked and not(app.active or app.overlay))
+		{
+			network_session->send_control(from_headset::set_active_application{.id = app.id});
+			imgui_ctx->vibrate_on_hover();
+		}
+		ImGui::PopStyleColor(colors);
+		ImGui::PopStyleVar(2);
+
+		ImGui::SameLine();
+		auto right = ImGui::GetWindowSize().x;
+		ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 10);
+		ImGui::SetCursorPosX(right - ImGui::CalcTextSize(ICON_FA_XMARK).x - ImGui::GetStyle().FramePadding.x - 40);
+		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 0.40f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.8f, 0.2f, 0.2f, 1.00f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1.0f, 0.1f, 0.1f, 1.00f));
+		if (ImGui::Button(std::format(ICON_FA_XMARK "##{}", app.id).c_str()))
+			network_session->send_control(from_headset::stop_application{.id = app.id});
+		imgui_ctx->vibrate_on_hover();
+		ImGui::PopStyleColor(3);
+
+		if (ImGui::IsItemHovered())
+			imgui_ctx->tooltip(_S("Request to quit, may be ignored by the application"));
+	}
+
+	auto btn = _("Start");
+	ImGui::SetCursorPos(ImGui::GetWindowSize() - ImGui::CalcTextSize(btn.c_str()) - ImVec2(50, 50));
+	if (ImGui::Button(btn.c_str()))
+		gui_status = gui_status::application_launcher;
+	imgui_ctx->vibrate_on_hover();
+	ImGui::PopStyleVar(3);
+}
+
 // Return the vector v such that dot(v, x) > 0 iff x is on the side where the composition layer is visible
 static glm::vec4 compute_ray_limits(const XrPosef & pose, float margin = 0)
 {
@@ -642,6 +721,8 @@ void scenes::stream::draw_gui(XrTime predicted_display_time, XrDuration predicte
 			break;
 		case gui_status::stats:
 		case gui_status::settings:
+		case gui_status::applications:
+		case gui_status::application_launcher:
 			break;
 	}
 	imgui_ctx->set_controllers_enabled(interactable);
@@ -662,6 +743,8 @@ void scenes::stream::draw_gui(XrTime predicted_display_time, XrDuration predicte
 	if (gui_status != last_gui_status)
 	{
 		last_gui_status = gui_status;
+		if (is_gui_interactable())
+			next_gui_status = gui_status;
 		gui_status_last_change = predicted_display_time;
 
 		// Override session state if the GUI is interactable
@@ -708,6 +791,8 @@ void scenes::stream::draw_gui(XrTime predicted_display_time, XrDuration predicte
 			case gui_status::compact:
 			case gui_status::stats:
 			case gui_status::settings:
+			case gui_status::applications:
+			case gui_status::application_launcher:
 				imgui_ctx->layers()[0].orientation = head_position->second * head_gui_orientation;
 				imgui_ctx->layers()[0].position = head_position->first + M * head_gui_position;
 				break;
@@ -748,10 +833,17 @@ void scenes::stream::draw_gui(XrTime predicted_display_time, XrDuration predicte
 
 		case gui_status::stats:
 		case gui_status::settings:
+		case gui_status::applications:
 			ImGui::SetNextWindowPos(margin_around_window);
 			ImGui::SetNextWindowSize(ImGui::GetMainViewport()->Size - margin_around_window * 2);
 			always_auto_resize = false;
 			display_tabs = true;
+			break;
+		case gui_status::application_launcher:
+			ImGui::SetNextWindowPos(margin_around_window);
+			ImGui::SetNextWindowSize(ImGui::GetMainViewport()->Size - margin_around_window * 2);
+			always_auto_resize = false;
+			display_tabs = false;
 			break;
 	}
 
@@ -804,6 +896,17 @@ void scenes::stream::draw_gui(XrTime predicted_display_time, XrDuration predicte
 		case gui_status::foveation_settings:
 			gui_foveation_settings(predicted_display_period * 1.e-9f);
 			break;
+
+		case gui_status::applications:
+			ImGui::SetCursorPos({tab_width + 20, 20});
+			ImGui::BeginChild("Main", ImVec2(ImGui::GetWindowSize().x - ImGui::GetCursorPosX(), 0));
+			gui_applications();
+			ImGui::EndChild();
+			break;
+
+		case gui_status::application_launcher:
+			if (apps.draw_gui(*imgui_ctx, _("Cancel")) != app_launcher::None)
+				gui_status = gui_status::applications;
 	}
 
 	ImGui::PopStyleVar(2); // ImGuiStyleVar_WindowPadding, ImGuiStyleVar_FrameRounding
@@ -820,6 +923,9 @@ void scenes::stream::draw_gui(XrTime predicted_display_time, XrDuration predicte
 			imgui_ctx->vibrate_on_hover();
 
 			RadioButtonWithoutCheckBox(ICON_FA_GEARS "  " + _("Settings"), gui_status, gui_status::settings, {tab_width, 0});
+			imgui_ctx->vibrate_on_hover();
+
+			RadioButtonWithoutCheckBox(ICON_FA_LIST "  " + _("Applications"), gui_status, gui_status::applications, {tab_width, 0});
 			imgui_ctx->vibrate_on_hover();
 
 			int n_items_at_end = 4;

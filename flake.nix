@@ -26,7 +26,21 @@
         ];
 
         package = pkgs.enableDebugging (pkgs.wivrn.overrideAttrs (finalAttrs: oldAttrs: {
-          src = ./.;
+          # Filter the directories and files we don't need to keep to avoid needless rebuilds
+          src = lib.cleanSourceWith {
+            filter = name: type: let
+              baseName = baseNameOf (toString name);
+            in
+            (lib.cleanSourceFilter name type) &&
+            !(
+              (type == "directory" && (
+                baseName == ".direnv"
+                || baseName == ".cxx"
+                || lib.hasPrefix "build" baseName))
+              || baseName == ".envrc"
+            );
+            src = ./.;
+          };
           version = "next";
 
           # Because src is just a folder path and not a set from a fetcher, it doesn't need to be unpacked, so having a postUnpack throws an error.
@@ -44,24 +58,12 @@
               # Keep in sync with CMakeLists.txt monado rev
               rev = builtins.readFile ./monado-rev;
               # Nix will output the correct hash when it doesn't match
-              hash = "sha256-asb4uwuu+UEgznlOoAka+xG6Zj68lPHWiPN072LpTQQ=";
+              hash = "sha256-0ALB9eLY4NAUqNOYZMwpvYnLxVpHsQDJc1er8Txdezs=";
             };
           };
 
           buildInputs = oldAttrs.buildInputs ++ extraBuildInputs;
           nativeBuildInputs = oldAttrs.nativeBuildInputs ++ extraNativeBuildInputs;
-
-          dontWrapQtApps = true;
-
-          preFixup = ''
-            wrapQtApp "$out/bin/wivrn-dashboard" \
-              --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ pkgs.vulkan-loader ]}
-          '';
-          postFixup = null;
-
-          cmakeFlags = (oldAttrs.cmakeFlags or [ ]) ++ [
-            (lib.cmakeFeature "CMAKE_BUILD_TYPE" "Debug")
-          ];
         }));
       in {
         packages = {

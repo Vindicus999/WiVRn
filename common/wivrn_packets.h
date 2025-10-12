@@ -38,10 +38,7 @@
 namespace wivrn
 {
 
-// Default port for server to listen, both TCP and UDP
-static const int default_port = 9757;
-
-static constexpr int protocol_revision = 1;
+static constexpr int protocol_revision = 2;
 
 enum class device_id : uint8_t
 {
@@ -168,6 +165,7 @@ enum video_codec
 	h265,
 	hevc = h265,
 	av1,
+	raw,
 };
 
 struct audio_data
@@ -234,6 +232,7 @@ struct headset_info_packet
 	bool hand_tracking;
 	bool eye_gaze;
 	bool palm_pose;
+	bool user_presence;
 	bool passthrough;
 	face_type face_tracking;
 	uint32_t num_generic_trackers;
@@ -460,6 +459,19 @@ struct start_app
 	std::string app_id;
 };
 
+struct get_running_applications
+{};
+
+struct set_active_application
+{
+	uint32_t id;
+};
+
+struct stop_application
+{
+	uint32_t id;
+};
+
 using packets = std::variant<
         crypto_handshake,
         pin_check_1,
@@ -482,7 +494,10 @@ using packets = std::variant<
         user_presence_changed,
         override_foveation_center,
         get_application_list,
-        start_app>;
+        start_app,
+        get_running_applications,
+        set_active_application,
+        stop_application>;
 } // namespace from_headset
 
 namespace to_headset
@@ -690,6 +705,18 @@ struct application_icon
 	std::vector<std::byte> image; // In PNG
 };
 
+struct running_applications
+{
+	struct application
+	{
+		std::string name;
+		uint32_t id;
+		bool overlay;
+		bool active;
+	};
+	std::vector<application> applications;
+};
+
 using packets = std::variant<
         crypto_handshake,
         pin_check_2,
@@ -704,6 +731,7 @@ using packets = std::variant<
         tracking_control,
         refresh_rate_change,
         application_list,
-        application_icon>;
+        application_icon,
+        running_applications>;
 } // namespace to_headset
 } // namespace wivrn

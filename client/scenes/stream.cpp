@@ -151,8 +151,9 @@ static const std::array supported_depth_formats{
         vk::Format::eX8D24UnormPack32,
 };
 
-scenes::stream::stream() :
+scenes::stream::stream(std::string server_name) :
         scene_impl<stream>(supported_color_formats, supported_depth_formats),
+        apps{*this, std::move(server_name)},
         blitters{blitter(device, 0), blitter(device, 1)}
 {
 }
@@ -185,9 +186,9 @@ static from_headset::visibility_mask_changed::masks get_visibility_mask(xr::inst
 	return res;
 }
 
-std::shared_ptr<scenes::stream> scenes::stream::create(std::unique_ptr<wivrn_session> network_session, float guessed_fps)
+std::shared_ptr<scenes::stream> scenes::stream::create(std::unique_ptr<wivrn_session> network_session, float guessed_fps, std::string server_name)
 {
-	std::shared_ptr<stream> self{new stream};
+	std::shared_ptr<stream> self{new stream{std::move(server_name)}};
 	self->network_session = std::move(network_session);
 
 	self->network_session->send_control([&]() {
@@ -730,6 +731,8 @@ bool scenes::stream::is_gui_interactable() const
 		case gui_status::stats:
 		case gui_status::settings:
 		case gui_status::foveation_settings:
+		case gui_status::applications:
+		case gui_status::application_launcher:
 			return true;
 
 		case gui_status::hidden:
@@ -777,6 +780,7 @@ void scenes::stream::render(const XrFrameState & frame_state)
 		        .variant = application::get_messages_info().variant,
 		});
 
+		gui_status = stream::gui_status::hidden;
 		application::pop_scene();
 	}
 
@@ -927,6 +931,28 @@ void scenes::stream::render(const XrFrameState & frame_state)
 	command_buffer.end();
 	vk::SubmitInfo submit_info;
 	submit_info.setCommandBuffers(*command_buffer);
+
+	std::vector<vk::Semaphore> semaphores;
+	std::vector<uint64_t> semaphore_vals;
+	std::vector<vk::PipelineStageFlags> wait_stages;
+	for (auto b: current_blit_handles)
+	{
+		if (b and b->semaphore)
+		{
+			assert(b->semaphore_val);
+			semaphores.push_back(b->semaphore);
+			semaphore_vals.push_back(*b->semaphore_val);
+			wait_stages.push_back(vk::PipelineStageFlagBits::eFragmentShader);
+		}
+	}
+	submit_info.setWaitDstStageMask(wait_stages);
+	submit_info.setWaitSemaphores(semaphores);
+	vk::TimelineSemaphoreSubmitInfo sem_info{
+	        .waitSemaphoreValueCount = uint32_t(semaphore_vals.size()),
+	        .pWaitSemaphoreValues = semaphore_vals.data(),
+	};
+	submit_info.pNext = &sem_info;
+
 	queue.lock()->submit(submit_info, *fence);
 #if WIVRN_FEATURE_RENDERDOC
 	renderdoc_end(*vk_instance);
@@ -978,6 +1004,8 @@ void scenes::stream::render(const XrFrameState & frame_state)
 				break;
 			case gui_status::stats:
 			case gui_status::settings:
+			case gui_status::applications:
+			case gui_status::application_launcher:
 				dimming = dimming + frame_state.predictedDisplayPeriod / (1e9 * constants::stream::fade_duration);
 				break;
 		}
@@ -1063,12 +1091,14 @@ void scenes::stream::render(const XrFrameState & frame_state)
 				case gui_status::hidden:
 				case gui_status::compact:
 				case gui_status::overlay_only:
-					gui_status = gui_status::stats;
+					gui_status = next_gui_status;
 					break;
 
 				case gui_status::stats:
 				case gui_status::settings:
 				case gui_status::foveation_settings:
+				case gui_status::applications:
+				case gui_status::application_launcher:
 					gui_status = gui_status::hidden;
 					break;
 			}
@@ -1105,7 +1135,7 @@ void scenes::stream::setup(const to_headset::video_stream_description & descript
 		spdlog::info("Creating decoder size {}x{} offset {},{}", item.width, item.height, item.offset_x, item.offset_y);
 
 		decoders.push_back(accumulator_images{
-		        .decoder = std::make_unique<shard_accumulator>(device, physical_device, instance, item, description.fps, shared_from_this(), stream_index),
+		        .decoder = std::make_unique<shard_accumulator>(device, physical_device, instance, queue_family_index, item, description.fps, shared_from_this(), stream_index),
 		});
 	}
 }

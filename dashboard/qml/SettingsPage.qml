@@ -22,6 +22,7 @@ Kirigami.ScrollablePage {
     Core.Settings {
         property alias adb_custom: settings.adb_custom
         property alias adb_location: settings.adb_location
+        property alias show_system_checks: show_system_checks.checked
     }
     property bool adb_custom
     property string adb_location
@@ -309,6 +310,10 @@ Kirigami.ScrollablePage {
                 type: Kirigami.Heading.Type.Primary
             }
             Controls.CheckBox {
+                id: show_system_checks
+                text: i18n("Check system configuration on start")
+            }
+            Controls.CheckBox {
                 id: debug_gui
                 text: i18n("Enable debug window")
                 visible: config.debug_gui_supported
@@ -472,6 +477,7 @@ Kirigami.ScrollablePage {
             scale_slider.value = Math.round(100 - config.scale * 100);
             manual_foveation.checked = true;
         } else {
+            scale_slider.value = 50;
             manual_foveation.checked = false;
         }
 

@@ -2,7 +2,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: WiVRn-dashboard\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2025-09-21 10:05+0900\n"
+"POT-Creation-Date: 2025-10-12 09:30+0900\n"
 "PO-Revision-Date: 2025-04-10 07:14+0900\n"
 "Last-Translator: Mitsuami Megane <hello@mitsua.me>\n"
 "Language-Team: Japanese <>\n"
@@ -12,47 +12,47 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
-#: dashboard/apk_installer.cpp:167
+#: dashboard/apk_installer.cpp:165
 #, kde-format
 msgid "Downloading APK: %1 MB / %2 MB"
 msgstr "APKのダウンロード：%1 MB / %2 MB"
 
-#: dashboard/apk_installer.cpp:169
+#: dashboard/apk_installer.cpp:167
 #, kde-format
 msgid "Downloading APK: %1 MB"
 msgstr "APKのダウンロード：%1 MB"
 
-#: dashboard/apk_installer.cpp:178
+#: dashboard/apk_installer.cpp:176
 #, kde-format
 msgid "Download cancelled"
 msgstr "ダウンロードはキャンセルされました"
 
-#: dashboard/apk_installer.cpp:194
+#: dashboard/apk_installer.cpp:192
 #, kde-format
 msgid "Cannot download APK: %1"
 msgstr "APKをダウンロードできませんでした：%1"
 
-#: dashboard/apk_installer.cpp:217
+#: dashboard/apk_installer.cpp:215
 #, kde-format
 msgid "Installing APK"
 msgstr "APKをインストール中"
 
-#: dashboard/apk_installer.cpp:221
+#: dashboard/apk_installer.cpp:219
 #, kde-format
 msgid "adb failed to start: %1"
 msgstr "adbの起動に失敗しました：%1"
 
-#: dashboard/apk_installer.cpp:231
+#: dashboard/apk_installer.cpp:229
 #, kde-format
 msgid "adb exited abnormally: %1"
 msgstr "adbは失敗しました：%1"
 
-#: dashboard/apk_installer.cpp:239
+#: dashboard/apk_installer.cpp:237
 #, kde-format
 msgid "The 'adb install' command failed: exit code %1"
 msgstr "「adb install」コマンドは失敗しました、コード%1"
 
-#: dashboard/apk_installer.cpp:244
+#: dashboard/apk_installer.cpp:242
 #, kde-format
 msgid "Installation successful"
 msgstr "インストール成功"
@@ -78,8 +78,8 @@ msgstr "最新リリースを確認中"
 msgid "No precompiled APK is available for this version."
 msgstr "現バージョンに対応したAPKはダウンロード不可です。"
 
-#: dashboard/qml/ApkInstallPage.qml:45 dashboard/qml/Main.qml:259
-#: dashboard/qml/Main.qml:342
+#: dashboard/qml/ApkInstallPage.qml:45 dashboard/qml/Main.qml:287
+#: dashboard/qml/Main.qml:370
 #, kde-format
 msgid "ADB is not installed."
 msgstr "ADBはインストールされていません。"
@@ -100,7 +100,7 @@ msgstr ""
 "blob/master/docs/building.md#client-headset\">マニュアル</a>をご覧ください。"
 
 #: dashboard/qml/ApkInstallPage.qml:65 dashboard/qml/HeadsetStatsPage.qml:36
-#: dashboard/qml/HeadsetsPage.qml:183 dashboard/qml/TroubleshootPage.qml:59
+#: dashboard/qml/HeadsetsPage.qml:183 dashboard/qml/TroubleshootPage.qml:67
 #, kde-format
 msgctxt "go back to the home page"
 msgid "Back"
@@ -131,7 +131,7 @@ msgstr "WiVRnをインストールする"
 msgid "Headset statistics"
 msgstr "HMDの統計情報"
 
-#: dashboard/qml/HeadsetsPage.qml:12 dashboard/qml/Main.qml:355
+#: dashboard/qml/HeadsetsPage.qml:12 dashboard/qml/Main.qml:375
 #, kde-format
 msgid "Headsets"
 msgstr "HMD"
@@ -192,7 +192,7 @@ msgstr "削除"
 msgid "Pairing enabled, PIN: %1"
 msgstr "ペアリング可能。暗証番号：%1"
 
-#: dashboard/qml/HeadsetsPage.qml:148 dashboard/qml/TroubleshootPage.qml:42
+#: dashboard/qml/HeadsetsPage.qml:148 dashboard/qml/TroubleshootPage.qml:50
 #, kde-format
 msgid "Disable pairing"
 msgstr "ペアリングを無効化する"
@@ -207,7 +207,7 @@ msgstr "HMDでWiVRnアプリを起動し、暗証版語を入力してくださ�
 msgid "Enable pairing to allow your headset to connect to this computer"
 msgstr "ペアリングを有効化し、HMDをパソコンに接続しましょう"
 
-#: dashboard/qml/HeadsetsPage.qml:171 dashboard/qml/TroubleshootPage.qml:37
+#: dashboard/qml/HeadsetsPage.qml:171 dashboard/qml/TroubleshootPage.qml:45
 #, kde-format
 msgid "Enable pairing"
 msgstr "ペアリングを有効化する"
@@ -217,28 +217,33 @@ msgstr "ペアリングを有効化する"
 msgid "Pair a new headset"
 msgstr "新しいHMDをペアリングする"
 
-#: dashboard/qml/Main.qml:107
+#: dashboard/qml/Main.qml:129
 #, kde-format
 msgid "The server does not have CAP_SYS_NICE capabilities."
 msgstr "サーバーはCAP_SYS_NICE権限がありません。"
 
-#: dashboard/qml/Main.qml:114
+#: dashboard/qml/Main.qml:136 dashboard/qml/Main.qml:150
 #, kde-format
 msgid "Fix it"
 msgstr "直す"
 
-#: dashboard/qml/Main.qml:123
+#: dashboard/qml/Main.qml:144
+#, kde-format
+msgid "Firewall may not allow port 9757."
+msgstr "ファイヤーウォールでポート9757が開いていないようです。"
+
+#: dashboard/qml/Main.qml:159
 #, kde-format
 msgid "The CAP_SYS_NICE capability will be used when the server is restarted."
 msgstr "CAP_SYS_NICE権限を使うため、サーバーの再起動が必要です。"
 
-#: dashboard/qml/Main.qml:129
+#: dashboard/qml/Main.qml:165
 #, kde-format
 msgctxt "restart the server"
 msgid "Restart now"
 msgstr "今すぐ再起動する"
 
-#: dashboard/qml/Main.qml:140
+#: dashboard/qml/Main.qml:176
 #, kde-format
 msgid ""
 "NVIDIA GPUs require at least driver version 565.77, current version is %1"
@@ -246,12 +251,12 @@ msgstr ""
 "NVIDIAの場合は、GPUドライバー・バージョン565.77以上が必要です。現バージョン："
 "%1"
 
-#: dashboard/qml/Main.qml:146
+#: dashboard/qml/Main.qml:182
 #, kde-format
 msgid "More info"
 msgstr "詳細情報"
 
-#: dashboard/qml/Main.qml:154
+#: dashboard/qml/Main.qml:190
 #, kde-format
 msgid ""
 "Use the Mesa (radv) driver for AMD GPUs\n"
@@ -260,7 +265,7 @@ msgstr ""
 "AMD GPUの場合は「Mesa (radv)」ドライバーを使ってください\n"
 "AMDVLKやAMDGPU-PROなどはvaapiエンコーダーに対応していません"
 
-#: dashboard/qml/Main.qml:162
+#: dashboard/qml/Main.qml:198
 #, kde-format
 msgid ""
 "No OpenVR compatibility detected, Steam games won't be able to load VR.\n"
@@ -269,75 +274,75 @@ msgstr ""
 "OpenVR実装ライブラリーは見つかりませんでした。SteamVRゲームを実行するには、\n"
 "xrizerかOpenCompositeをインストールしましょう。"
 
-#: dashboard/qml/Main.qml:171
+#: dashboard/qml/Main.qml:207
 #, kde-format
 msgid "Server failed to start"
 msgstr "サーバーは起動できませんでした"
 
-#: dashboard/qml/Main.qml:177 dashboard/qml/TroubleshootPage.qml:77
+#: dashboard/qml/Main.qml:213 dashboard/qml/TroubleshootPage.qml:85
 #, kde-format
 msgid "Open server logs"
 msgstr "ログを見る"
 
-#: dashboard/qml/Main.qml:214
+#: dashboard/qml/Main.qml:242
 #, kde-format
 msgctxt "whether the server is running, displayed in front of a checkbox"
 msgid "Running"
 msgstr "作動中"
 
-#: dashboard/qml/Main.qml:229
+#: dashboard/qml/Main.qml:257
 #, kde-format
 msgctxt "whether pairing is enabled, displayed in front of a checkbox"
 msgid "Pairing"
 msgstr "ペアリング"
 
-#: dashboard/qml/Main.qml:242
+#: dashboard/qml/Main.qml:270
 #, kde-format
 msgid "PIN: %1"
 msgstr "暗証番号：%1"
 
-#: dashboard/qml/Main.qml:250 dashboard/qml/WizardPage.qml:374
+#: dashboard/qml/Main.qml:278 dashboard/qml/WizardPage.qml:374
 #, kde-format
 msgid "Connect by USB"
 msgstr "USBで接続する"
 
-#: dashboard/qml/Main.qml:261
+#: dashboard/qml/Main.qml:289
 #, kde-format
 msgid "No headset is connected or your headset is not in developer mode."
 msgstr "HMDが接続されていないか、HMDが開発者モードになっていません。"
 
-#: dashboard/qml/Main.qml:269
+#: dashboard/qml/Main.qml:297
 #, kde-format
 msgid "Disconnect"
 msgstr "切断する"
 
-#: dashboard/qml/Main.qml:286
+#: dashboard/qml/Main.qml:314
 #, kde-format
 msgctxt "automatically started application"
 msgid "Application"
 msgstr "アプリ"
 
-#: dashboard/qml/Main.qml:307
+#: dashboard/qml/Main.qml:335
 #, kde-format
 msgid "Steam information"
 msgstr "ストリーム情報"
 
-#: dashboard/qml/Main.qml:326
+#: dashboard/qml/Main.qml:354
 #, kde-format
 msgid "Wizard"
 msgstr "セットアップウィザード"
 
-#: dashboard/qml/Main.qml:333
+#: dashboard/qml/Main.qml:361
 #, kde-format
 msgid "Install the app"
 msgstr "アプリをインストール"
 
-#: dashboard/qml/Main.qml:362 dashboard/qml/SettingsPage.qml:14
+#: dashboard/qml/Main.qml:382 dashboard/qml/SettingsPage.qml:14
 #, kde-format
 msgid "Settings"
 msgstr "設定"
 
-#: dashboard/qml/Main.qml:369 dashboard/qml/TroubleshootPage.qml:10
+#: dashboard/qml/Main.qml:389 dashboard/qml/TroubleshootPage.qml:10
 #, kde-format
 msgid "Troubleshoot"
 msgstr "問題解決"
@@ -360,23 +365,23 @@ msgctxt "browse a file to choose the application to start"
 msgid "Browse"
 msgstr "検索"
 
-#: dashboard/qml/SettingsPage.qml:40
+#: dashboard/qml/SettingsPage.qml:41
 #, kde-format
 msgctxt "automatic foveation setup"
 msgid "Manual foveation"
 msgstr "マニュアル・フォビエーション"
 
-#: dashboard/qml/SettingsPage.qml:46
+#: dashboard/qml/SettingsPage.qml:47
 #, kde-format
 msgid "Foveation strength:"
 msgstr "フォビエーションの強さ"
 
-#: dashboard/qml/SettingsPage.qml:62
+#: dashboard/qml/SettingsPage.qml:63
 #, kde-format
 msgid "%1 %"
 msgstr "%1 %"
 
-#: dashboard/qml/SettingsPage.qml:68
+#: dashboard/qml/SettingsPage.qml:69
 #, kde-format
 msgid ""
 "A stronger foveation makes the image sharper in the center than in the "
@@ -396,65 +401,65 @@ msgstr ""
 "お勧めの設定は、アイトラッキングを対応したHMDの場合は20%~50%、アイトラッキン"
 "グを対応しないHMDの場合は50%~70%です。"
 
-#: dashboard/qml/SettingsPage.qml:74
+#: dashboard/qml/SettingsPage.qml:75
 #, kde-format
 msgctxt "weaker foveation"
 msgid "Weaker"
 msgstr "弱"
 
-#: dashboard/qml/SettingsPage.qml:85
+#: dashboard/qml/SettingsPage.qml:86
 #, kde-format
 msgctxt "stronger foveation"
 msgid "Stronger"
 msgstr "強"
 
-#: dashboard/qml/SettingsPage.qml:95
+#: dashboard/qml/SettingsPage.qml:96
 #, kde-format
 msgid "Bitrate:"
 msgstr "ビットレート"
 
-#: dashboard/qml/SettingsPage.qml:99 dashboard/qml/SettingsPage.qml:101
+#: dashboard/qml/SettingsPage.qml:100 dashboard/qml/SettingsPage.qml:102
 #, kde-format
 msgctxt "bitrate"
 msgid "%1 Mbit/s"
 msgstr "%1 Mbps"
 
-#: dashboard/qml/SettingsPage.qml:111
+#: dashboard/qml/SettingsPage.qml:112
 #, kde-format
 msgid "Encoder layout:"
 msgstr "エンコーダー・レイアウト"
 
-#: dashboard/qml/SettingsPage.qml:114
+#: dashboard/qml/SettingsPage.qml:115
 #, kde-format
 msgctxt "encoder preset"
 msgid "Automatic"
 msgstr "自動"
 
-#: dashboard/qml/SettingsPage.qml:118
+#: dashboard/qml/SettingsPage.qml:119
 #, kde-format
 msgctxt "encoder preset"
 msgid "Manual"
 msgstr "マニュアル"
 
-#: dashboard/qml/SettingsPage.qml:122
+#: dashboard/qml/SettingsPage.qml:123
 #, kde-format
 msgctxt "encoder preset"
 msgid "Default preset"
 msgstr "デフォルト・プリセット"
 
-#: dashboard/qml/SettingsPage.qml:139
+#: dashboard/qml/SettingsPage.qml:140
 #, kde-format
 msgctxt "encoder preset"
 msgid "Low latency preset"
 msgstr "低遅延プリセット"
 
-#: dashboard/qml/SettingsPage.qml:158
+#: dashboard/qml/SettingsPage.qml:159
 #, kde-format
 msgctxt "encoder preset"
 msgid "Safe preset"
 msgstr "安定プリセット"
 
-#: dashboard/qml/SettingsPage.qml:181
+#: dashboard/qml/SettingsPage.qml:182
 #, kde-format
 msgid ""
 "To add a new encoder, split an existing encoder by clicking near an edge.\n"
@@ -464,84 +469,89 @@ msgstr ""
 "う。\n"
 "角を引っ張って大きさの調整をできます。大きさゼロで削除となります。"
 
-#: dashboard/qml/SettingsPage.qml:208
+#: dashboard/qml/SettingsPage.qml:209
 #, kde-format
 msgid "Encoder:"
 msgstr "エンコーダー"
 
-#: dashboard/qml/SettingsPage.qml:217
+#: dashboard/qml/SettingsPage.qml:218
 #, kde-format
 msgctxt "automatic encoder setup"
 msgid "Auto"
 msgstr "自動"
 
-#: dashboard/qml/SettingsPage.qml:222
+#: dashboard/qml/SettingsPage.qml:223
 #, kde-format
 msgid "nvenc (NVIDIA GPUs)"
 msgstr "nvenc (NVIDIA GPU)"
 
-#: dashboard/qml/SettingsPage.qml:227
+#: dashboard/qml/SettingsPage.qml:228
 #, kde-format
 msgid "vaapi (AMD and Intel GPUs)"
 msgstr "vaapi (AMDやIntel GPU)"
 
-#: dashboard/qml/SettingsPage.qml:232
+#: dashboard/qml/SettingsPage.qml:233
 #, kde-format
 msgid "x264 (software encoding)"
 msgstr "x264 (ソフトエンコード)"
 
-#: dashboard/qml/SettingsPage.qml:237
+#: dashboard/qml/SettingsPage.qml:238
 #, kde-format
 msgid "Vulkan (Vulkan Video)"
 msgstr "Vulkan (Vulkan Video)"
 
-#: dashboard/qml/SettingsPage.qml:260
+#: dashboard/qml/SettingsPage.qml:261
 #, kde-format
 msgid "\"Auto\" will use hardware acceleration if it is available"
 msgstr "「自動」で当システムにとって最も安定した設定を使用します。"
 
-#: dashboard/qml/SettingsPage.qml:266
+#: dashboard/qml/SettingsPage.qml:267
 #, kde-format
 msgid "Codec:"
 msgstr "コーデック"
 
-#: dashboard/qml/SettingsPage.qml:273
+#: dashboard/qml/SettingsPage.qml:274
 #, kde-format
 msgctxt "automatic codec setup"
 msgid "Auto"
 msgstr "自動"
 
-#: dashboard/qml/SettingsPage.qml:277
+#: dashboard/qml/SettingsPage.qml:278
 #, kde-format
 msgid "H.264"
 msgstr "H.264"
 
-#: dashboard/qml/SettingsPage.qml:281
+#: dashboard/qml/SettingsPage.qml:282
 #, kde-format
 msgid "H.265"
 msgstr "H.265"
 
-#: dashboard/qml/SettingsPage.qml:285
+#: dashboard/qml/SettingsPage.qml:286
 #, kde-format
 msgid "AV1"
 msgstr "AV1"
 
-#: dashboard/qml/SettingsPage.qml:307
+#: dashboard/qml/SettingsPage.qml:308
 #, kde-format
 msgid "Advanced options"
 msgstr "詳細設定"
 
-#: dashboard/qml/SettingsPage.qml:313
+#: dashboard/qml/SettingsPage.qml:314
+#, kde-format
+msgid "Check system configuration on start"
+msgstr "起動時にパソコン設定を確認する"
+
+#: dashboard/qml/SettingsPage.qml:318
 #, kde-format
 msgid "Enable debug window"
 msgstr "デバッグ・ウィンドウを表示する"
 
-#: dashboard/qml/SettingsPage.qml:320
+#: dashboard/qml/SettingsPage.qml:325
 #, kde-format
 msgid "Enable SteamVR tracked devices support"
 msgstr "SteamVR・ライトハウス・トラッキング"
 
-#: dashboard/qml/SettingsPage.qml:323
+#: dashboard/qml/SettingsPage.qml:328
 #, kde-format
 msgid ""
 "Allows the use of lighthouse-based controllers and trackers.\n"
@@ -554,44 +564,44 @@ msgstr ""
 "すべてのデバイスの電源が入ってからHMDを接続しましょう。\n"
 "キャリブレーションはmotocなどのソフトウェアで行います。"
 
-#: dashboard/qml/SettingsPage.qml:331
+#: dashboard/qml/SettingsPage.qml:336
 #, kde-format
 msgid "Custom adb location"
 msgstr "特定なADBの場所"
 
-#: dashboard/qml/SettingsPage.qml:342
+#: dashboard/qml/SettingsPage.qml:347
 #, kde-format
 msgid "Adb location:"
 msgstr "ADBの場所："
 
-#: dashboard/qml/SettingsPage.qml:351
+#: dashboard/qml/SettingsPage.qml:356
 #, kde-format
 msgctxt "browse a file to choose the adb binary"
 msgid "Browse"
 msgstr "検索する"
 
-#: dashboard/qml/SettingsPage.qml:361
+#: dashboard/qml/SettingsPage.qml:366
 #, kde-format
 msgid "Default"
 msgstr "デフォルト"
 
-#: dashboard/qml/SettingsPage.qml:375
+#: dashboard/qml/SettingsPage.qml:380
 #, kde-format
 msgctxt "set a custom OpenVR compatibility library"
 msgid "Custom"
 msgstr "カスタム"
 
-#: dashboard/qml/SettingsPage.qml:380
+#: dashboard/qml/SettingsPage.qml:385
 #, kde-format
 msgid "Disabled"
 msgstr "無し"
 
-#: dashboard/qml/SettingsPage.qml:388
+#: dashboard/qml/SettingsPage.qml:393
 #, kde-format
 msgid "OpenVR compatibility library:"
 msgstr "OpenVR実装ライブラリー"
 
-#: dashboard/qml/SettingsPage.qml:414
+#: dashboard/qml/SettingsPage.qml:419
 #, kde-format
 msgid "Library path, excluding bin/linux64/vrclient.so"
 msgstr "ライブラリーの場所（bin/linux64/vrclient.so 無し）"
@@ -638,21 +648,36 @@ msgstr "Metaの場合、ライブラリの「提供元不明」タブをご覧�
 msgid "I cannot see my computer in the WiVRn app"
 msgstr "WiVRnアプリでパソコンが表示されない"
 
-#: dashboard/qml/TroubleshootPage.qml:25 dashboard/qml/WizardPage.qml:393
+#: dashboard/qml/TroubleshootPage.qml:25
 #, kde-format
-msgid ""
-"If the server is not visible or the connection fails, check that port 5353 "
-"(UDP) and 9757 (TCP and UDP) are open in your firewall."
-msgstr ""
-"サーバーが見えない・サーバーに接続できない場合、ファイアウォールのポート5353"
-"（UDP）と9757（TCPとUDP両方）を開いてみましょう。"
+msgid "If you have a firewall, make sure that port 5353/UDP is open."
+msgstr "ファイヤーウォールでUDPポート5353が開いていることを確認しましょう。"
 
 #: dashboard/qml/TroubleshootPage.qml:28
+#, kde-format
+msgid "Connecting remains stuck on \"Connection to ...\""
+msgstr "ずっと「接続中」"
+
+#: dashboard/qml/TroubleshootPage.qml:29 dashboard/qml/TroubleshootPage.qml:33
+#, kde-format
+msgid ""
+"If you have a firewall, make sure that port 9757 is open both for TCP and "
+"UDP."
+msgstr ""
+"ファイヤーウォールでポート9757がTCPとUDPの両方で開いていることを確認しましょ"
+"う。"
+
+#: dashboard/qml/TroubleshootPage.qml:32
+#, kde-format
+msgid "Connection fails with \"no route to host\""
+msgstr "「no route to host」で接続できない"
+
+#: dashboard/qml/TroubleshootPage.qml:36
 #, kde-format
 msgid "I have an \"Incompatible WiVRn server\" error on my headset"
 msgstr "HMDに「互換性のないサーバー」"
 
-#: dashboard/qml/TroubleshootPage.qml:29
+#: dashboard/qml/TroubleshootPage.qml:37
 #, kde-format
 msgid ""
 "<p>The version of the headset app and the server on your computer must match."
@@ -663,12 +688,12 @@ msgstr ""
 "p><ul><li>HMDアプリのバージョンは「WiVRnについて」タブに確認できます。</"
 "li><li>サーバーのバージョンは：<b>%1</b></li></ul>"
 
-#: dashboard/qml/TroubleshootPage.qml:32
+#: dashboard/qml/TroubleshootPage.qml:40
 #, kde-format
 msgid "I have a \"Pairing is disabled\" error"
 msgstr "HMDに「ペアリングが無効です」"
 
-#: dashboard/qml/TroubleshootPage.qml:33
+#: dashboard/qml/TroubleshootPage.qml:41
 #, kde-format
 msgid ""
 "If you have reinstalled the server or the client or if you want to connect "
@@ -677,22 +702,22 @@ msgstr ""
 "サーバーかクライエント更インストールした場合、または別のHMDを接続したい場合、"
 "ペアリングを有効化しましょう。"
 
-#: dashboard/qml/TroubleshootPage.qml:33
+#: dashboard/qml/TroubleshootPage.qml:41
 #, kde-format
 msgid "Pairing is currently enabled with PIN %1."
 msgstr "ペアリングは有効です。暗証番号：%1"
 
-#: dashboard/qml/TroubleshootPage.qml:33
+#: dashboard/qml/TroubleshootPage.qml:41
 #, kde-format
 msgid "Pairing is currently disabled."
 msgstr "ペアリングは無効です。"
 
-#: dashboard/qml/TroubleshootPage.qml:49
+#: dashboard/qml/TroubleshootPage.qml:57
 #, kde-format
 msgid "I have no sound on my headset"
 msgstr "HMDから音が出ない"
 
-#: dashboard/qml/TroubleshootPage.qml:50 dashboard/qml/WizardPage.qml:441
+#: dashboard/qml/TroubleshootPage.qml:58 dashboard/qml/WizardPage.qml:441
 #, kde-format
 msgid ""
 "When the headset is connected, select \"WiVRn\" as the default audio output "
@@ -700,12 +725,12 @@ msgid ""
 msgstr ""
 "HMDが接続した状態で、デフォルト音声出力デバイスを「WiVRn」に設定しましょう。"
 
-#: dashboard/qml/TroubleshootPage.qml:67
+#: dashboard/qml/TroubleshootPage.qml:75
 #, kde-format
 msgid "Report an issue"
 msgstr "問題を報告する"
 
-#: dashboard/qml/TroubleshootPage.qml:72
+#: dashboard/qml/TroubleshootPage.qml:80
 #, kde-format
 msgid "Ask on Discord"
 msgstr "Discordで聞いてみる"
@@ -775,8 +800,8 @@ msgid ""
 "For the Quest 2, 3, 3S, and Pro, you can get the app from the <a "
 "href=\"https://www.meta.com/experiences/7959676140827574/\">Meta store</a>."
 msgstr ""
-"Quest 2、3、3S、Proの場合、<a href=\"https://www.meta.com/"
-"experiences/7959676140827574/\">Metaストア</a>にて配信中です。"
+"Quest 2、3、3S、Proの場合、<a href=\"https://www.meta.com/experiences/"
+"7959676140827574/\">Metaストア</a>にて配信中です。"
 
 #: dashboard/qml/WizardPage.qml:164
 #, kde-format
@@ -872,6 +897,15 @@ msgstr "USBで接続するには、「USBで接続する」ボタンをクリッ
 msgid "Troubleshooting"
 msgstr "問題解決"
 
+#: dashboard/qml/WizardPage.qml:393
+#, kde-format
+msgid ""
+"If the server is not visible or the connection fails, check that port 5353 "
+"(UDP) and 9757 (TCP and UDP) are open in your firewall."
+msgstr ""
+"サーバーが見えない・サーバーに接続できない場合、ファイアウォールのポート5353"
+"（UDP）と9757（TCPとUDPの両方）が開いていることを確認しましょう。"
+
 #: dashboard/qml/WizardPage.qml:406
 #, kde-format
 msgid "Skip"
@@ -904,12 +938,12 @@ msgstr "完了"
 msgid "Finished"
 msgstr "完了しました"
 
-#: dashboard/wivrn_server.cpp:592
+#: dashboard/wivrn_server.cpp:594
 #, kde-format
 msgid "xrizer"
 msgstr "xrizer"
 
-#: dashboard/wivrn_server.cpp:593
+#: dashboard/wivrn_server.cpp:595
 #, kde-format
 msgid "Open Composite"
 msgstr "OpenComposite"

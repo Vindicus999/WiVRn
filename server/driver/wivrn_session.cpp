@@ -25,6 +25,8 @@
 #include "main/comp_compositor.h"
 #include "main/comp_main_interface.h"
 #include "main/comp_target.h"
+#include "server/ipc_server.h"
+#include "target_instance_wivrn.h"
 #include "util/u_builders.h"
 #include "util/u_logging.h"
 #include "util/u_system.h"
@@ -139,7 +141,7 @@ bool wivrn::tracking_control_t::set_enabled(to_headset::tracking_control::id id,
 	return changed;
 }
 
-wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection, u_system & system) :
+wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection, instance & inst, u_system & system) :
         xrt_system_devices{
                 .get_roles = [](xrt_system_devices * self, xrt_system_roles * out_roles) { return ((wivrn_session *)self)->get_roles(out_roles); },
                 .feature_inc = [](xrt_system_devices * self, xrt_device_feature_type f) { return ((wivrn_session *)self)->feature_inc(f); },
@@ -147,6 +149,7 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
                 .destroy = [](xrt_system_devices * self) { delete ((wivrn_session *)self); },
         },
         connection(std::move(connection)),
+        inst(inst),
         xrt_system(system),
         hmd(this, get_info()),
         left_controller(0, &hmd, this),
@@ -195,7 +198,7 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 	auto use_steamvr_lh = configuration().use_steamvr_lh || std::getenv("WIVRN_USE_STEAMVR_LH");
 	xrt_system_devices * lhdevs = NULL;
 
-	if (use_steamvr_lh && steamvr_lh_create_devices(&lhdevs) == XRT_SUCCESS)
+	if (use_steamvr_lh && steamvr_lh_create_devices(nullptr, &lhdevs) == XRT_SUCCESS)
 	{
 		for (int i = 0; i < lhdevs->xdev_count; i++)
 		{
@@ -307,6 +310,7 @@ wivrn_session::~wivrn_session()
 }
 
 xrt_result_t wivrn::wivrn_session::create_session(std::unique_ptr<wivrn_connection> connection,
+                                                  instance & inst,
                                                   u_system & system,
                                                   xrt_system_devices ** out_xsysd,
                                                   xrt_space_overseer ** out_xspovrs,
@@ -315,7 +319,7 @@ xrt_result_t wivrn::wivrn_session::create_session(std::unique_ptr<wivrn_connecti
 	std::unique_ptr<wivrn_session> self;
 	try
 	{
-		self.reset(new wivrn_session(std::move(connection), system));
+		self.reset(new wivrn_session(std::move(connection), inst, system));
 	}
 	catch (std::exception & e)
 	{
@@ -332,6 +336,7 @@ xrt_result_t wivrn::wivrn_session::create_session(std::unique_ptr<wivrn_connecti
 		U_LOG_E("Failed to create system compositor");
 		return xret;
 	}
+	self->system_compositor = *out_xsysc;
 
 	u_builder_create_space_overseer_legacy(
 	        &self->xrt_system.broadcast,
@@ -670,49 +675,34 @@ void wivrn_session::operator()(from_headset::session_state_changed && event)
 {
 	U_LOG_I("Session state changed: %s", xr::to_string(event.state));
 	bool visible, focused;
-	bool changed = false;
 	switch (event.state)
 	{
-		case XR_SESSION_STATE_SYNCHRONIZED:
-			visible = false;
-			focused = false;
-			changed = hmd.update_presence(false, false);
-			break;
 		case XR_SESSION_STATE_VISIBLE:
 			visible = true;
 			focused = false;
-			changed = hmd.update_presence(true, false);
 			break;
 		case XR_SESSION_STATE_FOCUSED:
 			visible = true;
 			focused = true;
-			changed = hmd.update_presence(true, false);
 			break;
 		default:
-			return;
+			visible = false;
+			focused = false;
+			break;
 	}
-
-	if (changed)
+	scoped_lock lock(inst.server->global_state.lock);
+	for (auto & t: inst.server->threads)
 	{
-		xrt_session_event_user_presence_change event = {
-		        .type = XRT_SESSION_EVENT_USER_PRESENCE_CHANGE,
-		};
-		hmd.get_presence(&event.is_user_present);
-		push_event({.presence_change = event});
+		if (t.ics.server_thread_index < 0 or t.ics.xc == nullptr)
+			continue;
+		bool current = t.ics.client_state.session_overlay or
+		               inst.server->global_state.active_client_index == t.ics.server_thread_index;
+		xrt_syscomp_set_state(system_compositor, t.ics.xc, visible and current, focused and current);
 	}
-
-	push_event(
-	        {
-	                .state = {
-	                        .type = XRT_SESSION_EVENT_STATE_CHANGE,
-	                        .visible = visible,
-	                        .focused = focused,
-	                },
-	        });
 }
 void wivrn_session::operator()(from_headset::user_presence_changed && event)
 {
-	if (hmd.update_presence(event.present, true))
+	if (hmd.update_presence(event.present))
 		push_event(
 		        {
 		                .presence_change = {
@@ -793,6 +783,54 @@ void wivrn_session::operator()(from_headset::get_application_list && request)
 void wivrn_session::operator()(const from_headset::start_app & request)
 {
 	send_to_main(request);
+}
+
+void wivrn_session::operator()(const from_headset::get_running_applications &)
+{
+	scoped_lock lock(inst.server->global_state.lock);
+	to_headset::running_applications msg{};
+	for (auto & t: inst.server->threads)
+	{
+		if (t.ics.server_thread_index < 0 or t.ics.xc == nullptr)
+			continue;
+		// nasty volatile
+		std::array<char, sizeof(t.ics.client_state.info.application_name)> tmp;
+		for (size_t i = 0; i + 1 < tmp.size(); ++i)
+			tmp[i] = t.ics.client_state.info.application_name[i];
+		tmp.back() = 0;
+		msg.applications.push_back(
+		        {
+		                .name = std::string(tmp.data()),
+		                .id = t.ics.client_state.id,
+		                .overlay = t.ics.client_state.session_overlay,
+		                .active = t.ics.server_thread_index == inst.server->global_state.active_client_index,
+		        });
+	}
+	connection->send_control(std::move(msg));
+}
+
+void wivrn_session::operator()(const from_headset::set_active_application & req)
+{
+	ipc_server_set_active_client(inst.server, req.id);
+	ipc_server_update_state(inst.server);
+	// Send a refreshed application list
+	(*this)(from_headset::get_running_applications{});
+}
+
+void wivrn_session::operator()(const from_headset::stop_application & req)
+{
+	scoped_lock lock(inst.server->global_state.lock);
+	for (auto & t: inst.server->threads)
+	{
+		if (t.ics.client_state.id == req.id)
+		{
+			U_LOG_I("Notify session loss pending for %s", t.ics.client_state.info.application_name);
+			auto when = os_monotonic_get_ns() + 200 * U_TIME_1MS_IN_NS;
+			xrt_syscomp_notify_loss_pending(system_compositor, t.ics.xc, when);
+			session_loss.lock()->emplace(when, req.id);
+			break;
+		}
+	}
 }
 
 void wivrn_session::operator()(audio_data && data)
@@ -879,6 +917,7 @@ void wivrn_session::run(std::stop_token stop)
 						refresh.adjust(*connection);
 				}
 			}
+			poll_session_loss();
 			connection->poll(*this, 20);
 		}
 		catch (const std::exception & e)
@@ -979,6 +1018,29 @@ void wivrn_session::reconnect()
 	catch (const std::exception & e)
 	{
 		U_LOG_E("Reconnection failed: %s", e.what());
+	}
+}
+
+void wivrn_session::poll_session_loss()
+{
+	auto locked = session_loss.lock();
+	auto now = os_monotonic_get_ns();
+	if (locked->empty())
+		return;
+	auto it = locked->begin();
+	scoped_lock lock(inst.server->global_state.lock);
+	while (it != locked->end() and it->first <= now)
+	{
+		for (auto & t: inst.server->threads)
+		{
+			if (t.ics.client_state.id == it->second)
+			{
+				U_LOG_I("Terminating %s", t.ics.client_state.info.application_name);
+				xrt_syscomp_notify_lost(system_compositor, t.ics.xc);
+				break;
+			}
+		}
+		it = locked->erase(it);
 	}
 }
 

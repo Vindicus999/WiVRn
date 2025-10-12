@@ -12,6 +12,7 @@ set(XRT_BUILD_DRIVER_PSSENSE            OFF)
 set(XRT_BUILD_DRIVER_PSVR               OFF)
 set(XRT_BUILD_DRIVER_QWERTY             OFF)
 set(XRT_BUILD_DRIVER_REMOTE             OFF)
+set(XRT_BUILD_DRIVER_RIFT               OFF)
 set(XRT_BUILD_DRIVER_RIFT_S             OFF)
 set(XRT_BUILD_DRIVER_ROKID              OFF)
 set(XRT_BUILD_DRIVER_SIMULATED          OFF)
@@ -81,6 +82,7 @@ if (WIVRN_BUILD_SERVER)
 			main.cpp
 			sleep_inhibitor.cpp
 			start_application.cpp
+			ipc_server_cb.cpp
 			target_instance_wivrn.cpp
 			wivrn_ipc.cpp
 
@@ -88,6 +90,7 @@ if (WIVRN_BUILD_SERVER)
 
 			encoder/encoder_settings.cpp
 			encoder/video_encoder.cpp
+			encoder/video_encoder_raw.cpp
 
 			driver/app_pacer.cpp
 			driver/clock_offset.cpp

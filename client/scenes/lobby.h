@@ -28,7 +28,6 @@
 #include "wifi_lock.h"
 #include "wivrn_config.h"
 #include "wivrn_discover.h"
-#include "wivrn_packets.h"
 #include "xr/face_tracker.h"
 #include <vulkan/vulkan_raii.hpp>
 #include <openxr/openxr.h>
@@ -127,9 +126,6 @@ class lobby : public scene_impl<lobby>
 	tab last_current_tab = tab::server_list;
 	int optional_feature_index = 0; // Which step of the first run screen are we in
 	ImTextureID about_picture;
-	ImTextureID default_icon;
-	std::unordered_map<std::string, ImTextureID> app_icons;
-	std::optional<XrTime> timestamp_start_application;
 
 	virtual_keyboard keyboard;
 

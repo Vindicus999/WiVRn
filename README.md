@@ -6,7 +6,7 @@
 
 WiVRn wirelessly connects a standalone VR headset to a Linux computer. You can then play PCVR games on the headset while processing is done on the computer.
 
-It supports a wide range of headsets such as Quest 1 / 2 / Pro / 3 / 3S, Pico Neo 4, HTC Vive Focus 3, HTC Vive XR elite and most other Android based headsets.
+It supports a wide range of headsets such as Quest 1 / 2 / Pro / 3 / 3S, Pico Neo 3, Pico 4, HTC Vive Focus 3, HTC Vive XR elite and most other Android based headsets.
 
 # Getting started
 
@@ -41,8 +41,8 @@ Avahi must be running:
 systemctl enable --now avahi-daemon
 ```
 
-If a firewall is installed, open port 5353/UDP for avahi.
-Open ports 9757/UDP+TCP for WiVRn itself.
+- If a firewall is installed, open port 5353/UDP for avahi and ports 9757/UDP+TCP for WiVRn itself.
+- In the case of ufw, use `ufw allow 5353/udp` and `ufw alow 9757`.
 
 ### Running
 - On your computer, run "WiVRn server" application, or `wivrn-dashboard`  from the command line, it will show the connection wizard the first time you launch it.
@@ -109,7 +109,7 @@ If the server list is empty in the headset app:
 
 ## My headset does not connect to my computer
 - If you have a firewall, check that port 9757 (UDP and TCP) is open
-- The server and client must be compatible:
+- The server and client must be compatible.
 
 ## How do I use a wired connection?
 
@@ -129,9 +129,20 @@ If the server list is empty in the headset app:
 
 ## How do I see server logs when using the dashboard?
 
-```
-journalctl -f --no-hostname -u io.github.wivrn.wivrn.desktop
-```
+- Click Troubleshoot > Open server logs, or
+- Navigate to `${XDG_STATE_HOME}/wivrn/wivrn-dashboard` (with fallback to `${HOME}/.local/state` for `${XDG_STATE_HOME}`, or
+- For flatpak, navigate to `${HOME}/.var/app/io.github.wivrn.wivrn/.local/state/wivrn/wivrn-dashboard`.
+
+## I have high motion latency, black borders following my view, hear corrupted audio or see a corrupted, pixelated image
+
+- When connecting through USB, make sure the headset isn't connected through WiFi (switch off WiFi)
+- Reset the settings using the button at the bottom of the settings tab
+- Try switching to software encoding
+- Decrease the bitrate
+- Decrease the resolution in the WiVRn app
+- Connect through USB or use a better WiFi router.
+
+Note: WiVRn isn't properly optimized for NVIDIA GPUs due to the lack of developers with NVIDIA hardware. Motion latency may be significantly worse at rendering resolutions higher than default.
 
 # Contributing
 
@@ -155,7 +166,7 @@ WiVRn uses the following software:
 - [HarfBuzz](https://harfbuzz.github.io/)
 - [librsvg](https://wiki.gnome.org/Projects/LibRsvg)
 - [Monado](https://monado.freedesktop.org/)
-- [nvenc](https://developer.nvidia.com/nvidia-video-codec-sdk) optional, for hardware encoding on Nvidia
+- [nvenc](https://developer.nvidia.com/nvidia-video-codec-sdk) optional, for hardware encoding on NVIDIA
 - [qCoro](https://qcoro.dev/)
 - [Qt 6](https://www.qt.io/) optional, for the dashboard
 - [spdlog](https://github.com/gabime/spdlog)
