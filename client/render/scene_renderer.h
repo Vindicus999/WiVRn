@@ -18,6 +18,9 @@
 
 #pragma once
 
+#include "render/vertex_layout.h"
+#include "utils/cache.h"
+#include "vk/shader.h"
 #include <array>
 #include <cstdint>
 #include <glm/mat4x4.hpp>
@@ -32,7 +35,6 @@
 
 #include "vk/allocation.h"
 
-#include "render/growable_descriptor_pool.h"
 #include "render/scene_components.h"
 #include "utils/thread_safe.h"
 
@@ -42,6 +44,8 @@ struct renderpass_info
 	vk::Format depth_format;
 	bool keep_depth_buffer;
 	vk::SampleCountFlagBits msaa_samples = vk::SampleCountFlagBits::e1;
+	bool fragment_density_map;
+	uint32_t multiview_count;
 
 	bool operator==(const renderpass_info & other) const noexcept = default;
 };
@@ -50,7 +54,9 @@ struct pipeline_info
 {
 	renderpass_info renderpass;
 
-	std::string shader_name;
+	std::string vertex_shader_name;
+	std::string fragment_shader_name;
+	renderer::vertex_layout vertex_layout;
 
 	vk::CullModeFlags cull_mode = vk::CullModeFlagBits::eNone;
 	vk::FrontFace front_face = vk::FrontFace::eClockwise;
@@ -75,7 +81,7 @@ struct output_image_info
 	vk::Extent2D output_size;
 	VkImage color;
 	VkImage depth;
-	uint32_t base_array_layer;
+	VkImage foveation;
 
 	bool operator==(const output_image_info & other) const noexcept = default;
 };
@@ -99,12 +105,16 @@ struct hash<output_image_info> : utils::magic_hash<output_image_info>
 {};
 } // namespace std
 
+struct image_loader;
+
 class scene_renderer
 {
 	vk::raii::PhysicalDevice physical_device;
 	vk::raii::Device & device;
 	vk::PhysicalDeviceProperties physical_device_properties;
 	thread_safe<vk::raii::Queue> & queue;
+	uint32_t queue_family_index;
+	vk::raii::CommandPool cb_pool;
 
 	// Destination images
 	struct output_image
@@ -117,32 +127,41 @@ class scene_renderer
 
 		image_allocation multisample_image;
 		vk::raii::ImageView multisample_view = nullptr;
+
+		vk::raii::ImageView foveation_view = nullptr;
+	};
+
+	struct renderpass
+	{
+		vk::raii::RenderPass renderpass = nullptr;
+		vk::AttachmentReference color_attachment;
+		vk::AttachmentReference depth_attachment;
+		std::optional<vk::AttachmentReference> resolve_attachment;          // Only used if MSAA is enabled
+		std::optional<vk::AttachmentReference> fragment_density_attachment; // Only used if fragment density map is enabled
+		int attachment_count;
 	};
 
 	// Initialization functions
 	output_image create_output_image_data(const output_image_info & info);
-	vk::raii::RenderPass create_renderpass(const renderpass_info & info);
+	renderpass create_renderpass(const renderpass_info & info);
 	vk::raii::PipelineLayout create_pipeline_layout(std::span<vk::DescriptorSetLayout> layouts);
 	vk::raii::Pipeline create_pipeline(const pipeline_info & info);
 
-	std::shared_ptr<renderer::texture> create_default_texture(vk::raii::CommandPool & cb_pool, std::vector<uint8_t> pixel);
+	std::shared_ptr<renderer::texture> create_default_texture(image_loader & loader, std::vector<uint8_t> pixel, const std::string & name);
 	std::shared_ptr<renderer::material> create_default_material(vk::raii::CommandPool & cb_pool);
 	vk::raii::DescriptorSetLayout create_descriptor_set_layout(std::span<vk::DescriptorSetLayoutBinding> bindings, vk::DescriptorSetLayoutCreateFlags flags = {});
 
 	// Caches
-	std::unordered_map<renderpass_info, vk::raii::RenderPass> renderpasses;
+	std::unordered_map<renderpass_info, renderpass> renderpasses;
 	std::unordered_map<output_image_info, output_image> output_images;
 	std::unordered_map<pipeline_info, vk::raii::Pipeline> pipelines;
+	utils::cache<std::string, shader, shader_loader> shader_cache;
 
 	output_image & get_output_image_data(const output_image_info & info);
 	vk::raii::Pipeline & get_pipeline(const pipeline_info & info);
-	vk::raii::RenderPass & get_renderpass(const renderpass_info & info);
+	renderpass & get_renderpass(const renderpass_info & info);
 
-	vk::raii::DescriptorSetLayout layout_0; // Descriptor set 0: per-frame/view data (UBO) and per-instance data (UBO + SSBO)
-	vk::raii::DescriptorSetLayout layout_1; // Descriptor set 1: per-material data (5 combined image samplers and 1 uniform buffer)
-
-	// Descriptor set 1: per-material data (5 combined image samplers and 1 uniform buffer)
-	growable_descriptor_pool ds_pool_material;
+	vk::raii::DescriptorSetLayout layout_0; // Descriptor set 0: per-frame/view data (UBO), per-instance data (UBO + SSBO), per-material data (5 combined image samplers and 1 uniform buffer)
 
 	vk::raii::PipelineLayout pipeline_layout = nullptr;
 
@@ -164,12 +183,12 @@ class scene_renderer
 	//  roughness_factor     1.0
 	//  occlusion_strength   0.0
 	//  normal_scale         0.0
+	//  alpha_cutoff         0.5
 	std::shared_ptr<renderer::material> default_material;
 
 	struct frame_gpu_data
 	{
-		glm::mat4 view;
-		glm::mat4 proj;
+		std::array<glm::mat4, 2> view;
 		glm::vec4 light_position;
 		glm::vec4 ambient_color;
 		glm::vec4 light_color;
@@ -178,11 +197,29 @@ class scene_renderer
 	struct instance_gpu_data
 	{
 		glm::mat4 model;
-		glm::mat4 modelview;
-		glm::mat4 modelviewproj;
+		std::array<glm::mat4, 2> modelview;
+		std::array<glm::mat4, 2> modelviewproj;
 		std::array<glm::vec4, 4> clipping_planes;
 	};
 
+	struct debug_draw_vertex
+	{
+		glm::vec4 position;
+		glm::vec4 colour;
+	};
+
+	std::vector<debug_draw_vertex> debug_draw_vertices;
+
+public:
+	struct stats
+	{
+		size_t count_primitives;
+		size_t count_culled_primitives;
+		size_t count_triangles;
+		size_t count_culled_triangles;
+	};
+
+private:
 	struct per_frame_resources
 	{
 		vk::raii::Fence fence = nullptr;
@@ -194,6 +231,11 @@ class scene_renderer
 		// device local, host visible, host coherent
 		size_t uniform_buffer_offset;
 		buffer_allocation uniform_buffer;
+
+		buffer_allocation debug_draw;
+
+		// Statistics
+		stats frame_stats;
 	};
 
 	std::vector<per_frame_resources> frame_resources;
@@ -202,8 +244,6 @@ class scene_renderer
 	double gpu_time_s = 0;
 
 	per_frame_resources & current_frame();
-
-	void update_material_descriptor_set(renderer::material & material);
 
 public:
 	static vk::Format find_usable_image_format(
@@ -219,7 +259,7 @@ public:
 	        vk::raii::Device & device,
 	        vk::raii::PhysicalDevice physical_device,
 	        thread_safe<vk::raii::Queue> & queue,
-	        vk::raii::CommandPool & cb_pool,
+	        uint32_t queue_family_index,
 	        int frames_in_flight = 2);
 
 	~scene_renderer();
@@ -240,8 +280,19 @@ public:
 	        vk::Format depth_format,
 	        vk::Image color_buffer,
 	        vk::Image depth_buffer,
-	        std::span<frame_info> info);
+	        vk::Image foveation_image,
+	        std::span<frame_info> info,
+	        bool render_debug_draws = false);
 	void end_frame();
+
+	void debug_draw_clear();
+	// void debug_draw(std::span<glm::vec3> line, glm::vec4 color);
+	void debug_draw_box(const glm::mat4 & model, glm::vec3 min, glm::vec3 max, glm::vec4 color);
+
+	const stats & last_frame_stats() const
+	{
+		return frame_resources[current_frame_index].frame_stats;
+	}
 
 	double get_gpu_time() const
 	{

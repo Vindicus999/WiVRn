@@ -20,6 +20,9 @@
 
 #include <array>
 #include <memory>
+#include <type_traits>
+#include <utility>
+#include <variant>
 #include <vector>
 
 #include <entt/entity/entity.hpp>
@@ -28,6 +31,7 @@
 #include <vulkan/vulkan_raii.hpp>
 
 #include "utils/magic_hash.h"
+#include "vertex_layout.h"
 #include "vk/allocation.h"
 
 namespace renderer
@@ -58,7 +62,8 @@ struct material
 		float metallic_factor = 1;
 		float roughness_factor = 1;
 		float occlusion_strength = 0;
-		float normal_scale = 0;
+		float normal_scale = 1;
+		float alpha_cutoff = 0.5;
 
 		uint32_t base_color_texcoord = 0;
 		uint32_t metallic_roughness_texcoord = 0;
@@ -78,9 +83,9 @@ struct material
 	// Disable back face culling with this material
 	bool double_sided = true;
 
-	// TODO transparency
-	// fastgltf::AlphaMode alphaMode;
-	// float alpha_cutoff;
+	bool blend_enable = false;
+	bool depth_test_enable = true;
+	bool depth_write_enable = true;
 
 	gpu_data staging;
 
@@ -88,17 +93,8 @@ struct material
 	std::shared_ptr<buffer_allocation> buffer;
 	size_t offset;
 
-	// The descriptor set is managed by the scene renderer, it is updated whenever ds_dirty is true
-	// Bindings 0-4: textures
-	// Binding 5: uniform buffer
-	std::shared_ptr<vk::raii::DescriptorSet> ds;
-
-	// Set to true to update the descriptor set at the next frame
-	bool ds_dirty;
-
 	std::string name;
-	std::string shader_name = "lit";
-	bool blend_enable = true;
+	std::string fragment_shader_name = "lit.frag";
 };
 
 struct primitive
@@ -108,7 +104,13 @@ struct primitive
 	uint32_t vertex_count;
 	vk::IndexType index_type;
 	vk::DeviceSize index_offset;
-	vk::DeviceSize vertex_offset;
+	std::vector<vk::DeviceSize> vertex_offset; // TODO: inplace_vector
+	vertex_layout layout;
+
+	glm::vec3 obb_min;
+	glm::vec3 obb_max;
+
+	std::string vertex_shader;
 
 	// See also material::double_sided
 	vk::CullModeFlagBits cull_mode = vk::CullModeFlagBits::eNone;
@@ -118,33 +120,11 @@ struct primitive
 	std::shared_ptr<material> material_;
 };
 
+// TODO make sure the mesh cannot be changed while it is used
 struct mesh
 {
 	std::vector<primitive> primitives;
 	std::shared_ptr<buffer_allocation> buffer;
-};
-
-// TODO move vertex class in .cpp, put vertex description in the primitive
-struct vertex
-{
-	glm::vec3 position;
-	glm::vec3 normal;
-	glm::vec3 tangent;
-	std::array<glm::vec2, 2> texcoord;
-	glm::vec4 color;
-	std::array<glm::vec4, 1> joints;
-	std::array<glm::vec4, 1> weights;
-
-	struct description
-	{
-		vk::VertexInputBindingDescription binding;
-		std::vector<vk::VertexInputAttributeDescription> attributes;
-		std::vector<std::string> attribute_names;
-
-		vk::PipelineVertexInputStateCreateFlags flags{};
-	};
-
-	static description describe();
 };
 } // namespace renderer
 
@@ -180,6 +160,55 @@ struct node
 	bool reverse_side;
 	uint32_t global_layer_mask;
 };
+
+struct animation_track_base
+{
+	enum class interpolation_t
+	{
+		step,
+		linear,
+		cubic_spline,
+	};
+
+	entt::entity target;
+	interpolation_t interpolation;
+};
+
+template <auto node::*Field>
+struct animation_track_impl : animation_track_base
+{
+	static const constexpr auto field = Field;
+	using type = std::remove_reference_t<decltype(std::declval<node>().*field)>;
+
+	std::vector<float> timestamp;
+	std::vector<type> value;
+};
+
+using animation_track_position = animation_track_impl<&node::position>;
+using animation_track_orientation = animation_track_impl<&node::orientation>;
+using animation_track_scale = animation_track_impl<&node::scale>;
+
+static_assert(std::is_same_v<animation_track_position::type, glm::vec3>);
+static_assert(std::is_same_v<animation_track_orientation::type, glm::quat>);
+static_assert(std::is_same_v<animation_track_scale::type, glm::vec3>);
+
+struct animation
+{
+	std::string name;
+	std::vector<
+	        std::variant<
+	                animation_track_position,
+	                animation_track_orientation,
+	                animation_track_scale>>
+	        tracks;
+
+	float duration = 0;
+
+	float current_time = 0;
+	bool playing = true;
+	bool looping = true;
+};
+
 } // namespace components
 
 entt::entity find_node_by_name(entt::registry & scene, std::string_view name);
