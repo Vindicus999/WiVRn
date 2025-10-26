@@ -24,9 +24,15 @@ jobs:
       - name: Checkout stuff
         uses: actions/checkout@master
 
+     - name: Add Upstream Remote
+        run: git remote add upstream ${{ env.UPSTREAM_URL }}
+
+      - name: Fetch Upstream Changes
+        run: git fetch upstream
+
       - name: Rebase master -> apk-build
         run: |
-          git switch apk-build
+          git checkout master
           git rebase master
           git push origin apk-build
 
