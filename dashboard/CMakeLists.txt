@@ -7,10 +7,12 @@ include(I18n)
 ecm_find_qmlmodule(org.kde.kirigami REQUIRED)
 
 add_executable(wivrn-dashboard
+    avahi.cpp
     main.cpp
     wivrn_server.cpp
     wivrn_qdbus_types.cpp
     apps.cpp
+    dashboard_utils.cpp
     escape_string.cpp
     settings.cpp
     rectangle_partitionner.cpp

@@ -124,9 +124,33 @@ Kirigami.ApplicationWindow {
             Repeater{
                 model: ObjectModel {
                     id: messages
+
                     Kirigami.InlineMessage {
                         Layout.fillWidth: true
-                        text: i18n("The server does not have CAP_SYS_NICE capabilities.")
+                        text: i18n("Avahi daemon is not installed")
+                        type: Kirigami.MessageType.Warning
+                        showCloseButton: true
+                        visible: settings.show_system_checks && !Avahi.installed
+                    }
+
+                    Kirigami.InlineMessage {
+                        Layout.fillWidth: true
+                        text: i18n("Avahi daemon is not started")
+                        type: Kirigami.MessageType.Warning
+                        showCloseButton: true
+                        visible: settings.show_system_checks && Avahi.installed && !Avahi.running
+                        actions: [
+                            Kirigami.Action {
+                                visible: Avahi.canStart
+                                text: i18n("Fix it")
+                                onTriggered: Avahi.start()
+                            }
+                        ]
+                    }
+
+                    Kirigami.InlineMessage {
+                        Layout.fillWidth: true
+                        text: i18n("The server does not have CAP_SYS_NICE capabilities")
                         // type: Kirigami.MessageType.Warning
                         type: Kirigami.MessageType.Information
                         showCloseButton: true
@@ -141,7 +165,7 @@ Kirigami.ApplicationWindow {
 
                     Kirigami.InlineMessage {
                         Layout.fillWidth: true
-                        text: i18n("Firewall may not allow port 9757.")
+                        text: i18n("Firewall may not allow port 9757")
                         type: Kirigami.MessageType.Warning
                         showCloseButton: true
                         visible: settings.show_system_checks && Firewall.needSetup
@@ -156,7 +180,7 @@ Kirigami.ApplicationWindow {
                     Kirigami.InlineMessage {
                         id: restart_capsysnice
                         Layout.fillWidth: true
-                        text: i18n("The CAP_SYS_NICE capability will be used when the server is restarted.")
+                        text: i18n("The CAP_SYS_NICE capability will be used when the server is restarted")
                         type: Kirigami.MessageType.Information
                         showCloseButton: true
                         visible: false
@@ -284,9 +308,9 @@ Kirigami.ApplicationWindow {
                         Controls.ToolTip.delay: Kirigami.Units.toolTipDelay
                         Controls.ToolTip.text: {
                             if (!Adb.adbInstalled)
-                                return i18n("ADB is not installed.");
+                                return i18n("ADB is not installed");
                             if (select_usb_device.connected_headset_count == 0)
-                                return i18n("No headset is connected or your headset is not in developer mode.");
+                                return i18n("No headset is connected or your headset is not in developer mode");
                             return "";
                         }
                     }
@@ -334,11 +358,13 @@ Kirigami.ApplicationWindow {
                     wrapMode: Text.WordWrap
                     text: i18n("Steam information")
                     opacity: steam_info.opacity
+                    visible: steam_info.visible
                     Layout.maximumHeight: root.server_started ? -1 : 0
                 }
                 SteamLaunchOptions {
                     id: steam_info
-                    opacity: root.server_started && WivrnServer.steamCommand != ""
+                    visible: WivrnServer.steamCommand != ""
+                    opacity: root.server_started
                     Layout.maximumHeight: root.server_started ? -1 : 0
                 }
 
@@ -367,7 +393,7 @@ Kirigami.ApplicationWindow {
                     if (!root.server_started)
                         return "";
                     if (!Adb.adbInstalled)
-                        return i18n("ADB is not installed.");
+                        return i18n("ADB is not installed");
                     return "";
                 }
             },

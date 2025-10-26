@@ -17,12 +17,16 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#pragma once
+
 #include <boost/locale/gnu_gettext.hpp>
 
 #define _(x) boost::locale::gettext(x)
 #define _F(x) fmt::runtime(boost::locale::gettext(x))
 #define _S(x) boost::locale::gettext(x).c_str()
 #define _cS(c, x) boost::locale::pgettext(c, x).c_str()
+#define gettext_noop(x) x
+#define gettext_noop_context(c, x) x
 
 std::vector<boost::locale::gnu_gettext::messages_info> get_locales();
 std::vector<char> open_locale_file(const std::string & file_name, const std::string & encoding);

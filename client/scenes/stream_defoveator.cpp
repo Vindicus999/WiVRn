@@ -120,13 +120,13 @@ stream_defoveator::pipeline_t & stream_defoveator::ensure_pipeline(size_t view, 
 	const auto & vk_device_extensions = application::get_vk_device_extensions();
 
 	// Vertex shader
-	vk::raii::ShaderModule vertex_shader = load_shader(device, "reprojection.vert");
+	auto vertex_shader = load_shader(device, "reprojection.vert");
 
 	// Fragment shader
 	auto specialization = make_specialization_constants(
 	        int32_t(alpha),
 	        VkBool32(need_srgb_conversion(guess_model())));
-	vk::raii::ShaderModule fragment_shader = load_shader(device, "reprojection.frag");
+	auto fragment_shader = load_shader(device, "reprojection.frag");
 
 	vk::pipeline_builder pipeline_info{
 	        .flags = {},

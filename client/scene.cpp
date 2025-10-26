@@ -19,15 +19,15 @@
 
 #include "scene.h"
 #include "application.h"
-#include "render/scene_loader.h"
+#include "render/scene_components.h"
 #include "utils/contains.h"
 #include "utils/i18n.h"
 #include "utils/overloaded.h"
 #include "utils/ranges.h"
+#include <entt/core/fwd.hpp>
 #include <magic_enum.hpp>
 #include <spdlog/spdlog.h>
 #include <vulkan/vulkan_raii.hpp>
-#include <vulkan/vulkan_structs.hpp>
 #include <openxr/openxr.h>
 
 // TODO remove constants
@@ -37,7 +37,7 @@ std::vector<scene::meta *> scene::scene_registry;
 
 scene::~scene() {}
 
-scene::scene(key, const meta & current_meta, std::span<const vk::Format> supported_color_formats, std::span<const vk::Format> supported_depth_formats) :
+scene::scene(key, const meta & current_meta, std::span<const vk::Format> supported_color_formats, std::span<const vk::Format> supported_depth_formats, scene * parent_scene) :
         instance(application::instance().xr_instance),
         system(application::instance().xr_system_id),
         session(application::instance().xr_session),
@@ -87,6 +87,19 @@ scene::scene(key, const meta & current_meta, std::span<const vk::Format> support
 	        instance.has_extension(XR_FB_COMPOSITION_LAYER_DEPTH_TEST_EXTENSION_NAME);
 
 	composition_layer_color_scale_bias_supported = instance.has_extension(XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME);
+
+	if (parent_scene)
+	{
+		renderer = parent_scene->renderer;
+		gltf_cache = parent_scene->gltf_cache;
+		image_cache = parent_scene->image_cache;
+	}
+	else
+	{
+		renderer = std::make_shared<scene_renderer>(device, physical_device, queue, queue_family_index);
+		gltf_cache = std::make_shared<gltf_cache_type>(device, physical_device, queue, queue_family_index, renderer->get_default_material(), application::get_cache_path() / "textures");
+		image_cache = std::make_shared<image_cache_type>(device, physical_device, queue, queue_family_index);
+	}
 }
 
 void scene::set_focused(bool status)
@@ -140,7 +153,9 @@ void scene::render_world(
         uint32_t height,
         bool keep_depth_buffer,
         uint32_t layer_mask,
-        XrColor4f clear_color)
+        XrColor4f clear_color,
+        const std::optional<xr::foveation_profile> & foveation,
+        bool render_debug_draws)
 {
 	std::vector<scene_renderer::frame_info> frames;
 	frames.reserve(views.size());
@@ -153,13 +168,14 @@ void scene::render_world(
 	if (keep_depth_buffer)
 		composition_layer_depth.reserve(views.size());
 
-	auto [color_swapchain, color_image] = [&]() -> std::pair<XrSwapchain, vk::Image> {
-		xr::swapchain & color_swapchain = get_swapchain(swapchain_format, width, height, 1, views.size());
+	auto [color_swapchain, color_image, foveation_image] = [&]() -> std::tuple<XrSwapchain, vk::Image, vk::Image> {
+		xr::swapchain & color_swapchain = get_swapchain(swapchain_format, width, height, 1, views.size(), foveation);
 
 		int color_image_index = color_swapchain.acquire();
 		vk::Image color_image = color_swapchain.images()[color_image_index].image;
+		vk::Image foveation_image = color_swapchain.images()[color_image_index].foveation;
 		color_swapchain.wait();
-		return {color_swapchain, color_image};
+		return {color_swapchain, color_image, foveation_image};
 	}();
 
 	auto [depth_swapchain, depth_image] = [&]() -> std::pair<XrSwapchain, vk::Image> {
@@ -228,7 +244,9 @@ void scene::render_world(
 	        depth_format,
 	        color_image,
 	        depth_image,
-	        frames);
+	        foveation_image,
+	        frames,
+	        render_debug_draws);
 
 	add_projection_layer(
 	        XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT,
@@ -237,8 +255,40 @@ void scene::render_world(
 	        std::move(composition_layer_depth));
 }
 
-xr::swapchain & scene::get_swapchain(vk::Format format, int32_t width, int32_t height, int sample_count, uint32_t array_size)
+xr::swapchain & scene::get_swapchain(vk::Format format, int32_t width, int32_t height, int sample_count, uint32_t array_size, const std::optional<xr::foveation_profile> & foveation)
 {
+	XrFoveationProfileFB foveation_profile = XR_NULL_HANDLE;
+	XrFoveationLevelFB foveation_level = XR_FOVEATION_LEVEL_NONE_FB;
+	float foveation_vertical_offset_degrees = 0;
+	bool foveation_dynamic = false;
+
+	if (foveation)
+	{
+		foveation_profile = *foveation;
+		foveation_level = foveation->level();
+		foveation_vertical_offset_degrees = foveation->vertical_offset_degrees();
+		foveation_dynamic = foveation->dynamic();
+	}
+
+	// Look for an exact match
+	for (swapchain_entry & entry: swapchains)
+	{
+		if (not entry.used and
+		    entry.format == format and
+		    entry.width == width and
+		    entry.height == height and
+		    entry.sample_count == sample_count and
+		    entry.array_size == array_size and
+		    entry.foveation_level == foveation_level and
+		    entry.foveation_vertical_offset_degrees == foveation_vertical_offset_degrees and
+		    entry.foveation_dynamic == foveation_dynamic)
+		{
+			entry.used = true;
+			return entry.swapchain;
+		}
+	}
+
+	// Look for a swapchain with a different foveation profile
 	for (swapchain_entry & entry: swapchains)
 	{
 		if (not entry.used and
@@ -248,23 +298,41 @@ xr::swapchain & scene::get_swapchain(vk::Format format, int32_t width, int32_t h
 		    entry.sample_count == sample_count and
 		    entry.array_size == array_size)
 		{
+			spdlog::info("Updating swapchain foveation profile to {}, {:.1f} deg", magic_enum::enum_name(foveation_level), foveation_vertical_offset_degrees);
+			entry.foveation_level = foveation_level;
+			entry.foveation_vertical_offset_degrees = foveation_vertical_offset_degrees;
+			entry.foveation_dynamic = foveation_dynamic;
+
 			entry.used = true;
+			entry.swapchain.update_foveation(*foveation);
 			return entry.swapchain;
 		}
 	}
 
 	spdlog::info("Creating new swapchain: {}, {}x{}, {} sample(s), {} level(s)", magic_enum::enum_name(format), width, height, sample_count, array_size);
+	swapchain_entry new_swapchain{
+	        .format = format,
+	        .width = width,
+	        .height = height,
+	        .sample_count = sample_count,
+	        .array_size = array_size,
+	        .foveation_level = foveation_level,
+	        .foveation_vertical_offset_degrees = foveation_vertical_offset_degrees,
+	        .foveation_dynamic = foveation_dynamic,
+	        .used = true,
+	        .swapchain = xr::swapchain(
+	                instance,
+	                session,
+	                device,
+	                format,
+	                width,
+	                height,
+	                sample_count,
+	                array_size,
+	                foveation_profile)};
+	spdlog::info("Created swapchain");
 
-	return swapchains.emplace_back(swapchain_entry{
-	                                       .format = format,
-	                                       .width = width,
-	                                       .height = height,
-	                                       .sample_count = sample_count,
-	                                       .array_size = array_size,
-	                                       .used = true,
-	                                       .swapchain = xr::swapchain(session, device, format, width, height, sample_count, array_size),
-	                               })
-	        .swapchain;
+	return swapchains.emplace_back(std::move(new_swapchain)).swapchain;
 }
 
 void scene::clear_swapchains()
@@ -434,18 +502,110 @@ void scene::render_end()
 	session.end_frame(predicted_display_time, openxr_layers, blend_mode);
 }
 
-std::pair<entt::entity, components::node &> scene::load_gltf(const std::filesystem::path & path, uint32_t layer_mask)
+template <typename T>
+void copy_components(entt::registry & scene, const entt::registry & prefab, const std::unordered_map<entt::entity, entt::entity> & entity_map)
 {
-	auto entity = world.create();
-	auto & node = world.emplace<components::node>(entity);
+	for (const auto & [entity, component]: prefab.view<T>().each())
+	{
+		scene.emplace<T>(entity_map.at(entity), component);
+	}
+}
+
+std::pair<entt::entity, components::node &> scene::add_gltf(std::shared_ptr<entt::registry> gltf, uint32_t layer_mask)
+{
+	auto root = world.create();
+	auto & node = world.emplace<components::node>(root);
 	node.layer_mask = layer_mask;
 
-	assert(renderer);
-	scene_loader loader(device, physical_device, queue, queue_family_index, renderer->get_default_material());
+	auto prefab_entities = gltf->view<entt::entity>();
 
-	loader.add_prefab(world, loader(path), entity);
+	std::vector<entt::entity> scene_entities{prefab_entities.size()};
+	world.create(scene_entities.begin(), scene_entities.end());
 
-	return {entity, node};
+	std::unordered_map<entt::entity, entt::entity> entity_map; // key: prefab entity, value: scene entity
+
+	entity_map.emplace(entt::null, root);
+	for (auto [prefab_entity, scene_entity]: std::ranges::zip_view(prefab_entities, scene_entities))
+		entity_map.emplace(prefab_entity, scene_entity);
+
+	copy_components<components::node>(world, *gltf, entity_map);
+	copy_components<components::animation>(world, *gltf, entity_map);
+
+	// update links
+	for (auto [prefab_entity, scene_entity]: entity_map)
+	{
+		if (prefab_entity == entt::null)
+			continue;
+
+		auto * node = world.try_get<components::node>(scene_entity);
+		auto * anim = world.try_get<components::animation>(scene_entity);
+
+		if (node)
+		{
+			node->parent = entity_map.at(node->parent);
+
+			for (auto & joint: node->joints)
+			{
+				joint.first = entity_map.at(joint.first);
+			}
+		}
+
+		if (anim)
+		{
+			for (auto & track: anim->tracks)
+			{
+				std::visit(utils::overloaded{[&](auto & t) { t.target = entity_map.at(t.target); }}, track);
+			}
+		}
+	}
+
+	return {root, node};
+}
+
+std::shared_ptr<entt::registry> scene::load_gltf(const std::filesystem::path & path, std::function<void(float)> progress_cb)
+{
+	return gltf_cache->load(path, path, progress_cb);
+}
+
+void scene::unload_gltf(const std::filesystem::path & path)
+{
+	gltf_cache->remove(path);
+}
+
+std::pair<entt::entity, components::node &> scene::add_gltf(const std::filesystem::path & path, uint32_t layer_mask)
+{
+	return add_gltf(load_gltf(path), layer_mask);
+}
+
+void scene::remove(entt::entity entity)
+{
+	std::vector to_be_removed{entity};
+
+	while (not to_be_removed.empty())
+	{
+		entt::entity parent = to_be_removed.back();
+		to_be_removed.pop_back();
+		world.destroy(parent);
+
+		for (auto [e, node]: world.view<components::node>().each())
+		{
+			if (node.parent == parent)
+				to_be_removed.push_back(e);
+		}
+
+		for (auto [e, anim]: world.view<components::animation>().each())
+		{
+			if (std::ranges::any_of(anim.tracks,
+			                        [&](const auto & track) { return std::visit(
+				                                                  [&](const components::animation_track_base & track) {
+					                                                  return track.target == parent;
+				                                                  },
+				                                                  track); }))
+			{
+				to_be_removed.push_back(e);
+			}
+		}
+	}
 }
 
 void scene::on_unfocused() {}

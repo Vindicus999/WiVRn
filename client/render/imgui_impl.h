@@ -18,7 +18,9 @@
 
 #pragma once
 
+#include "image_loader.h"
 #include "render/growable_descriptor_pool.h"
+#include "utils/cache.h"
 #include "utils/thread_safe.h"
 #include "wivrn_config.h"
 #include "xr/hand_tracker.h"
@@ -41,7 +43,7 @@ class imgui_textures
 	struct texture_data
 	{
 		vk::raii::Sampler sampler;
-		std::shared_ptr<vk::raii::ImageView> image_view;
+		std::shared_ptr<loaded_image> image;
 		std::shared_ptr<vk::raii::DescriptorSet> descriptor_set;
 	};
 
@@ -52,6 +54,9 @@ protected:
 	vk::raii::DescriptorSetLayout ds_layout;
 	vk::raii::CommandPool command_pool;
 
+	using image_cache_type = utils::cache<std::string, loaded_image, image_loader>;
+	std::shared_ptr<image_cache_type> image_cache;
+
 private:
 	growable_descriptor_pool descriptor_pool;
 	std::unordered_map<ImTextureID, texture_data> textures;
@@ -61,11 +66,12 @@ public:
 	        vk::raii::PhysicalDevice physical_device,
 	        vk::raii::Device & device,
 	        uint32_t queue_family_index,
-	        thread_safe<vk::raii::Queue> & queue);
+	        thread_safe<vk::raii::Queue> & queue,
+	        std::shared_ptr<image_cache_type> image_cache = {});
 	ImTextureID load_texture(const std::string & filename, vk::raii::Sampler && sampler);
 	ImTextureID load_texture(const std::string & filename);
-	ImTextureID load_texture(const std::span<const std::byte> & bytes, vk::raii::Sampler && sampler);
-	ImTextureID load_texture(const std::span<const std::byte> & bytes);
+	ImTextureID load_texture(const std::span<const std::byte> & bytes, vk::raii::Sampler && sampler, const std::string & name = "");
+	ImTextureID load_texture(const std::span<const std::byte> & bytes, const std::string & name = "");
 	void free_texture(ImTextureID);
 };
 
@@ -164,7 +170,7 @@ private:
 
 	std::vector<viewport> layers_;
 
-	xr::swapchain & swapchain;
+	xr::swapchain swapchain;
 	int image_index;
 
 	ImGuiContext * context;
@@ -199,8 +205,9 @@ public:
 	        uint32_t queue_family_index,
 	        thread_safe<vk::raii::Queue> & queue,
 	        std::span<controller> controllers,
-	        xr::swapchain & swapchain,
-	        std::vector<viewport> layers);
+	        xr::swapchain && swapchain,
+	        std::vector<viewport> layers,
+	        std::shared_ptr<imgui_textures::image_cache_type> image_cache);
 
 	~imgui_context();
 
@@ -236,5 +243,20 @@ public:
 };
 
 void ScrollWhenDragging();
+
 void CenterTextH(const std::string & text);
+
 void CenterTextHV(const std::string & text);
+
+void InputText(const char * label, std::string & text, const ImVec2 & size, ImGuiInputTextFlags flags);
+
+bool RadioButtonWithoutCheckBox(const std::string & label, bool active, ImVec2 size_arg);
+
+template <typename T, typename U>
+static bool RadioButtonWithoutCheckBox(const std::string & label, T & v, U v_button, ImVec2 size_arg)
+{
+	const bool pressed = RadioButtonWithoutCheckBox(label, v == v_button, size_arg);
+	if (pressed)
+		v = v_button;
+	return pressed;
+}
