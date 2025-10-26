@@ -257,8 +257,8 @@ void blitter::push_image(vk::raii::CommandBuffer & cmd, uint8_t stream, vk::Samp
 		        VkBool32(alpha));
 
 		// Create graphics pipeline
-		vk::raii::ShaderModule vertex_shader = load_shader(device, "stream.vert");
-		vk::raii::ShaderModule fragment_shader = load_shader(device, "stream.frag");
+		auto vertex_shader = load_shader(device, "stream.vert");
+		auto fragment_shader = load_shader(device, "stream.frag");
 
 		p.layout = device.createPipelineLayout(vk::PipelineLayoutCreateInfo{
 		        .setLayoutCount = 1,

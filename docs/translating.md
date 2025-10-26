@@ -10,8 +10,9 @@ If using Lokalize, make sure to erase the "Default mailing list" in the settings
 # Adding a new language
 
 * Run `tools/update_messages.sh LANG` where LANG is the 2 letter [ISO 639](https://en.wikipedia.org/wiki/List_of_ISO_639_language_codes) language code, this will create files in the `locale` directory for the new language. Fill in the fields, `git add` the files, commit and file a pull request.
-* (optional) Edit the `tools/check_po.py`, add to the `countries` mapping a value with the language code on the left and the [ISO 3166-1](https://en.wikipedia.org/wiki/ISO_3166-1) code of a flag on the right. The flag will only be used for continuous integration messages.
 
 # Editing existing translations
 
 Run the `tools/update_messages.sh [lang...]` script with the list of languages you wish to edit, this will add the lines for the missing translations, edit them, then `git add` the files for the language you just edited, commit and file a pull request.
+
+Note: when running wivrn-dashboard from the build folder, it will load translation files from system install so local modifications won't be loaded. You can override it by setting `XDG_DATA_DIRS=<build-dir>/dashboard/share/:$XDG_DATA_DIRS for `wivrn-dashboard`

@@ -16,24 +16,6 @@ def list_files(base: str, exts: str|list[str]):
 				if f.endswith(ext):
 					yield os.path.join(root, f)
 
-def flag(lang: str):
-	# Map language code to a country flag
-	countries = {
-		'es': 'es',
-		'fr': 'fr',
-		'it': 'it',
-		'ja': 'jp',
-		'zh_TW': 'tw',
-		'pt_BR': 'br'
-	}
-
-	country = countries.get(lang, lang)
-
-	res = ''
-	for i in country.upper():
-		res += chr(ord(i) + ord('🇦') - ord('A'))
-	return res
-
 ISSUE_LABEL="localisation"
 ISSUE_TITLE="[{lang}] Missing translations"
 
@@ -74,6 +56,7 @@ if __name__ == "__main__":
 				"--keyword=_S:1,1t",
 				"--keyword=_cS:1c,2,2t",
 				"--keyword=_F:1,1t",
+				"--keyword=gettext_noop:1,1t",
 				"--output", client_pot,
 				"--package-name=WiVRn",
 				] + sorted(list_files(os.path.join(root, "client"), ".cpp"))
@@ -95,7 +78,7 @@ if __name__ == "__main__":
 		dashboard_ref = polib.pofile(dashboard_pot)
 
 		for lang in args.lang:
-			lang_issues = 0
+			lang_issues = dict()
 			for po_ref, po in ((client_ref, os.path.join(locale_dir, lang, "wivrn.po")),
 				   (dashboard_ref, os.path.join(locale_dir, lang, "wivrn-dashboard.po"))):
 				if not os.path.exists(po):
@@ -109,23 +92,34 @@ if __name__ == "__main__":
 					if not i.obsolete:
 						if not i.msgid in entries:
 							missing = missing + 1
-							print(f"::notice file={po}::{flag(lang)} Translation for {repr(i.msgid)} is missing")
-				lang_issues += missing
+							print(f"::notice file={po}::{lang} translation for {repr(i.msgid)} is missing")
+
+							if not po in lang_issues:
+								lang_issues[po] = []
+							lang_issues[po].append(repr(i.msgid))
 
 				if missing > 0:
-					print(f"::warning file={po}::{flag(lang)} {missing} translations missing")
+					print(f"::warning file={po}::{lang} {missing} translations missing")
 
 			if args.manage_issues:
 				issues = [i for i in repo.get_issues(state="all", labels = [ISSUE_LABEL]) if i.title == ISSUE_TITLE.format(lang=lang)]
-				if lang_issues > 0:
+
+				issue_body = 'The following translations are missing:\n'
+				for po in lang_issues:
+					issue_body += '\n## ' + pathlib.Path(po).name + '\n'
+					for msg in lang_issues[po]:
+						issue_body += '- ' + msg + '\n'
+
+				if len(lang_issues) > 0:
 					if issues:
 						for issue in issues:
-							if issue.state != "open":
-								issue.edit(state="open")
+							if issue.state != "open" or issue.body != issue_body:
+								issue.edit(state="open", body=issue_body)
 					else:
 						try:
 							repo.create_issue(
 									title=ISSUE_TITLE.format(lang=lang),
+									body=issue_body,
 									labels=[ISSUE_LABEL]
 									)
 						except GithubException as e:
@@ -134,4 +128,4 @@ if __name__ == "__main__":
 								raise
 				else:
 					for issue in issues:
-						issue.edit(state="closed")
+						issue.edit(state="closed", body="All translations are up to date")

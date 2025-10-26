@@ -18,80 +18,71 @@
 
 #include "scene_loader.h"
 
-#include "asset.h"
 #include "gpu_buffer.h"
 #include "image_loader.h"
 #include "render/scene_components.h"
+#include "render/vertex_layout.h"
+#include "utils/files.h"
+#include "utils/json_string.h"
+#include "utils/mapped_file.h"
 #include "utils/ranges.h"
+#include "vk/shader.h"
+#include <algorithm>
+#include <cctype>
+#include <cstdint>
 #include <entt/entt.hpp>
 #include <fastgltf/base64.hpp>
 #include <fastgltf/core.hpp>
 #include <fastgltf/glm_element_traits.hpp>
+#include <fastgltf/math.hpp>
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
 #include <fastgltf/util.hpp>
+#include <filesystem>
+#include <fstream>
 #include <glm/ext.hpp>
+#include <glm/fwd.hpp>
+#include <limits>
 #include <ranges>
+#include <simdjson/dom.h>
 #include <spdlog/spdlog.h>
+#include <string>
+#include <vulkan/vulkan_format_traits.hpp>
+
+namespace fastgltf
+{
+// glm_element_traits.hpp is missing all the glm::vec<1, T> and glm:::vec<n, int32_t> specializations
+// clang-format off
+template <> struct ElementTraits<glm::u8vec1>  : ElementTraitsBase<glm::u8vec1,  AccessorType::Scalar, std::uint8_t>  {};
+template <> struct ElementTraits<glm::i8vec1>  : ElementTraitsBase<glm::i8vec1,  AccessorType::Scalar, std::int8_t>   {};
+template <> struct ElementTraits<glm::u16vec1> : ElementTraitsBase<glm::u16vec1, AccessorType::Scalar, std::uint16_t> {};
+template <> struct ElementTraits<glm::i16vec1> : ElementTraitsBase<glm::i16vec1, AccessorType::Scalar, std::int16_t>  {};
+template <> struct ElementTraits<glm::u32vec1> : ElementTraitsBase<glm::u32vec1, AccessorType::Scalar, std::uint32_t> {};
+template <> struct ElementTraits<glm::i32vec1> : ElementTraitsBase<glm::i32vec1, AccessorType::Scalar, std::int32_t>  {};
+template <> struct ElementTraits<glm::i32vec2> : ElementTraitsBase<glm::i32vec2, AccessorType::Vec2,   std::int32_t>  {};
+template <> struct ElementTraits<glm::i32vec3> : ElementTraitsBase<glm::i32vec3, AccessorType::Vec3,   std::int32_t>  {};
+template <> struct ElementTraits<glm::i32vec4> : ElementTraitsBase<glm::i32vec4, AccessorType::Vec4,   std::int32_t>  {};
+template <> struct ElementTraits<glm::fvec1>   : ElementTraitsBase<glm::fvec1,   AccessorType::Scalar, float>         {};
+template <> struct ElementTraits<glm::dvec1>   : ElementTraitsBase<glm::dvec1,   AccessorType::Scalar, float>         {};
+// clang-format on
+} // namespace fastgltf
 
 namespace
 {
-// BEGIN Utility functions
-template <class T>
-constexpr vk::Format vk_attribute_format = vk::Format::eUndefined;
-template <>
-constexpr vk::Format vk_attribute_format<float> = vk::Format::eR32Sfloat;
-template <>
-constexpr vk::Format vk_attribute_format<glm::vec2> = vk::Format::eR32G32Sfloat;
-template <>
-constexpr vk::Format vk_attribute_format<glm::vec3> = vk::Format::eR32G32B32Sfloat;
-template <>
-constexpr vk::Format vk_attribute_format<glm::vec4> = vk::Format::eR32G32B32A32Sfloat;
-template <typename T, size_t N>
-constexpr vk::Format vk_attribute_format<std::array<T, N>> = vk_attribute_format<T>;
-
-template <class T>
-constexpr size_t nb_attributes = 1;
-template <typename T, size_t N>
-constexpr size_t nb_attributes<std::array<T, N>> = N;
-
-template <class T>
-struct remove_array
-{
-	using type = T;
-};
-template <class T, size_t N>
-struct remove_array<std::array<T, N>>
-{
-	using type = T;
-};
-template <class T>
-using remove_array_t = remove_array<T>::type;
-
-template <class T>
-struct is_array : std::false_type
-{
-};
-
-template <class T, size_t N>
-struct is_array<std::array<T, N>> : std::true_type
-{
-};
-
-template <class T>
-constexpr bool is_array_v = is_array<T>::value;
-// END
-
 // BEGIN GLTF -> Vulkan conversion functions
 std::pair<vk::Filter, vk::SamplerMipmapMode> convert(fastgltf::Filter filter)
 {
 	switch (filter)
 	{
 		case fastgltf::Filter::Nearest:
+			return {vk::Filter::eNearest, {}};
+
+		case fastgltf::Filter::Linear:
+			return {vk::Filter::eLinear, {}};
+
 		case fastgltf::Filter::NearestMipMapNearest:
 			return {vk::Filter::eNearest, vk::SamplerMipmapMode::eNearest};
 
-		case fastgltf::Filter::Linear:
 		case fastgltf::Filter::LinearMipMapNearest:
 			return {vk::Filter::eLinear, vk::SamplerMipmapMode::eNearest};
 
@@ -165,70 +156,222 @@ vk::PrimitiveTopology convert(fastgltf::PrimitiveType type)
 	throw std::invalid_argument("type");
 }
 
-glm::vec4 convert(const std::array<float, 4> & v)
+glm::vec4 convert(const fastgltf::math::nvec4 & v)
 {
 	return {v[0], v[1], v[2], v[3]};
 }
 
-glm::vec3 convert(const std::array<float, 3> & v)
+glm::vec3 convert(const fastgltf::math::nvec3 & v)
 {
 	return {v[0], v[1], v[2]};
+}
+
+components::animation_track_base::interpolation_t convert(fastgltf::AnimationInterpolation interpolation)
+{
+	switch (interpolation)
+	{
+		case fastgltf::AnimationInterpolation::Linear:
+			return components::animation_track_base::interpolation_t::linear;
+		case fastgltf::AnimationInterpolation::Step:
+			return components::animation_track_base::interpolation_t::step;
+		case fastgltf::AnimationInterpolation::CubicSpline:
+			return components::animation_track_base::interpolation_t::cubic_spline;
+	}
+
+	throw std::invalid_argument("interpolation");
 }
 // END
 
 // BEGIN Vertex attributes loading
 template <typename T>
-        requires is_array_v<T>
-void copy_vertex_attributes(
-        const fastgltf::Asset & asset,
-        const fastgltf::Primitive & primitive,
-        std::string attribute_name,
-        std::vector<renderer::vertex> & vertices,
-        T renderer::vertex::*attribute)
+std::vector<glm::dvec4> read_vertex_attribute_aux2(const fastgltf::Asset & asset, const fastgltf::Accessor & accessor)
 {
-	using U = T::value_type;
-	constexpr size_t N = std::tuple_size_v<T>;
+	std::vector<glm::dvec4> output;
+	output.resize(accessor.count);
 
-	for (size_t i = 0; i < N; i++)
+	size_t index = 0;
+	switch (fastgltf::getNumComponents(accessor.type))
 	{
-		auto it = primitive.findAttribute(attribute_name + std::to_string(i));
-
-		if (it == primitive.attributes.end())
-			continue;
-
-		const fastgltf::Accessor & accessor = asset.accessors.at(it->second);
-
-		if (vertices.size() < accessor.count)
-			vertices.resize(accessor.count, {});
-
-		fastgltf::iterateAccessorWithIndex<U>(asset, accessor, [&](U value, std::size_t idx) {
-			(vertices[idx].*attribute)[i] = value;
-		});
+		case 1:
+			fastgltf::iterateAccessorWithIndex<T>(asset, accessor, [&](const T & value, size_t index) {
+				output[index] = glm::dvec4(value[0], 0, 0, 1);
+			});
+			break;
+		case 2:
+			fastgltf::iterateAccessorWithIndex<T>(asset, accessor, [&](const T & value, size_t index) {
+				output[index] = glm::dvec4(value[0], value[1], 0, 1);
+			});
+			break;
+		case 3:
+			fastgltf::iterateAccessorWithIndex<T>(asset, accessor, [&](const T & value, size_t index) {
+				output[index] = glm::dvec4(value[0], value[1], value[2], 1);
+			});
+			break;
+		case 4:
+			fastgltf::iterateAccessorWithIndex<T>(asset, accessor, [&](const T & value, size_t index) {
+				output[index] = glm::dvec4(value[0], value[1], value[2], value[3]);
+			});
+			break;
+		default:
+			abort();
 	}
+
+	return output;
 }
 
 template <typename T>
-        requires(!is_array_v<T>)
+std::vector<glm::dvec4> read_vertex_attribute_aux(const fastgltf::Asset & asset, const fastgltf::Accessor & accessor)
+{
+	switch (fastgltf::getNumComponents(accessor.type))
+	{
+			// clang-format off
+		case 1: return read_vertex_attribute_aux2<glm::vec<1, T>>(asset, accessor);
+		case 2: return read_vertex_attribute_aux2<glm::vec<2, T>>(asset, accessor);
+		case 3: return read_vertex_attribute_aux2<glm::vec<3, T>>(asset, accessor);
+		case 4: return read_vertex_attribute_aux2<glm::vec<4, T>>(asset, accessor);
+			// clang-format on
+	}
+	return {};
+}
+
+std::vector<glm::dvec4> read_vertex_attribute(const fastgltf::Asset & asset, const fastgltf::Accessor & accessor)
+{
+	switch (accessor.componentType)
+	{
+			// clang-format off
+		case fastgltf::ComponentType::Byte:          return read_vertex_attribute_aux<int8_t>(asset, accessor);
+		case fastgltf::ComponentType::UnsignedByte:  return read_vertex_attribute_aux<uint8_t>(asset, accessor);
+		case fastgltf::ComponentType::Short:         return read_vertex_attribute_aux<int16_t>(asset, accessor);
+		case fastgltf::ComponentType::UnsignedShort: return read_vertex_attribute_aux<uint16_t>(asset, accessor);
+		case fastgltf::ComponentType::Int:           return read_vertex_attribute_aux<int32_t>(asset, accessor);
+		case fastgltf::ComponentType::UnsignedInt:   return read_vertex_attribute_aux<uint32_t>(asset, accessor);
+		case fastgltf::ComponentType::Float:         return read_vertex_attribute_aux<float>(asset, accessor);
+		// clang-format on
+		case fastgltf::ComponentType::Double: // TODO
+			abort();
+			break;
+
+		case fastgltf::ComponentType::Invalid:
+			abort();
+			break;
+	}
+
+	return {};
+}
+
+template <typename T>
+void write_vertex_attribute_aux(std::byte * output, size_t stride, int components, const std::vector<glm::dvec4> & input)
+{
+	switch (components)
+	{
+		case 1:
+			for (size_t i = 0, n = input.size(); i < n; i++, output += stride)
+				*reinterpret_cast<glm::vec<1, T> *>(output) = glm::vec<1, T>(input[i].x);
+			break;
+		case 2:
+			for (size_t i = 0, n = input.size(); i < n; i++, output += stride)
+				*reinterpret_cast<glm::vec<2, T> *>(output) = glm::vec<2, T>(input[i].x, input[i].y);
+			break;
+		case 3:
+			for (size_t i = 0, n = input.size(); i < n; i++, output += stride)
+				*reinterpret_cast<glm::vec<3, T> *>(output) = glm::vec<3, T>(input[i].x, input[i].y, input[i].z);
+			break;
+		case 4:
+			for (size_t i = 0, n = input.size(); i < n; i++, output += stride)
+				*reinterpret_cast<glm::vec<3, T> *>(output) = glm::vec<4, T>(input[i].x, input[i].y, input[i].z, input[i].w);
+			break;
+		default:
+			abort();
+	}
+}
+
+void write_vertex_attribute(std::vector<std::byte> & output, size_t offset, size_t stride, vk::Format format, std::vector<glm::dvec4> input)
+{
+	assert(output.size() >= input.size() * stride);
+
+	switch (format)
+	{
+		case vk::Format::eR32Sfloat:
+		case vk::Format::eR32G32Sfloat:
+		case vk::Format::eR32G32B32Sfloat:
+		case vk::Format::eR32G32B32A32Sfloat:
+			write_vertex_attribute_aux<float>(output.data() + offset, stride, vk::componentCount(format), input);
+			return;
+
+		default:
+			return;
+	}
+}
+
 void copy_vertex_attributes(
         const fastgltf::Asset & asset,
-        const fastgltf::Primitive & primitive,
-        std::string attribute_name,
-        std::vector<renderer::vertex> & vertices,
-        T renderer::vertex::*attribute)
+        const fastgltf::Accessor & accessor,
+        std::vector<std::byte> & buffer,
+        const vk::VertexInputBindingDescription & binding,
+        const vk::VertexInputAttributeDescription & attribute)
 {
-	auto it = primitive.findAttribute(attribute_name);
+	assert(buffer.size() >= accessor.count * binding.stride);
 
-	if (it == primitive.attributes.end())
-		return;
+	write_vertex_attribute(buffer, attribute.offset, binding.stride, attribute.format, read_vertex_attribute(asset, accessor));
+}
 
-	const fastgltf::Accessor & accessor = asset.accessors.at(it->second);
+std::pair<size_t, std::vector<std::vector<std::byte>>> create_vertex_buffers(
+        const renderer::vertex_layout & layout,
+        const fastgltf::Asset & asset,
+        const fastgltf::Primitive & primitive)
+{
+	std::pair<size_t, std::vector<std::vector<std::byte>>> size_buffers;
+	auto & [vertex_count, buffers] = size_buffers;
 
-	if (vertices.size() < accessor.count)
-		vertices.resize(accessor.count, {});
+	// Count the vertices
+	vertex_count = 0;
+	for (const auto & name: layout.attribute_names)
+	{
+		if (auto attribute = primitive.findAttribute(name); attribute != primitive.attributes.cend())
+			vertex_count = std::max(vertex_count, asset.accessors.at(attribute->accessorIndex).count);
+	}
 
-	fastgltf::iterateAccessorWithIndex<T>(asset, accessor, [&](T value, std::size_t idx) {
-		vertices[idx].*attribute = value;
-	});
+	// Allocate buffers
+	int max_binding = std::ranges::max(layout.bindings, {}, &vk::VertexInputBindingDescription::binding).binding;
+	buffers.resize(max_binding + 1);
+	for (const vk::VertexInputBindingDescription & binding: layout.bindings)
+	{
+		switch (binding.inputRate)
+		{
+			case vk::VertexInputRate::eVertex:
+				buffers[binding.binding].resize(binding.stride * vertex_count);
+				break;
+			case vk::VertexInputRate::eInstance:
+				buffers[binding.binding].resize(binding.stride);
+				break;
+		}
+	}
+
+	// Copy attributes
+	for (auto && [name, attribute]: std::views::zip(layout.attribute_names, layout.attributes))
+	{
+		auto binding_iter = std::ranges::find(layout.bindings, attribute.binding, &vk::VertexInputBindingDescription::binding);
+		assert(binding_iter != layout.bindings.end());
+
+		const vk::VertexInputBindingDescription & binding = *binding_iter;
+		std::vector<std::byte> & buffer = buffers.at(binding.binding);
+
+		const fastgltf::Attribute * gltf_attribute = primitive.findAttribute(name);
+		if (gltf_attribute == primitive.attributes.cend())
+		{
+			// Also check if it's an array of size 1
+			gltf_attribute = primitive.findAttribute(name + "_0");
+
+			if (gltf_attribute == primitive.attributes.cend())
+				continue;
+		}
+
+		const fastgltf::Accessor & accessor = asset.accessors.at(gltf_attribute->accessorIndex);
+
+		copy_vertex_attributes(asset, accessor, buffer, binding, attribute);
+	}
+
+	return size_buffers;
 }
 // END
 
@@ -257,39 +400,43 @@ fastgltf::MimeType guess_mime_type(std::span<const std::byte> image_data)
 		return fastgltf::MimeType::None;
 }
 
-std::shared_ptr<vk::raii::ImageView> do_load_image(
-        vk::raii::PhysicalDevice & physical_device,
-        vk::raii::Device & device,
-        thread_safe<vk::raii::Queue> & queue,
-        vk::raii::CommandPool & cb_pool,
+loaded_image do_load_image(
+        image_loader & loader,
         std::span<const std::byte> image_data,
-        bool srgb)
+        bool srgb,
+        const std::pmr::string & name,
+        const std::filesystem::path & output_path)
 {
 	switch (guess_mime_type(image_data))
 	{
 		case fastgltf::MimeType::JPEG:
 		case fastgltf::MimeType::PNG:
 		case fastgltf::MimeType::KTX2: {
-			try
-			{
-				image_loader loader(physical_device, device, queue, cb_pool);
-				loader.load(image_data, srgb);
+			auto image = loader.load(image_data, srgb, name.c_str(), false /*premultiply*/, output_path);
 
-				spdlog::debug("Loaded image {}x{}, format {}, {} mipmaps", loader.extent.width, loader.extent.height, vk::to_string(loader.format), loader.num_mipmaps);
-				return loader.image_view;
-			}
-			catch (std::exception & e)
-			{
-				spdlog::info("Cannot load image: {}", e.what());
-				return {};
-			}
+			spdlog::debug("{}: {}x{}, format {}, {} mipmaps, {} bytes", name, image.extent.width, image.extent.height, vk::to_string(image.format), image.num_mipmaps, image.image.size());
+			return image;
 		}
 
 		default:
-			spdlog::error("Unsupported image MIME type");
-			return {};
+			throw std::runtime_error{"Unsupported image MIME type"};
 	}
 }
+// END
+
+// BEGIN Error category
+struct : std::error_category
+{
+	const char * name() const noexcept override
+	{
+		return "fastgltf";
+	}
+
+	std::string message(int condition) const override
+	{
+		return (std::string)fastgltf::getErrorMessage(static_cast<fastgltf::Error>(condition));
+	}
+} fastgltf_error_category;
 // END
 
 fastgltf::Asset load_gltf_asset(fastgltf::GltfDataBuffer & buffer, const std::filesystem::path & directory)
@@ -299,13 +446,12 @@ fastgltf::Asset load_gltf_asset(fastgltf::GltfDataBuffer & buffer, const std::fi
 	auto gltf_options =
 	        fastgltf::Options::DontRequireValidAssetMember |
 	        fastgltf::Options::AllowDouble |
-	        fastgltf::Options::LoadGLBBuffers |
 	        fastgltf::Options::DecomposeNodeMatrices;
 
-	auto expected_asset = parser.loadGltf(&buffer, directory, gltf_options);
+	auto expected_asset = parser.loadGltf(buffer, directory, gltf_options);
 
 	if (auto error = expected_asset.error(); error != fastgltf::Error::None)
-		throw std::runtime_error(std::string(fastgltf::getErrorMessage(error)));
+		throw std::system_error((int)error, fastgltf_error_category);
 
 	return std::move(expected_asset.get());
 }
@@ -313,31 +459,42 @@ fastgltf::Asset load_gltf_asset(fastgltf::GltfDataBuffer & buffer, const std::fi
 class loader_context
 {
 	std::filesystem::path base_directory;
+	std::string name;
 	fastgltf::Asset & gltf;
 	vk::raii::PhysicalDevice physical_device;
 	vk::raii::Device & device;
 	thread_safe<vk::raii::Queue> & queue;
-	vk::raii::CommandPool & cb_pool;
+	image_loader & loader;
 
-	std::vector<asset> loaded_assets;
-	asset & load_from_asset(const std::filesystem::path & path)
+	std::vector<utils::mapped_file> loaded_assets;
+	utils::mapped_file & load_from_asset(const std::filesystem::path & path)
 	{
-		return loaded_assets.emplace_back(path);
+		try
+		{
+			return loaded_assets.emplace_back(path);
+		}
+		catch (std::exception & e)
+		{
+			spdlog::error("{}: error loading {}: {}", name, path.native(), e.what());
+			throw;
+		}
 	}
 
 public:
 	loader_context(std::filesystem::path base_directory,
+	               std::string name,
 	               fastgltf::Asset & gltf,
 	               vk::raii::PhysicalDevice physical_device,
 	               vk::raii::Device & device,
 	               thread_safe<vk::raii::Queue> & queue,
-	               vk::raii::CommandPool & cb_pool) :
-	        base_directory(base_directory),
+	               image_loader & loader) :
+	        base_directory(std::move(base_directory)),
+	        name(std::move(name)),
 	        gltf(gltf),
 	        physical_device(physical_device),
 	        device(device),
 	        queue(queue),
-	        cb_pool(cb_pool)
+	        loader(loader)
 	{
 	}
 
@@ -416,27 +573,51 @@ public:
 	}
 
 	std::unordered_map<int, std::shared_ptr<vk::raii::ImageView>> images;
-	std::shared_ptr<vk::raii::ImageView> load_image(int index, bool srgb)
+	std::shared_ptr<vk::raii::ImageView> load_image(int index, const std::filesystem::path & texture_cache, bool srgb)
 	{
 		auto it = images.find(index);
 		if (it != images.end())
 			return it->second;
 
-		try
-		{
-			auto [image_data, mime_type] = visit_source(gltf.images[index].data);
-			auto image = do_load_image(physical_device, device, queue, cb_pool, image_data, srgb);
+		if (index > gltf.images.size())
+			throw std::runtime_error(std::format("Image index {} out of range", index));
 
-			images.emplace(index, image);
-			return image;
-		}
-		catch (...)
+		std::pmr::string image_name;
+		if (gltf.images[index].name == "")
+			image_name = std::format("{}(image {})", name, index);
+		else
+			image_name = std::format("{}({})", name, gltf.images[index].name);
+
+		std::filesystem::path cached_texture;
+
+		if (texture_cache != "")
 		{
-			return nullptr;
+			cached_texture = texture_cache / (std::to_string(index) + ".ktx");
+
+			if (std::filesystem::exists(cached_texture))
+			{
+				try
+				{
+					utils::mapped_file image_data{cached_texture};
+					auto image_ptr = std::make_shared<loaded_image>(do_load_image(loader, image_data, srgb, image_name, ""));
+					return std::shared_ptr<vk::raii::ImageView>(image_ptr, &image_ptr->image_view);
+				}
+				catch (std::exception & e)
+				{
+					spdlog::warn("Cannot load cached image {}: {}, deleting it", cached_texture.native(), e.what());
+					std::error_code ec;
+					std::filesystem::remove(cached_texture);
+				}
+			}
 		}
+
+		auto [image_data, mime_type] = visit_source(gltf.images[index].data);
+		auto image_ptr = std::make_shared<loaded_image>(do_load_image(loader, image_data, srgb, image_name, cached_texture));
+
+		return std::shared_ptr<vk::raii::ImageView>(image_ptr, &image_ptr->image_view);
 	}
 
-	std::vector<std::shared_ptr<renderer::texture>> load_all_textures()
+	std::vector<std::shared_ptr<renderer::texture>> load_all_textures(const std::filesystem::path & texture_cache, std::function<void(float)> progress_cb)
 	{
 		// Determine which texture is sRGB
 		std::vector<uint8_t> srgb_array;
@@ -452,21 +633,32 @@ public:
 
 		std::vector<std::shared_ptr<renderer::texture>> textures;
 		textures.reserve(gltf.textures.size());
+
+		int loaded_textures = 0;
+		int total_textures = gltf.textures.size();
 		for (auto && [srgb, gltf_texture]: std::views::zip(srgb_array, gltf.textures))
 		{
 			auto & texture_ref = *textures.emplace_back(std::make_shared<renderer::texture>());
 
 			if (gltf_texture.samplerIndex)
-			{
-				fastgltf::Sampler & sampler = gltf.samplers.at(*gltf_texture.samplerIndex);
-				texture_ref.sampler = convert(sampler);
-			}
+				texture_ref.sampler = convert(gltf.samplers.at(*gltf_texture.samplerIndex));
+
+			std::vector<std::string> errors;
 
 			if (gltf_texture.basisuImageIndex)
 			{
-				texture_ref.image_view = load_image(*gltf_texture.basisuImageIndex, srgb);
-				if (texture_ref.image_view)
+				try
+				{
+					texture_ref.image_view = load_image(*gltf_texture.basisuImageIndex, texture_cache, srgb);
+					loaded_textures++;
+					if (progress_cb)
+						progress_cb((float)loaded_textures / total_textures);
 					continue;
+				}
+				catch (std::exception & e)
+				{
+					errors.push_back(std::format("Cannot load image {}: {}", *gltf_texture.basisuImageIndex, e.what()));
+				}
 			}
 
 			// if (gltf_texture.ddsImageIndex)
@@ -481,10 +673,23 @@ public:
 
 			if (gltf_texture.imageIndex)
 			{
-				texture_ref.image_view = load_image(*gltf_texture.imageIndex, srgb);
-				if (texture_ref.image_view)
+				try
+				{
+					texture_ref.image_view = load_image(*gltf_texture.imageIndex, texture_cache, srgb);
+					loaded_textures++;
+					if (progress_cb)
+						progress_cb((float)loaded_textures / total_textures);
 					continue;
+				}
+				catch (std::exception & e)
+				{
+					errors.push_back(std::format("Cannot load image {}: {}", *gltf_texture.imageIndex, e.what()));
+				}
 			}
+
+			spdlog::error("{}: cannot load texture {}:", name, name);
+			for (auto & error: errors)
+				spdlog::error("    {}", error);
 
 			throw std::runtime_error("Unsupported image type");
 		}
@@ -513,55 +718,71 @@ public:
 		for (const fastgltf::Material & gltf_material: gltf.materials)
 		{
 			// Copy the default material, without references to its buffer or descriptor set
-			auto & material_ref = *materials.emplace_back(std::make_shared<renderer::material>(default_material));
-			material_ref.name = gltf_material.name;
-			spdlog::info("Loading material \"{}\"", material_ref.name);
-			material_ref.buffer.reset();
-			material_ref.ds.reset();
+			auto & material = *materials.emplace_back(std::make_shared<renderer::material>(default_material));
+			material.name = gltf_material.name;
+			material.buffer.reset();
 
-			material_ref.double_sided = gltf_material.doubleSided;
-			material_ref.blend_enable = gltf_material.alphaMode == fastgltf::AlphaMode::Blend; // TODO handle alpha cut off mode
+			material.double_sided = gltf_material.doubleSided;
 
-			renderer::material::gpu_data & material_data = material_ref.staging;
+			switch (gltf_material.alphaMode)
+			{
+				case fastgltf::AlphaMode::Opaque:
+					material.fragment_shader_name = "lit.frag";
+					material.blend_enable = false;
+					break;
+
+				case fastgltf::AlphaMode::Mask:
+					material.fragment_shader_name = "lit_mask.frag";
+					material.blend_enable = false;
+					break;
+
+				case fastgltf::AlphaMode::Blend:
+					material.fragment_shader_name = "lit.frag";
+					material.blend_enable = true;
+					break;
+			}
+
+			renderer::material::gpu_data & material_data = material.staging;
 
 			material_data.base_color_factor = convert(gltf_material.pbrData.baseColorFactor);
 			material_data.base_emissive_factor = glm::vec4(convert(gltf_material.emissiveFactor), 0);
 			material_data.metallic_factor = gltf_material.pbrData.metallicFactor;
 			material_data.roughness_factor = gltf_material.pbrData.roughnessFactor;
+			material_data.alpha_cutoff = gltf_material.alphaCutoff;
 
 			if (gltf_material.pbrData.baseColorTexture)
 			{
-				material_ref.base_color_texture = textures.at(gltf_material.pbrData.baseColorTexture->textureIndex);
+				material.base_color_texture = textures.at(gltf_material.pbrData.baseColorTexture->textureIndex);
 				material_data.base_color_texcoord = gltf_material.pbrData.baseColorTexture->texCoordIndex;
 			}
 
 			if (gltf_material.pbrData.metallicRoughnessTexture)
 			{
-				material_ref.metallic_roughness_texture = textures.at(gltf_material.pbrData.metallicRoughnessTexture->textureIndex);
+				material.metallic_roughness_texture = textures.at(gltf_material.pbrData.metallicRoughnessTexture->textureIndex);
 				material_data.metallic_roughness_texcoord = gltf_material.pbrData.metallicRoughnessTexture->texCoordIndex;
 			}
 
 			if (gltf_material.occlusionTexture)
 			{
-				material_ref.occlusion_texture = textures.at(gltf_material.occlusionTexture->textureIndex);
+				material.occlusion_texture = textures.at(gltf_material.occlusionTexture->textureIndex);
 				material_data.occlusion_texcoord = gltf_material.occlusionTexture->texCoordIndex;
 				material_data.occlusion_strength = gltf_material.occlusionTexture->strength;
 			}
 
 			if (gltf_material.emissiveTexture)
 			{
-				material_ref.emissive_texture = textures.at(gltf_material.emissiveTexture->textureIndex);
+				material.emissive_texture = textures.at(gltf_material.emissiveTexture->textureIndex);
 				material_data.emissive_texcoord = gltf_material.emissiveTexture->texCoordIndex;
 			}
 
 			if (gltf_material.normalTexture)
 			{
-				material_ref.normal_texture = textures.at(gltf_material.normalTexture->textureIndex);
+				material.normal_texture = textures.at(gltf_material.normalTexture->textureIndex);
 				material_data.normal_texcoord = gltf_material.normalTexture->texCoordIndex;
 				material_data.normal_scale = gltf_material.normalTexture->scale;
 			}
 
-			material_ref.offset = staging_buffer.add_uniform(material_data);
+			material.offset = staging_buffer.add_uniform(material_data);
 		}
 
 		return materials;
@@ -613,39 +834,80 @@ public:
 					}
 				}
 				else
-				{
 					primitive_ref.indexed = false;
+
+				renderer::vertex_layout & layout = primitive_ref.layout;
+
+				if (gltf_primitive.findAttribute("JOINTS_0") == gltf_primitive.attributes.cend())
+					primitive_ref.vertex_shader = "lit.vert";
+				else
+					primitive_ref.vertex_shader = "lit_skinned.vert";
+
+				// For attributes types, see https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#meshes-overview (§ 3.7.2.1)
+				auto shader = shader_loader{device}(primitive_ref.vertex_shader);
+				for (const auto & input: shader->inputs)
+				{
+					std::string semantic = input.name;
+					std::transform(semantic.begin(), semantic.end(), semantic.begin(), [](auto c) { return std::toupper(c); });
+
+					if (semantic.starts_with("IN_"))
+						semantic = semantic.substr(3);
+
+					int binding;
+
+					if (semantic == "POSITION" or
+					    semantic == "JOINTS" or
+					    semantic == "WEIGHTS")
+						binding = 0;
+					else
+						binding = 1;
+
+					layout.add_vertex_attribute(semantic, input.format, binding, input.location, input.array_size);
 				}
 
-				std::vector<renderer::vertex> vertices;
+				auto [vertex_count, buffers] = create_vertex_buffers(layout, gltf, gltf_primitive);
+				primitive_ref.vertex_count = vertex_count;
 
-				copy_vertex_attributes(gltf, gltf_primitive, "POSITION", vertices, &renderer::vertex::position);
-				copy_vertex_attributes(gltf, gltf_primitive, "NORMAL", vertices, &renderer::vertex::normal);
-				copy_vertex_attributes(gltf, gltf_primitive, "TANGENT", vertices, &renderer::vertex::tangent);
-				copy_vertex_attributes(gltf, gltf_primitive, "TEXCOORD_", vertices, &renderer::vertex::texcoord);
-				copy_vertex_attributes(gltf, gltf_primitive, "COLOR", vertices, &renderer::vertex::color);
-				copy_vertex_attributes(gltf, gltf_primitive, "JOINTS_", vertices, &renderer::vertex::joints);
-				copy_vertex_attributes(gltf, gltf_primitive, "WEIGHTS_", vertices, &renderer::vertex::weights);
+				for (auto & buffer: buffers)
+					primitive_ref.vertex_offset.push_back(staging_buffer.add_vertices(buffer));
 
-				primitive_ref.vertex_offset = staging_buffer.add_vertices(vertices);
-				primitive_ref.vertex_count = vertices.size();
-
-				primitive_ref.cull_mode = vk::CullModeFlagBits::eBack;       // TBC
-				primitive_ref.front_face = vk::FrontFace::eCounterClockwise; // TBC
-				primitive_ref.topology = convert(gltf_primitive.type);
+				// Compute the OBB
+				glm::vec3 obb_min{std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
+				glm::vec3 obb_max = -obb_min;
+				fastgltf::iterateAccessor<glm::vec3>(gltf, gltf.accessors.at(gltf_primitive.findAttribute("POSITION")->accessorIndex), [&](glm::vec3 position) {
+					obb_min.x = std::min(obb_min.x, position.x);
+					obb_min.y = std::min(obb_min.y, position.y);
+					obb_min.z = std::min(obb_min.z, position.z);
+					obb_max.x = std::max(obb_max.x, position.x);
+					obb_max.y = std::max(obb_max.y, position.y);
+					obb_max.z = std::max(obb_max.z, position.z);
+				});
+				primitive_ref.obb_min = obb_min;
+				primitive_ref.obb_max = obb_max;
 
 				if (gltf_primitive.materialIndex)
 					primitive_ref.material_ = materials.at(*gltf_primitive.materialIndex);
+
+				if (primitive_ref.material_ and primitive_ref.material_->double_sided)
+				{
+					primitive_ref.cull_mode = vk::CullModeFlagBits::eFrontAndBack;
+					primitive_ref.front_face = vk::FrontFace::eCounterClockwise;
+				}
+				else
+				{
+					primitive_ref.cull_mode = vk::CullModeFlagBits::eBack;
+					primitive_ref.front_face = vk::FrontFace::eCounterClockwise;
+				}
+
+				primitive_ref.topology = convert(gltf_primitive.type);
 			}
 		}
 
 		return meshes;
 	}
 
-	entt::registry load_all_nodes(const std::vector<std::shared_ptr<renderer::mesh>> & meshes)
+	std::vector<entt::entity> load_all_nodes(entt::registry & registry, const std::vector<std::shared_ptr<renderer::mesh>> & meshes)
 	{
-		entt::registry registry;
-
 		std::vector<entt::entity> entities{gltf.nodes.size()};
 		registry.create(entities.begin(), entities.end());
 
@@ -693,77 +955,154 @@ public:
 			std::ranges::fill(node.clipping_planes, glm::vec4{0, 0, 0, 1});
 		}
 
-		return registry;
+		return entities;
+	}
+
+	void load_all_animations(entt::registry & registry, const std::vector<entt::entity> & node_entities)
+	{
+		std::vector<entt::entity> entities{gltf.animations.size()};
+		registry.create(entities.begin(), entities.end());
+
+		// Create all animation components first
+		registry.insert<components::animation>(entities.begin(), entities.end());
+
+		for (const auto & [entity, gltf_animation]: std::ranges::zip_view(entities, gltf.animations))
+		{
+			auto & animation = registry.get<components::animation>(entity);
+			animation.name = gltf_animation.name;
+			animation.tracks.reserve(gltf_animation.channels.size());
+
+			for (const auto & channel: gltf_animation.channels)
+			{
+				if (not channel.nodeIndex.has_value() or *channel.nodeIndex > node_entities.size())
+					// Ignore this channel
+					continue;
+
+				const auto & sampler = gltf_animation.samplers.at(channel.samplerIndex);
+				const auto & time = gltf.accessors.at(sampler.inputAccessor);
+				const auto & value = gltf.accessors.at(sampler.outputAccessor);
+				const auto interpolation = convert(sampler.interpolation);
+
+				switch (interpolation)
+				{
+					case components::animation_track_base::interpolation_t::step:
+					case components::animation_track_base::interpolation_t::linear:
+						if (time.count != value.count)
+							// There must be the same number of elements
+							continue;
+						break;
+
+					case components::animation_track_base::interpolation_t::cubic_spline:
+						// TODO: does not work for morph targets
+						if (3 * time.count != value.count or time.count < 2)
+							continue;
+						break;
+				}
+
+				size_t count = time.count;
+				switch (channel.path)
+				{
+					// TODO: templatize the switch
+					case fastgltf::AnimationPath::Translation: {
+						components::animation_track_position track;
+						track.target = node_entities.at(*channel.nodeIndex);
+						track.interpolation = interpolation;
+						track.timestamp.resize(time.count);
+						track.value.resize(value.count);
+
+						fastgltf::iterateAccessorWithIndex<float>(gltf, time, [&](float t, size_t index) {
+							track.timestamp[index] = t;
+							animation.duration = std::max(animation.duration, t);
+						});
+
+						fastgltf::iterateAccessorWithIndex<glm::vec3>(gltf, value, [&](glm::vec3 value, size_t index) {
+							track.value[index] = value;
+						});
+
+						animation.tracks.emplace_back(std::move(track));
+						break;
+					}
+					case fastgltf::AnimationPath::Rotation: {
+						components::animation_track_orientation track;
+						track.target = node_entities.at(*channel.nodeIndex);
+						track.interpolation = interpolation;
+						track.timestamp.resize(time.count);
+						track.value.resize(value.count);
+
+						fastgltf::iterateAccessorWithIndex<float>(gltf, time, [&](float t, size_t index) {
+							track.timestamp[index] = t;
+							animation.duration = std::max(animation.duration, t);
+						});
+
+						fastgltf::iterateAccessorWithIndex<glm::vec4>(gltf, value, [&](glm::vec4 value, size_t index) {
+							track.value[index] = glm::quat::wxyz(value.w, value.x, value.y, value.z);
+						});
+
+						animation.tracks.emplace_back(std::move(track));
+						break;
+					}
+					case fastgltf::AnimationPath::Scale: {
+						components::animation_track_scale track;
+						track.target = node_entities.at(*channel.nodeIndex);
+						track.interpolation = interpolation;
+						track.timestamp.resize(time.count);
+						track.value.resize(value.count);
+
+						fastgltf::iterateAccessorWithIndex<float>(gltf, time, [&](float t, size_t index) {
+							track.timestamp[index] = t;
+							animation.duration = std::max(animation.duration, t);
+						});
+
+						fastgltf::iterateAccessorWithIndex<glm::vec3>(gltf, value, [&](glm::vec3 value, size_t index) {
+							track.value[index] = value;
+						});
+
+						animation.tracks.emplace_back(std::move(track));
+						break;
+					}
+					case fastgltf::AnimationPath::Weights:
+						// TODO morph weights
+						break;
+				}
+			}
+		}
 	}
 };
 
 } // namespace
 
-renderer::vertex::description renderer::vertex::describe()
+scene_loader::scene_loader(vk::raii::Device & device, vk::raii::PhysicalDevice physical_device, thread_safe<vk::raii::Queue> & queue, uint32_t queue_family_index, std::shared_ptr<renderer::material> default_material, std::filesystem::path texture_cache_) :
+        device(device),
+        physical_device(physical_device),
+        queue(queue),
+        queue_family_index(queue_family_index),
+        default_material(default_material),
+        texture_cache(std::move(texture_cache_))
 {
-	renderer::vertex::description desc;
-
-	desc.binding = vk::VertexInputBindingDescription{
-	        .binding = 0,
-	        .stride = sizeof(vertex),
-	        .inputRate = vk::VertexInputRate::eVertex,
-	};
-
-	vk::VertexInputAttributeDescription attribute{
-	        .location = 0,
-	        .binding = 0,
-	};
-
-#define VERTEX_ATTR(member)                                                                                         \
-	attribute.format = vk_attribute_format<decltype(vertex::member)>;                                           \
-	for (size_t i = 0; i < nb_attributes<decltype(vertex::member)>; i++)                                        \
-	{                                                                                                           \
-		attribute.offset = offsetof(vertex, member) + i * sizeof(remove_array_t<decltype(vertex::member)>); \
-		desc.attributes.push_back(attribute);                                                               \
-		attribute.location++;                                                                               \
-		if (is_array_v<decltype(vertex::member)>)                                                           \
-		{                                                                                                   \
-			desc.attribute_names.push_back(#member "_" + std::to_string(i));                            \
-		}                                                                                                   \
-		else                                                                                                \
-		{                                                                                                   \
-			desc.attribute_names.push_back(#member);                                                    \
-		}                                                                                                   \
-	}
-
-	VERTEX_ATTR(position);
-	VERTEX_ATTR(normal);
-	VERTEX_ATTR(tangent);
-	VERTEX_ATTR(texcoord);
-	VERTEX_ATTR(color);
-	VERTEX_ATTR(joints);
-	VERTEX_ATTR(weights);
-
-	static_assert(vertex{}.joints.size() == vertex{}.weights.size());
-
-	return desc;
+	clear_texture_cache();
 }
 
-entt::registry scene_loader::operator()(const std::filesystem::path & gltf_path)
+std::shared_ptr<entt::registry> scene_loader::operator()(
+        std::span<const std::byte> data,
+        const std::string & name,
+        const std::filesystem::path & parent_path,
+        const std::filesystem::path & gltf_texture_cache,
+        std::function<void(float)> progress_cb)
 {
 	vk::PhysicalDeviceProperties physical_device_properties = physical_device.getProperties();
-	vk::raii::CommandPool cb_pool{device, vk::CommandPoolCreateInfo{
-	                                              .flags = vk::CommandPoolCreateFlagBits::eTransient | vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-	                                              .queueFamilyIndex = queue_family_index,
-	                                      }};
 
-	spdlog::debug("Loading {}", gltf_path.native());
+	auto data_buffer = fastgltf::GltfDataBuffer::FromBytes(data.data(), data.size());
+	if (auto error = data_buffer.error(); error != fastgltf::Error::None)
+		throw std::system_error((int)error, fastgltf_error_category);
 
-	asset asset_file(gltf_path);
-	fastgltf::GltfDataBuffer data_buffer;
-	data_buffer.copyBytes(reinterpret_cast<const uint8_t *>(asset_file.data()), asset_file.size());
+	fastgltf::Asset asset = load_gltf_asset(data_buffer.get(), parent_path);
 
-	fastgltf::Asset asset = load_gltf_asset(data_buffer, gltf_path.parent_path());
-	loader_context ctx(gltf_path.parent_path(), asset, physical_device, device, queue, cb_pool);
+	image_loader loader{device, physical_device, queue, queue_family_index};
+	loader_context ctx{parent_path, name, asset, physical_device, device, queue, loader};
 
 #ifndef NDEBUG
 	if (auto error = fastgltf::validate(asset); error != fastgltf::Error::None)
-		throw std::runtime_error(std::string(fastgltf::getErrorMessage(error)));
+		throw std::system_error((int)error, fastgltf_error_category);
 #endif
 
 	// Load all buffers from URIs
@@ -772,7 +1111,7 @@ entt::registry scene_loader::operator()(const std::filesystem::path & gltf_path)
 	gpu_buffer staging_buffer(physical_device_properties, asset);
 
 	// Load all textures
-	auto textures = ctx.load_all_textures();
+	auto textures = ctx.load_all_textures(gltf_texture_cache, progress_cb);
 
 	// Load all materials
 	auto materials = ctx.load_all_materials(textures, staging_buffer, *default_material);
@@ -781,7 +1120,11 @@ entt::registry scene_loader::operator()(const std::filesystem::path & gltf_path)
 	auto meshes = ctx.load_all_meshes(materials, staging_buffer);
 
 	// Load all nodes
-	entt::registry loaded_scene = ctx.load_all_nodes(meshes);
+	auto loaded_scene = std::make_shared<entt::registry>();
+	auto node_entities = ctx.load_all_nodes(*loaded_scene, meshes);
+
+	// Load animations
+	ctx.load_all_animations(*loaded_scene, node_entities);
 
 	// Copy the staging buffer to the GPU
 	spdlog::debug("Uploading scene data ({} bytes) to GPU memory", staging_buffer.size());
@@ -796,45 +1139,167 @@ entt::registry scene_loader::operator()(const std::filesystem::path & gltf_path)
 	return loaded_scene;
 }
 
-template <typename T>
-void copy_components(entt::registry & scene, const entt::registry & prefab, const std::unordered_map<entt::entity, entt::entity> & entity_map)
+struct cache_entry
 {
-	for (const auto & [entity, component]: prefab.view<T>().each())
-	{
-		scene.emplace<T>(entity_map.at(entity), component);
-	}
+	std::string filename;
+	int64_t timestamp = 0;
+	int64_t size = 0;
+};
+
+static cache_entry read_cache_entry(const std::filesystem::path & path)
+{
+	cache_entry entry;
+	std::string json = utils::read_whole_file<std::string>(path / "index.json");
+	simdjson::dom::parser parser;
+	simdjson::dom::element root = parser.parse(json);
+
+	if (auto val = root["filename"]; val.is_string())
+		entry.filename = val.get_string().value();
+
+	if (auto val = root["size"]; val.is_int64())
+		entry.size = val.get_int64();
+
+	if (auto val = root["timestamp"]; val.is_int64())
+		entry.timestamp = val.get_int64();
+
+	return entry;
 }
 
-void scene_loader::add_prefab(entt::registry & scene, const entt::registry & prefab, entt::entity root)
+static void write_cache_entry(const std::filesystem::path & path, const cache_entry & entry)
 {
-	assert(scene.valid(root) or root == entt::null);
+	std::ofstream json{path / "index.json"};
+	json << "{\"filename\":" << json_string(entry.filename);
+	json << ",\"size\":" << entry.size;
 
-	auto prefab_entities = prefab.view<entt::entity>();
-
-	std::vector<entt::entity> scene_entities{prefab_entities.size()};
-	scene.create(scene_entities.begin(), scene_entities.end());
-
-	std::unordered_map<entt::entity, entt::entity> entity_map; // key: prefab entity, value: scene entity
-
-	entity_map.emplace(entt::null, root);
-	for (auto [prefab_entity, scene_entity]: std::ranges::zip_view(prefab_entities, scene_entities))
-		entity_map.emplace(prefab_entity, scene_entity);
-
-	copy_components<components::node>(scene, prefab, entity_map);
-
-	// update links
-	for (auto [prefab_entity, scene_entity]: entity_map)
+	// TODO get a timestamp for assets
+	if (not entry.filename.starts_with("assets://"))
 	{
-		if (prefab_entity == entt::null)
-			continue;
+		auto mtime = std::chrono::file_clock::to_sys(std::filesystem::last_write_time(entry.filename));
+		auto timestamp = std::chrono::duration_cast<std::chrono::seconds>(mtime.time_since_epoch()).count();
+		auto size = entry.size;
 
-		auto & node = scene.get<components::node>(scene_entity);
+		json << ",\"timestamp\":" << timestamp;
+	}
+	json << "}";
+}
 
-		node.parent = entity_map.at(node.parent);
+// Returns false if the cache is out of date and must be deleted
+static bool check_cache_entry(const std::filesystem::path & path)
+{
+	try
+	{
+		cache_entry entry = read_cache_entry(path);
 
-		for (auto & joint: node.joints)
+		utils::mapped_file file{entry.filename};
+		int64_t real_size = file.size();
+
+		if (real_size != entry.size)
+			return false;
+
+		// TODO get a timestamp for assets
+		if (not entry.filename.starts_with("assets://"))
 		{
-			joint.first = entity_map.at(joint.first);
+			auto mtime = std::chrono::file_clock::to_sys(std::filesystem::last_write_time(entry.filename));
+			auto timestamp = std::chrono::duration_cast<std::chrono::seconds>(mtime.time_since_epoch()).count();
+
+			if (timestamp != entry.timestamp)
+				return false;
 		}
+	}
+	catch (...)
+	{
+		return false;
+	}
+
+	return true;
+}
+
+std::shared_ptr<entt::registry> scene_loader::operator()(
+        const std::filesystem::path & gltf_path,
+        std::function<void(float)> progress_cb)
+{
+	utils::mapped_file gltf_file(gltf_path);
+	std::filesystem::path gltf_texture_cache;
+
+	if (texture_cache != "")
+	{
+		// FNV1a hash
+		static const uint64_t fnv_prime = 0x100000001b3;
+		static const uint64_t fnv_offset_basis = 0xcbf29ce484222325;
+		uint64_t hash = fnv_offset_basis;
+		for (char c: gltf_path.native())
+			hash = (hash ^ c) * fnv_prime;
+
+		gltf_texture_cache = texture_cache / fmt::format("{:016x}", hash);
+
+		bool create_cache = false;
+		try
+		{
+			if (std::filesystem::exists(gltf_texture_cache))
+			{
+				if (not std::filesystem::is_directory(gltf_texture_cache))
+				{
+					std::filesystem::remove(gltf_texture_cache);
+					std::filesystem::create_directories(gltf_texture_cache);
+					spdlog::debug("\"{}\" is not a directory: creating cache", gltf_texture_cache.native());
+					create_cache = true;
+				}
+				else if (not check_cache_entry(gltf_texture_cache))
+				{
+					std::error_code ec;
+					std::filesystem::remove_all(gltf_texture_cache, ec);
+					std::filesystem::create_directories(gltf_texture_cache);
+					spdlog::debug("\"{}\" is out of date: recreating cache", gltf_texture_cache.native());
+					create_cache = true;
+				}
+			}
+			else
+			{
+				std::filesystem::create_directories(gltf_texture_cache);
+				spdlog::debug("\"{}\" does not exist: creating cache", gltf_texture_cache.native());
+				create_cache = true;
+			}
+		}
+		catch (std::exception & e)
+		{
+			spdlog::warn("Cannot create texture cache directory {}: {}", gltf_texture_cache.native(), e.what());
+			gltf_texture_cache = "";
+			create_cache = false;
+		}
+
+		if (create_cache)
+		{
+			write_cache_entry(
+			        gltf_texture_cache,
+			        cache_entry{
+			                .filename = gltf_path.native(),
+			                .size = (int64_t)gltf_file.size(),
+			        });
+		}
+	}
+
+	return (*this)(gltf_file, gltf_path.filename(), gltf_path.parent_path(), gltf_texture_cache, progress_cb);
+}
+
+void scene_loader::clear_texture_cache()
+{
+	try
+	{
+		for (const std::filesystem::directory_entry & entry: std::filesystem::directory_iterator{texture_cache})
+		{
+			if (not entry.is_directory())
+				continue;
+
+			if (not check_cache_entry(entry))
+			{
+				spdlog::info("{}: removing cache directory", entry.path().native());
+				std::error_code ec;
+				std::filesystem::remove_all(entry.path(), ec);
+			}
+		}
+	}
+	catch (...)
+	{
+		// Ignore errors if the texture cache directory does not exist
 	}
 }

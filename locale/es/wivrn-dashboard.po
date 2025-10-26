@@ -8,8 +8,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: WiVRn-dashboard\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2025-10-11 19:53+0200\n"
-"PO-Revision-Date: 2025-10-11 20:58+0200\n"
+"POT-Creation-Date: 2025-10-20 20:55+0200\n"
+"PO-Revision-Date: 2025-10-21 01:28+0200\n"
 "Last-Translator: Álvaro De Quinta <blackcherry@danwin1210.de>\n"
 "Language-Team: Spanish\n"
 "Language: es\n"
@@ -82,20 +82,14 @@ msgstr "Comprobando la última versión..."
 
 #: dashboard/qml/ApkInstallPage.qml:43 dashboard/qml/WizardPage.qml:198
 #, kde-format
-msgid "No precompiled APK is available for this version."
-msgstr "No hay ningún APK precompilado disponible para esta versión."
-
-#: dashboard/qml/ApkInstallPage.qml:45 dashboard/qml/Main.qml:287
-#: dashboard/qml/Main.qml:370
-#, kde-format
-msgid "ADB is not installed."
-msgstr "ADB no está instalado."
+msgid "No APK is available for this version"
+msgstr "No hay ningún APK disponible para esta versión"
 
 #: dashboard/qml/ApkInstallPage.qml:47
 #, kde-format
-msgid "Connect a headset and make sure developer mode is enabled."
+msgid "Connect a headset and make sure developer mode is enabled"
 msgstr ""
-"Conecta un visor y asegúrate de que el modo desarrollador esté activado."
+"Conecta un visor y asegúrate de que el modo desarrollador esté activado"
 
 #: dashboard/qml/ApkInstallPage.qml:51 dashboard/qml/WizardPage.qml:204
 #, kde-format
@@ -234,8 +228,8 @@ msgstr "Estadísticas del visor"
 
 #: dashboard/qml/Main.qml:129
 #, kde-format
-msgid "The server does not have CAP_SYS_NICE capabilities."
-msgstr "El servidor no tiene capacidades CAP_SYS_NICE."
+msgid "The server does not have CAP_SYS_NICE capabilities"
+msgstr "El servidor no tiene capacidades CAP_SYS_NICE"
 
 #: dashboard/qml/Main.qml:136 dashboard/qml/Main.qml:150
 #, kde-format
@@ -244,13 +238,13 @@ msgstr "Arreglarlo"
 
 #: dashboard/qml/Main.qml:144
 #, kde-format
-msgid "Firewall may not allow port 9757."
-msgstr "El firewall podría no permitir el puerto 9757."
+msgid "Firewall may not allow port 9757"
+msgstr "El firewall podría no permitir el puerto 9757"
 
 #: dashboard/qml/Main.qml:159
 #, kde-format
-msgid "The CAP_SYS_NICE capability will be used when the server is restarted."
-msgstr "La capacidad CAP_SYS_NICE se utilizará cuando el servidor se reinicie."
+msgid "The CAP_SYS_NICE capability will be used when the server is restarted"
+msgstr "La capacidad CAP_SYS_NICE se utilizará cuando el servidor se reinicie"
 
 #: dashboard/qml/Main.qml:165
 #, kde-format
@@ -324,9 +318,9 @@ msgstr "Conectar por USB"
 
 #: dashboard/qml/Main.qml:289
 #, kde-format
-msgid "No headset is connected or your headset is not in developer mode."
+msgid "No headset is connected or your headset is not in developer mode"
 msgstr ""
-"No hay ningún visor conectado o tu visor no está en modo desarrollador."
+"No hay ningún visor conectado o tu visor no está en modo desarrollador"
 
 #: dashboard/qml/Main.qml:297
 #, kde-format
@@ -927,11 +921,11 @@ msgstr "Solución de problemas"
 #: dashboard/qml/WizardPage.qml:393
 #, kde-format
 msgid ""
-"If the server is not visible or the connection fails, check that port 5353 "
+"If the server is not visible or the connection fails, check that ports 5353 "
 "(UDP) and 9757 (TCP and UDP) are open in your firewall."
 msgstr ""
-"Si el servidor no es visible o la conexión falla, verifica que el puerto "
-"5353 (UDP) y el 9757 (TCP y UDP) estén abiertos en tu firewall."
+"Si el servidor no es visible o la conexión falla, comprueba que los puertos "
+"5353 (UDP) y 9757 (TCP y UDP) estén abiertos en tu firewall."
 
 #: dashboard/qml/WizardPage.qml:406
 #, kde-format
@@ -976,3 +970,11 @@ msgstr "xrizer"
 #, kde-format
 msgid "Open Composite"
 msgstr "Open Composite"
+
+#, kde-format
+#~ msgid ""
+#~ "If the server is not visible or the connection fails, check that port "
+#~ "5353 (UDP) and 9757 (TCP and UDP) are open in your firewall."
+#~ msgstr ""
+#~ "Si el servidor no es visible o la conexión falla, verifica que el puerto "
+#~ "5353 (UDP) y el 9757 (TCP y UDP) estén abiertos en tu firewall."

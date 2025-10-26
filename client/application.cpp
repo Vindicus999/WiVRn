@@ -29,6 +29,7 @@
 #include "utils/i18n.h"
 #include "vk/check.h"
 #include "wifi_lock.h"
+#include "wivrn_config.h"
 #include "xr/actionset.h"
 #include "xr/check.h"
 #include "xr/htc_exts.h"
@@ -759,8 +760,10 @@ void application::initialize_vulkan()
 
 	vk_device_extensions.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
 	vk_device_extensions.push_back(VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME);
+	vk_device_extensions.push_back(VK_KHR_MULTIVIEW_EXTENSION_NAME);
 	optional_device_extensions.emplace(VK_IMG_FILTER_CUBIC_EXTENSION_NAME);
 	optional_device_extensions.emplace(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
+	optional_device_extensions.emplace(VK_EXT_FRAGMENT_DENSITY_MAP_EXTENSION_NAME);
 
 #ifdef __ANDROID__
 	vk_device_extensions.push_back(VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME);
@@ -883,6 +886,9 @@ void application::initialize_vulkan()
 	        },
 	        vk::PhysicalDeviceTimelineSemaphoreFeaturesKHR{
 	                .timelineSemaphore = true,
+	        },
+	        vk::PhysicalDeviceMultiviewFeaturesKHR{
+	                .multiview = true,
 	        },
 	};
 
@@ -1215,6 +1221,10 @@ void application::initialize()
 	opt_extensions.push_back(XR_EXT_USER_PRESENCE_EXTENSION_NAME);
 	opt_extensions.push_back(XR_KHR_VISIBILITY_MASK_EXTENSION_NAME);
 	opt_extensions.push_back(XR_FB_COMPOSITION_LAYER_SETTINGS_EXTENSION_NAME);
+	opt_extensions.push_back(XR_FB_SWAPCHAIN_UPDATE_STATE_EXTENSION_NAME);
+	opt_extensions.push_back(XR_FB_FOVEATION_EXTENSION_NAME);
+	opt_extensions.push_back(XR_FB_FOVEATION_CONFIGURATION_EXTENSION_NAME);
+	opt_extensions.push_back(XR_FB_FOVEATION_VULKAN_EXTENSION_NAME);
 
 	for (const auto & i: interaction_profiles)
 		opt_extensions.insert(opt_extensions.end(), i.required_extensions.begin(), i.required_extensions.end());
@@ -1369,7 +1379,7 @@ void application::load_locale()
 	std::locale::global(loc);
 }
 
-std::pair<XrAction, XrActionType> application::get_action(const std::string & requested_name)
+std::pair<XrAction, XrActionType> application::get_action(std::string_view requested_name)
 {
 	for (const auto & [action, type, name]: instance().actions)
 	{
@@ -1567,15 +1577,21 @@ void application::loop()
 	poll_events();
 
 	auto scene = current_scene();
-	if (!is_session_running())
+	if (not is_session_running())
 	{
-		if (scene)
+		if (not timestamp_unsynchronized)
+			timestamp_unsynchronized = std::chrono::steady_clock::now();
+
+		if (scene and std::chrono::steady_clock::now() - *timestamp_unsynchronized > 3s)
 			scene->set_focused(false);
+
 		// Throttle loop since xrWaitFrame won't be called.
 		std::this_thread::sleep_for(250ms);
 	}
 	else
 	{
+		timestamp_unsynchronized.reset();
+
 		if (scene)
 		{
 			poll_actions();
@@ -1598,6 +1614,7 @@ void application::loop()
 		}
 		else
 		{
+			spdlog::info("Last scene was popped");
 			exit_requested = true;
 		}
 	}
@@ -1626,6 +1643,7 @@ void application::run()
 				exit_requested = true;
 			}
 		}
+		spdlog::info("Exiting application_thread");
 	});
 
 	// Read all pending events.
@@ -1644,9 +1662,12 @@ void application::run()
 
 		if (app_info.native_app->destroyRequested)
 		{
+			spdlog::info("app_info.native_app->destroyRequested is true");
 			exit_requested = true;
 		}
 	}
+
+	spdlog::info("Exiting normally");
 
 	application_thread.join();
 }
@@ -1844,6 +1865,7 @@ void application::poll_events()
 		switch (e.header.type)
 		{
 			case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: {
+				spdlog::info("Received XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING");
 				exit_requested = true;
 			}
 			break;

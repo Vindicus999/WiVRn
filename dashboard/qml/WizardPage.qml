@@ -195,7 +195,7 @@ Kirigami.ScrollablePage {
 
             BetterLabel {
                 Layout.fillWidth: true
-                text: i18n("No precompiled APK is available for this version.")
+                text: i18n("No APK is available for this version")
                 visible: !ApkInstaller.busy && !ApkInstaller.apkAvailable
             }
 
@@ -390,7 +390,7 @@ Kirigami.ScrollablePage {
             }
             BetterLabel {
                 Layout.fillWidth: true
-                text: i18n("If the server is not visible or the connection fails, check that port 5353 (UDP) and 9757 (TCP and UDP) are open in your firewall.")
+                text: i18n("If the server is not visible or the connection fails, check that ports 5353 (UDP) and 9757 (TCP and UDP) are open in your firewall.")
                 Layout.topMargin: Kirigami.Units.largeSpacing
             }
             Item {
