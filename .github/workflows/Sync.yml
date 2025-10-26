@@ -26,7 +26,7 @@ jobs:
 
       - name: Rebase master -> apk-build
         run: |
-          git checkout apk-build
+          git switch apk-build
           git rebase master
           git push origin apk-build
 
