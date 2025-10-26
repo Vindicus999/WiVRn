@@ -24,7 +24,7 @@ jobs:
       - name: Checkout stuff
         uses: actions/checkout@master
 
-     - name: Add Upstream Remote
+      - name: Add Upstream Remote
         run: git remote add upstream ${{ env.UPSTREAM_URL }}
 
       - name: Fetch Upstream Changes
