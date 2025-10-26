@@ -24,21 +24,10 @@ jobs:
       - name: Checkout stuff
         uses: actions/checkout@master
 
-      - name: Checkout Forked Repository
-        uses: actions/checkout@v3
-        with:
-          token: ${{ env.WORKFLOW_TOKEN }}
-
-      - name: Add Upstream Remote
-        run: git remote add upstream ${{ env.UPSTREAM_URL }}
-
-      - name: Fetch Upstream Changes
-        run: git fetch upstream
-
       - name: Rebase master -> apk-build
         run: |
           git checkout apk-build
-          git rebase upstream/master
+          git rebase master
           git push origin apk-build
 
       - name: Merge sneed -> apk-build
