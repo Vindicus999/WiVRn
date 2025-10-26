@@ -973,7 +973,9 @@ void scenes::lobby::on_focused()
 	        vps,
 	        image_cache);
 
-	std::string image = "wivrn";
+	auto t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+	auto tm = std::localtime(&t);
+	std::string image = tm->tm_mon == 5 ? "wivrn-pride" : "wivrn";
 
 	about_picture = imgui_ctx->load_texture("assets://" + image + ".ktx2");
 
