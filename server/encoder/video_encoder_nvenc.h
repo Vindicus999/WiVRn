@@ -40,7 +40,9 @@ private:
 	std::shared_ptr<video_encoder_nvenc_shared_state> shared_state;
 
 	void * session_handle = nullptr;
-	NV_ENC_OUTPUT_PTR bitstreamBuffer;
+	NV_ENC_OUTPUT_PTR outputBuffer;
+	NV_ENC_CONFIG config;
+	NV_ENC_INITIALIZE_PARAMS init_params;
 
 	struct in_t
 	{
@@ -51,8 +53,11 @@ private:
 	std::array<in_t, num_slots> in;
 
 	float fps;
-	int bitrate;
+	uint64_t bitrate;
 	int bytesPerPixel = 1;
+
+	NV_ENC_RC_PARAMS get_rc_params(uint64_t bitrate, float framerate);
+	void set_init_params_fps(float framerate);
 
 public:
 	video_encoder_nvenc(wivrn_vk_bundle & vk, encoder_settings & settings, float fps, uint8_t stream_idx);
