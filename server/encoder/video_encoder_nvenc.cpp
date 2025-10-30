@@ -130,6 +130,22 @@ static void check_profile_guid_supported(std::shared_ptr<video_encoder_nvenc_sha
 	}
 }
 
+NV_ENC_RC_PARAMS video_encoder_nvenc::get_rc_params(uint64_t bitrate, float framerate)
+{
+	return {
+	        .rateControlMode = NV_ENC_PARAMS_RC_CBR,
+	        .averageBitRate = static_cast<uint32_t>(bitrate),
+	        .vbvBufferSize = static_cast<uint32_t>(bitrate / framerate),
+	        .vbvInitialDelay = static_cast<uint32_t>(bitrate / framerate),
+	        .multiPass = NV_ENC_TWO_PASS_QUARTER_RESOLUTION};
+}
+
+void video_encoder_nvenc::set_init_params_fps(float framerate)
+{
+	init_params.frameRateNum = framerate;
+	init_params.frameRateDen = 1;
+}
+
 video_encoder_nvenc::video_encoder_nvenc(
         wivrn_vk_bundle & vk,
         encoder_settings & settings,
@@ -157,13 +173,13 @@ video_encoder_nvenc::video_encoder_nvenc(
 	        },
 	};
 
-	NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS params_ex = {
+	NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS session_params = {
 	        .version = NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS_VER,
 	        .deviceType = NV_ENC_DEVICE_TYPE_CUDA,
 	        .device = shared_state->cuda,
 	        .apiVersion = NVENCAPI_VERSION,
 	};
-	NVENC_CHECK_NOENCODER(shared_state->fn.nvEncOpenEncodeSessionEx(&params_ex, &session_handle));
+	NVENC_CHECK_NOENCODER(shared_state->fn.nvEncOpenEncodeSessionEx(&session_params, &session_handle));
 
 	auto encodeGUID = encode_guid(settings.codec);
 	check_encode_guid_supported(shared_state, session_handle, encodeGUID);
@@ -182,18 +198,13 @@ video_encoder_nvenc::video_encoder_nvenc(
 	        }};
 	NVENC_CHECK(shared_state->fn.nvEncGetEncodePresetConfigEx(session_handle, encodeGUID, presetGUID, tuningInfo, &preset_config));
 
-	NV_ENC_CONFIG params = preset_config.presetCfg;
+	config = preset_config.presetCfg;
 
 	// Bitrate control
-	params.rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR;
-	params.rcParams.averageBitRate = bitrate;
-	params.rcParams.maxBitRate = bitrate;
-	params.rcParams.vbvBufferSize = bitrate / fps;
-	params.rcParams.vbvInitialDelay = bitrate / fps;
-	params.rcParams.multiPass = NV_ENC_TWO_PASS_QUARTER_RESOLUTION;
+	config.rcParams = get_rc_params(bitrate, fps);
 
-	params.gopLength = NVENC_INFINITE_GOPLENGTH;
-	params.frameIntervalP = 1;
+	config.gopLength = NVENC_INFINITE_GOPLENGTH;
+	config.frameIntervalP = 1;
 
 	NV_ENC_BIT_DEPTH bitDepth = NV_ENC_BIT_DEPTH_8;
 	if (settings.bit_depth == 10)
@@ -223,48 +234,48 @@ video_encoder_nvenc::video_encoder_nvenc(
 			if (bitDepth != NV_ENC_BIT_DEPTH_8)
 				throw std::runtime_error("nvenc: selected codec only supports 8-bit encoding");
 
-			params.encodeCodecConfig.h264Config.repeatSPSPPS = 1;
-			params.encodeCodecConfig.h264Config.maxNumRefFrames = 0;
-			params.encodeCodecConfig.h264Config.idrPeriod = NVENC_INFINITE_GOPLENGTH;
-			params.encodeCodecConfig.h264Config.h264VUIParameters.videoFullRangeFlag = 1;
+			config.encodeCodecConfig.h264Config.repeatSPSPPS = 1;
+			config.encodeCodecConfig.h264Config.maxNumRefFrames = 0;
+			config.encodeCodecConfig.h264Config.idrPeriod = NVENC_INFINITE_GOPLENGTH;
+			config.encodeCodecConfig.h264Config.h264VUIParameters.videoFullRangeFlag = 1;
 
 			break;
 		case video_codec::h265:
 			if (bitDepth == NV_ENC_BIT_DEPTH_10)
 			{
-				params.profileGUID = NV_ENC_HEVC_PROFILE_MAIN10_GUID;
-				check_profile_guid_supported(shared_state, session_handle, encodeGUID, params.profileGUID, "GPU doesn't support 10-bit depth with H.265 codec.");
+				config.profileGUID = NV_ENC_HEVC_PROFILE_MAIN10_GUID;
+				check_profile_guid_supported(shared_state, session_handle, encodeGUID, config.profileGUID, "GPU doesn't support 10-bit depth with H.265 codec.");
 			}
 
-			params.encodeCodecConfig.hevcConfig.inputBitDepth = bitDepth;
-			params.encodeCodecConfig.hevcConfig.outputBitDepth = bitDepth;
+			config.encodeCodecConfig.hevcConfig.inputBitDepth = bitDepth;
+			config.encodeCodecConfig.hevcConfig.outputBitDepth = bitDepth;
 
-			params.encodeCodecConfig.hevcConfig.repeatSPSPPS = 1;
-			params.encodeCodecConfig.hevcConfig.maxNumRefFramesInDPB = 0;
-			params.encodeCodecConfig.hevcConfig.idrPeriod = NVENC_INFINITE_GOPLENGTH;
-			params.encodeCodecConfig.hevcConfig.hevcVUIParameters.videoFullRangeFlag = 1;
+			config.encodeCodecConfig.hevcConfig.repeatSPSPPS = 1;
+			config.encodeCodecConfig.hevcConfig.maxNumRefFramesInDPB = 0;
+			config.encodeCodecConfig.hevcConfig.idrPeriod = NVENC_INFINITE_GOPLENGTH;
+			config.encodeCodecConfig.hevcConfig.hevcVUIParameters.videoFullRangeFlag = 1;
 
 			break;
 		case video_codec::av1:
 			if (bitDepth == NV_ENC_BIT_DEPTH_10)
 			{
-				params.profileGUID = NV_ENC_AV1_PROFILE_MAIN_GUID;
-				check_profile_guid_supported(shared_state, session_handle, encodeGUID, params.profileGUID, "GPU doesn't support 10-bit depth with AV1 codec.");
+				config.profileGUID = NV_ENC_AV1_PROFILE_MAIN_GUID;
+				check_profile_guid_supported(shared_state, session_handle, encodeGUID, config.profileGUID, "GPU doesn't support 10-bit depth with AV1 codec.");
 			}
 
-			params.encodeCodecConfig.av1Config.inputBitDepth = bitDepth;
-			params.encodeCodecConfig.av1Config.outputBitDepth = bitDepth;
+			config.encodeCodecConfig.av1Config.inputBitDepth = bitDepth;
+			config.encodeCodecConfig.av1Config.outputBitDepth = bitDepth;
 
-			params.encodeCodecConfig.av1Config.repeatSeqHdr = 1;
-			params.encodeCodecConfig.av1Config.maxNumRefFramesInDPB = 0;
-			params.encodeCodecConfig.av1Config.idrPeriod = NVENC_INFINITE_GOPLENGTH;
+			config.encodeCodecConfig.av1Config.repeatSeqHdr = 1;
+			config.encodeCodecConfig.av1Config.maxNumRefFramesInDPB = 0;
+			config.encodeCodecConfig.av1Config.idrPeriod = NVENC_INFINITE_GOPLENGTH;
 
 			break;
 		case video_codec::raw:
 			throw std::runtime_error("raw codec not supported for nvenc");
 	}
 
-	NV_ENC_INITIALIZE_PARAMS params2{
+	init_params = {
 	        .version = NV_ENC_INITIALIZE_PARAMS_VER,
 	        .encodeGUID = encodeGUID,
 	        .presetGUID = presetGUID,
@@ -272,19 +283,20 @@ video_encoder_nvenc::video_encoder_nvenc(
 	        .encodeHeight = settings.video_height,
 	        .darWidth = settings.video_width,
 	        .darHeight = settings.video_height,
-	        .frameRateNum = (uint32_t)fps,
-	        .frameRateDen = 1,
 	        .enableEncodeAsync = 0,
 	        .enablePTD = 1,
-	        .encodeConfig = &params,
+	        .encodeConfig = &config,
 	        .tuningInfo = tuningInfo};
-	NVENC_CHECK(shared_state->fn.nvEncInitializeEncoder(session_handle, &params2));
 
-	NV_ENC_CREATE_BITSTREAM_BUFFER params3{
+	set_init_params_fps(fps);
+
+	NVENC_CHECK(shared_state->fn.nvEncInitializeEncoder(session_handle, &init_params));
+
+	NV_ENC_CREATE_BITSTREAM_BUFFER out_buf_params{
 	        .version = NV_ENC_CREATE_BITSTREAM_BUFFER_VER,
 	};
-	NVENC_CHECK(shared_state->fn.nvEncCreateBitstreamBuffer(session_handle, &params3));
-	bitstreamBuffer = params3.bitstreamBuffer;
+	NVENC_CHECK(shared_state->fn.nvEncCreateBitstreamBuffer(session_handle, &out_buf_params));
+	outputBuffer = out_buf_params.bitstreamBuffer;
 
 	vk::DeviceSize buffer_size = rect.extent.width * settings.video_height * bytesPerPixel * 3 / 2;
 
@@ -329,23 +341,23 @@ video_encoder_nvenc::video_encoder_nvenc(
 		CU_CHECK(shared_state->cuda_fn->cuCtxPushCurrent(shared_state->cuda));
 		{
 			CUexternalMemory extmem;
-			CUDA_EXTERNAL_MEMORY_HANDLE_DESC param{
+			CUDA_EXTERNAL_MEMORY_HANDLE_DESC mem_handle_params{
 			        .type = CU_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD,
 			        .handle = {.fd = fd},
 			        .size = memory_req.size,
 			        .flags = 0,
 			};
-			CU_CHECK(shared_state->cuda_fn->cuImportExternalMemory(&extmem, &param));
+			CU_CHECK(shared_state->cuda_fn->cuImportExternalMemory(&extmem, &mem_handle_params));
 
-			CUDA_EXTERNAL_MEMORY_BUFFER_DESC map_param{
+			CUDA_EXTERNAL_MEMORY_BUFFER_DESC ext_map_params{
 			        .offset = 0,
 			        .size = buffer_size,
 			        .flags = 0,
 			};
-			CU_CHECK(shared_state->cuda_fn->cuExternalMemoryGetMappedBuffer(&frame, extmem, &map_param));
+			CU_CHECK(shared_state->cuda_fn->cuExternalMemoryGetMappedBuffer(&frame, extmem, &ext_map_params));
 		}
 
-		NV_ENC_REGISTER_RESOURCE param3{
+		NV_ENC_REGISTER_RESOURCE resource_params{
 		        .version = NV_ENC_REGISTER_RESOURCE_VER,
 		        .resourceType = NV_ENC_INPUT_RESOURCE_TYPE_CUDADEVICEPTR,
 		        .width = settings.video_width,
@@ -355,8 +367,8 @@ video_encoder_nvenc::video_encoder_nvenc(
 		        .bufferFormat = (bitDepth == NV_ENC_BIT_DEPTH_10 ? NV_ENC_BUFFER_FORMAT_YUV420_10BIT : NV_ENC_BUFFER_FORMAT_NV12),
 		        .bufferUsage = NV_ENC_INPUT_IMAGE,
 		};
-		NVENC_CHECK(shared_state->fn.nvEncRegisterResource(session_handle, &param3));
-		i.nvenc_resource = param3.registeredResource;
+		NVENC_CHECK(shared_state->fn.nvEncRegisterResource(session_handle, &resource_params));
+		i.nvenc_resource = resource_params.registeredResource;
 	}
 	CU_CHECK(shared_state->cuda_fn->cuCtxPopCurrent(NULL));
 }
@@ -412,12 +424,54 @@ std::optional<video_encoder::data> video_encoder_nvenc::encode(bool idr, std::ch
 {
 	CU_CHECK(shared_state->cuda_fn->cuCtxPushCurrent(shared_state->cuda));
 
-	NV_ENC_MAP_INPUT_RESOURCE param4{};
-	param4.version = NV_ENC_MAP_INPUT_RESOURCE_VER;
-	param4.registeredResource = in[slot].nvenc_resource;
-	NVENC_CHECK(shared_state->fn.nvEncMapInputResource(session_handle, &param4));
+	auto new_bitrate = pending_bitrate.exchange(0);
+	auto new_framerate = pending_framerate.exchange(0);
 
-	NV_ENC_PIC_PARAMS param{
+	if (new_bitrate || new_framerate)
+	{
+		if (new_framerate)
+			U_LOG_I("nvenc: reconfiguring framerate, new value: %f", new_framerate);
+		else
+			new_framerate = fps;
+
+		if (new_bitrate)
+			U_LOG_I("nvenc: reconfiguring bitrate, new value: %d", new_bitrate);
+		else
+			new_bitrate = bitrate;
+
+		config.rcParams = get_rc_params(new_bitrate, new_framerate);
+		set_init_params_fps(new_framerate);
+
+		NV_ENC_RECONFIGURE_PARAMS reconfig_params{
+		        .version = NV_ENC_RECONFIGURE_PARAMS_VER,
+		        .reInitEncodeParams = init_params,
+		        .resetEncoder = 1,
+		        .forceIDR = 1};
+
+		try
+		{
+			NVENC_CHECK(shared_state->fn.nvEncReconfigureEncoder(session_handle, &reconfig_params));
+			fps = new_framerate;
+			bitrate = new_bitrate;
+			idr = true;
+
+			U_LOG_I("nvenc: reconfiguring succeeded.");
+		}
+		catch (const std::exception & e)
+		{
+			U_LOG_E("nvenc: reconfiguring failed.");
+			config.rcParams = get_rc_params(bitrate, fps);
+			set_init_params_fps(fps);
+		}
+	}
+
+	NV_ENC_MAP_INPUT_RESOURCE inp_resource_params{
+	        .version = NV_ENC_MAP_INPUT_RESOURCE_VER,
+	        .registeredResource = in[slot].nvenc_resource};
+
+	NVENC_CHECK(shared_state->fn.nvEncMapInputResource(session_handle, &inp_resource_params));
+
+	NV_ENC_PIC_PARAMS frame_params{
 	        .version = NV_ENC_PIC_PARAMS_VER,
 	        .inputWidth = rect.extent.width,
 	        .inputHeight = rect.extent.height,
@@ -425,26 +479,26 @@ std::optional<video_encoder::data> video_encoder_nvenc::encode(bool idr, std::ch
 	        .encodePicFlags = uint32_t(idr ? NV_ENC_PIC_FLAG_FORCEIDR | NV_ENC_PIC_FLAG_OUTPUT_SPSPPS : 0),
 	        .frameIdx = 0,
 	        .inputTimeStamp = 0,
-	        .inputBuffer = param4.mappedResource,
-	        .outputBitstream = bitstreamBuffer,
-	        .bufferFmt = param4.mappedBufferFmt,
+	        .inputBuffer = inp_resource_params.mappedResource,
+	        .outputBitstream = outputBuffer,
+	        .bufferFmt = inp_resource_params.mappedBufferFmt,
 	        .pictureStruct = NV_ENC_PIC_STRUCT_FRAME,
 	};
-	NVENC_CHECK(shared_state->fn.nvEncEncodePicture(session_handle, &param));
+	NVENC_CHECK(shared_state->fn.nvEncEncodePicture(session_handle, &frame_params));
 
-	NV_ENC_LOCK_BITSTREAM param2{
+	NV_ENC_LOCK_BITSTREAM buf_lock_params{
 	        .version = NV_ENC_LOCK_BITSTREAM_VER,
 	        .doNotWait = 0,
-	        .outputBitstream = bitstreamBuffer,
+	        .outputBitstream = outputBuffer,
 	};
-	NVENC_CHECK(shared_state->fn.nvEncLockBitstream(session_handle, &param2));
+	NVENC_CHECK(shared_state->fn.nvEncLockBitstream(session_handle, &buf_lock_params));
 
 	CU_CHECK(shared_state->cuda_fn->cuCtxPopCurrent(NULL));
 	return data{
 	        .encoder = this,
-	        .span = std::span((uint8_t *)param2.bitstreamBufferPtr, param2.bitstreamSizeInBytes),
-	        .mem = std::shared_ptr<void>(param2.bitstreamBufferPtr, [this](void *) {
-		        NVENCSTATUS status = shared_state->fn.nvEncUnlockBitstream(session_handle, bitstreamBuffer);
+	        .span = std::span((uint8_t *)buf_lock_params.bitstreamBufferPtr, buf_lock_params.bitstreamSizeInBytes),
+	        .mem = std::shared_ptr<void>(buf_lock_params.bitstreamBufferPtr, [this](void *) {
+		        NVENCSTATUS status = shared_state->fn.nvEncUnlockBitstream(session_handle, outputBuffer);
 		        if (status != NV_ENC_SUCCESS)
 			        U_LOG_E("%s:%d: %d, %s", __FILE__, __LINE__, status, shared_state->fn.nvEncGetLastErrorString(session_handle));
 	        }),
@@ -475,14 +529,14 @@ std::array<int, 2> video_encoder_nvenc::get_max_size(video_codec codec)
 		             {NV_ENC_CAPS_WIDTH_MAX, &result[1]},
 		     })
 		{
-			NV_ENC_CAPS_PARAM cap_param{
+			NV_ENC_CAPS_PARAM cap_params{
 			        .version = NV_ENC_CAPS_PARAM_VER,
 			        .capsToQuery = NV_ENC_CAPS_WIDTH_MAX,
 			};
 
 			check_encode_guid_supported(state, session_handle, encodeGUID);
 
-			NVENCSTATUS status = state->fn.nvEncGetEncodeCaps(session_handle, encodeGUID, &cap_param, res);
+			NVENCSTATUS status = state->fn.nvEncGetEncodeCaps(session_handle, encodeGUID, &cap_params, res);
 			if (status != NV_ENC_SUCCESS)
 			{
 				throw std::runtime_error("nvenc get_max_size: failed to get caps");
