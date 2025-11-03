@@ -15,17 +15,11 @@ Kirigami.ScrollablePage {
 
     flickable.interactive: false // Make sure the Kirigami.ScrollablePage does not eat the vertical mouse dragging events
 
+    property bool allowUpdates: false // ignore onXXX events until document is loaded
+
     Settings {
         id: config
     }
-
-    Core.Settings {
-        property alias adb_custom: settings.adb_custom
-        property alias adb_location: settings.adb_location
-        property alias show_system_checks: show_system_checks.checked
-    }
-    property bool adb_custom
-    property string adb_location
 
     ColumnLayout {
         id: column
@@ -96,7 +90,6 @@ Kirigami.ScrollablePage {
                 Kirigami.FormData.label: i18n("Bitrate:")
                 from: 1
                 to: 200
-                value: config.bitrate
 
                 textFromValue: (value, locale) => i18nc("bitrate", "%1 Mbit/s", value)
                 valueFromText: function (text, locale) {
@@ -150,7 +143,7 @@ Kirigami.ScrollablePage {
                             encoder: Settings.X264
                         }
                     ]
-                    onCurrentIndexChanged: config.encoder = model[currentIndex].encoder
+                    onCurrentIndexChanged: if (settings.allowUpdates) {config.encoder = model[currentIndex].encoder}
                     textRole: "label"
                     Connections {
                         target: config
@@ -190,7 +183,7 @@ Kirigami.ScrollablePage {
                             codec: Settings.Av1
                         }
                     ]
-                    onCurrentIndexChanged: config.codec = model[currentIndex].codec
+                    onCurrentIndexChanged: if (settings.allowUpdates) {config.codec = model[currentIndex].codec}
                     textRole: "label"
 
                     delegate: Controls.ItemDelegate {
@@ -216,6 +209,7 @@ Kirigami.ScrollablePage {
                     enabled: config.can10bit
                     text: i18n("10-bits")
                     checked: config.tenbit
+                    onCheckedChanged: config.tenbit = checked
                 }
                 Kirigami.ContextualHelpButton {
                     toolTipText: i18n("10-bit encoding improves image quality but is not supported by all codecs and hardware")
@@ -272,7 +266,7 @@ Kirigami.ScrollablePage {
                 enabled: adb_custom.checked
                 Controls.TextField {
                     id: adb_location
-                    placeholderText: settings.adb_location
+                    placeholderText: DashboardSettings.adb_location
                     Layout.fillWidth: true
                 }
                 Controls.Button {
@@ -372,6 +366,10 @@ Kirigami.ScrollablePage {
     Component.onCompleted: {
         openvr_libs.init()
         config.load(WivrnServer);
+        // If bitrate was manually set higher, keep the limit
+        bitrate.to = Math.max(bitrate.to, config.bitrate)
+        bitrate.value = config.bitrate
+        settings.allowUpdates = true;
         settings.load();
     }
 
@@ -383,9 +381,11 @@ Kirigami.ScrollablePage {
         } else {
             config.openvr = openvr.value
         }
-        settings.adb_custom = adb_custom.checked;
-        settings.adb_location = adb_location.text;
-        Adb.setPath(adb_custom.checked ? adb_location.text : "adb");
+        DashboardSettings.adb_custom = adb_custom.checked;
+        DashboardSettings.adb_location = adb_location.text;
+        Adb.setPath(DashboardSettings.adb_custom.checked ? adb_location.text : "adb");
+
+        DashboardSettings.show_system_checks = show_system_checks.checked;
 
         config.debugGui = debug_gui.checked;
         config.steamVrLh = steamvr_lh.checked;
@@ -403,8 +403,10 @@ Kirigami.ScrollablePage {
 
         openvr_combobox.load()
 
-        adb_custom.checked = settings.adb_custom;
-        adb_location.text = settings.adb_location;
+        adb_custom.checked = DashboardSettings.adb_custom;
+        adb_location.text = DashboardSettings.adb_location;
+
+        show_system_checks.checked = DashboardSettings.show_system_checks;
     }
 
     Shortcut {

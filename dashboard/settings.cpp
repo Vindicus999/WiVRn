@@ -206,6 +206,7 @@ Settings::encoder_name Settings::encoder() const
 void Settings::set_encoder(const encoder_name & value)
 {
 	auto old = encoder();
+	auto old_codec = codec();
 	switch (value)
 	{
 		case EncoderAuto:
@@ -237,10 +238,11 @@ void Settings::set_encoder(const encoder_name & value)
 	if (value != old)
 	{
 		encoderChanged();
-		codecChanged();
 		if (not can10bit())
 			set_tenbit(false);
 	}
+	if (old_codec != codec())
+		codecChanged();
 	simpleConfigChanged();
 }
 
@@ -468,9 +470,16 @@ QList<Settings::video_codec> Settings::allowedCodecs() const
 			        video_codec::H265,
 			        video_codec::Av1,
 			};
-		case encoder_name::X264:
 		case encoder_name::Vulkan:
-			return {video_codec::H264};
+			return {
+			        video_codec::CodecAuto,
+			        video_codec::H264,
+			        video_codec::H265,
+			};
+		case encoder_name::X264:
+			return {
+			        video_codec::H264,
+			};
 	}
 	return {video_codec::CodecAuto};
 }

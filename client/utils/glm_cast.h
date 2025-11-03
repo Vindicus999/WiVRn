@@ -1,6 +1,6 @@
 /*
  * WiVRn VR streaming
- * Copyright (C) 2025  Patrick Nicolas <patricknicolas@laposte.net>
+ * Copyright (C) 2025  Guillaume Meunier <guillaume.meunier@centraliens.net>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,24 +18,25 @@
 
 #pragma once
 
-#include "video_encoder.h"
-#include "vk/allocation.h"
+#include <glm/gtc/quaternion.hpp>
+#include <openxr/openxr.h>
 
-#include <array>
-
-namespace wivrn
+inline glm::quat glm_cast(const XrQuaternionf & q)
 {
+	return glm::quat::wxyz(q.w, q.x, q.y, q.z);
+}
 
-class video_encoder_raw : public video_encoder
+inline XrQuaternionf glm_cast(const glm::quat & q)
 {
-	std::array<buffer_allocation, num_slots> buffers;
-	vk::Rect2D rect;
+	return XrQuaternionf(q.w, q.x, q.y, q.z);
+}
 
-public:
-	video_encoder_raw(wivrn_vk_bundle & vk, encoder_settings & settings, float fps, uint8_t stream_idx);
+inline glm::vec3 glm_cast(const XrVector3f & v)
+{
+	return glm::vec3(v.x, v.y, v.z);
+}
 
-	std::pair<bool, vk::Semaphore> present_image(vk::Image y_cbcr, vk::raii::CommandBuffer & cmd_buf, uint8_t slot, uint64_t frame_index) override;
-
-	std::optional<data> encode(uint8_t slot, uint64_t frame_id) override;
-};
-} // namespace wivrn
+inline XrVector3f glm_cast(const glm::vec3 & v)
+{
+	return XrVector3f(v.x, v.y, v.z);
+}
