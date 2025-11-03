@@ -31,6 +31,7 @@
 #include "render/scene_components.h"
 #include "stream.h"
 #include "utils/files.h"
+#include "utils/glm_cast.h"
 #include "utils/i18n.h"
 #include "wivrn_client.h"
 #include "wivrn_discover.h"
@@ -84,13 +85,37 @@ static const std::array supported_depth_formats{
         vk::Format::eX8D24UnormPack32,
 };
 
+static float interpolate(float x, std::span<const std::pair<float, float>> arr)
+{
+	assert(arr.size() >= 1);
+
+	if (x <= arr[0].first)
+		return arr[0].second;
+
+	if (x >= arr.back().first)
+		return arr.back().second;
+
+	for (size_t i = 0; i + 1 < arr.size(); i++)
+	{
+		assert(arr[i].first <= arr[i + 1].first);
+		if (arr[i].first <= x and x < arr[i + 1].first)
+		{
+			auto t = (x - arr[i].first) / (arr[i + 1].first - arr[i].first);
+			return std::lerp(arr[i].second, arr[i + 1].second, t);
+		}
+	}
+
+	return arr[0].second; // Should never happen
+}
+
 static glm::quat compute_gui_orientation(glm::vec3 head_position, glm::vec3 new_gui_position)
 {
-	using constants::lobby::gui_pitch;
-
 	glm::vec3 gui_direction = new_gui_position - head_position;
 
 	float gui_yaw = atan2(gui_direction.x, gui_direction.z) + M_PI;
+
+	float eye_gaze_elevation = atan2(gui_direction.y, glm::length(glm::vec2(gui_direction.x, gui_direction.z)));
+	float gui_pitch = interpolate(eye_gaze_elevation * 180 / M_PI, constants::lobby::gui_pitches) * M_PI / 180;
 
 	return glm::quat(cos(gui_yaw / 2), 0, sin(gui_yaw / 2), 0) * glm::quat(cos(gui_pitch / 2), sin(gui_pitch / 2), 0, 0);
 }
@@ -403,27 +428,59 @@ void scenes::lobby::connect(const configuration::server_data & data)
 	        data.manual);
 }
 
-std::optional<glm::vec3> scenes::lobby::check_recenter_gesture(xr::spaces space, const std::optional<std::array<xr::hand_tracker::joint, XR_HAND_JOINT_COUNT_EXT>> & joints)
+std::optional<glm::vec3> scenes::lobby::check_recenter_gesture(
+        xr::spaces space,
+        const std::optional<std::array<xr::hand_tracker::joint, XR_HAND_JOINT_COUNT_EXT>> & joints,
+        const std::pair<glm::vec3, glm::quat> & head_pose)
 {
 	if (recentering_context and std::get<0>(*recentering_context) != space)
 		return std::nullopt;
 
-	if (not joints)
+	if (joints)
 	{
-		recentering_context.reset();
-		return std::nullopt;
-	}
+		const auto & palm = (*joints)[XR_HAND_JOINT_PALM_EXT].first;
+		const auto palm_y = glm::rotate(glm_cast(palm.pose.orientation), glm::vec3(0, 1, 0));
 
-	const auto & palm = (*joints)[XR_HAND_JOINT_PALM_EXT].first;
-	const auto & o = palm.pose.orientation;
-	const auto & p = palm.pose.position;
-	glm::quat q{o.w, o.x, o.y, o.z};
-	glm::vec3 v{p.x, p.y, p.z};
+		for (XrHandJointEXT index: {
+		             XR_HAND_JOINT_INDEX_PROXIMAL_EXT,
+		             XR_HAND_JOINT_INDEX_INTERMEDIATE_EXT,
+		             XR_HAND_JOINT_INDEX_DISTAL_EXT,
 
-	if (glm::dot(q * glm::vec3(0, 1, 0), glm::vec3(0, -1, 0)) > constants::lobby::recenter_cosangle_min)
-	{
-		recentering_context.emplace(space, glm::vec3{}, 0);
-		return v + glm::vec3(0, constants::lobby::recenter_distance_up, 0) + q * glm::vec3(0, 0, -constants::lobby::recenter_distance_front);
+		             XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT,
+		             XR_HAND_JOINT_MIDDLE_INTERMEDIATE_EXT,
+		             XR_HAND_JOINT_MIDDLE_DISTAL_EXT,
+
+		             XR_HAND_JOINT_RING_PROXIMAL_EXT,
+		             XR_HAND_JOINT_RING_INTERMEDIATE_EXT,
+		             XR_HAND_JOINT_RING_DISTAL_EXT,
+
+		             XR_HAND_JOINT_LITTLE_PROXIMAL_EXT,
+		             XR_HAND_JOINT_LITTLE_INTERMEDIATE_EXT,
+		             XR_HAND_JOINT_LITTLE_DISTAL_EXT,
+		     })
+		{
+			const auto fingertip_y = glm::rotate(glm_cast((*joints)[index].first.pose.orientation), glm::vec3(0, 1, 0));
+
+			if (glm::dot(palm_y, fingertip_y) < constants::lobby::recenter_cos_fingertip_angle_max)
+			{
+				recentering_context.reset();
+				return std::nullopt;
+			}
+		}
+
+		const auto q = glm_cast(palm.pose.orientation);
+		const auto x = glm_cast(palm.pose.position);
+
+		// Make the up vector orthogonal to forward
+		const glm::vec3 forward = glm::rotate(head_pose.second, glm::vec3{0, 0, -1});
+		const glm::vec3 up = glm::normalize(glm::vec3{0, 1, 0} - forward * glm::dot(forward, {0, 1, 0}));
+
+		// Y is pointing to the back of the hand
+		if (glm::dot(q * glm::vec3(0, -1, 0), up) > constants::lobby::recenter_cos_palm_angle_min)
+		{
+			recentering_context.emplace(space, glm::vec3{}, 0);
+			return x + glm::rotate(q, glm::vec3{0, -constants::lobby::recenter_distance_up, -constants::lobby::recenter_distance_front});
+		}
 	}
 
 	recentering_context.reset();
@@ -535,14 +592,21 @@ std::optional<glm::vec3> scenes::lobby::check_recenter_action(XrTime predicted_d
 		// One step is usually enough, the solution will continuously improve in the next frames
 		glm::vec3 gui_position = imgui_ctx->layers()[0].position;
 		float eps = 0.01;
-		glm::vec3 obj = f(gui_position);
-		glm::vec3 obj_dx = (f(gui_position + glm::vec3(eps, 0, 0)) - obj) / eps;
-		glm::vec3 obj_dy = (f(gui_position + glm::vec3(0, eps, 0)) - obj) / eps;
-		glm::vec3 obj_dz = (f(gui_position + glm::vec3(0, 0, eps)) - obj) / eps;
 
-		glm::mat3 jacobian{obj_dx, obj_dy, obj_dz};
+		glm::vec3 obj;
+		int n_iter = 0;
+		do
+		{
+			obj = f(gui_position);
+			glm::vec3 obj_dx = (f(gui_position + glm::vec3(eps, 0, 0)) - obj) / eps;
+			glm::vec3 obj_dy = (f(gui_position + glm::vec3(0, eps, 0)) - obj) / eps;
+			glm::vec3 obj_dz = (f(gui_position + glm::vec3(0, 0, eps)) - obj) / eps;
 
-		gui_position -= glm::inverse(jacobian) * obj;
+			glm::mat3 jacobian{obj_dx, obj_dy, obj_dz};
+
+			gui_position -= 0.01 * glm::inverse(jacobian) * obj;
+			n_iter++;
+		} while (glm::length(obj) > 0.0001 and n_iter < 1000);
 
 		return gui_position;
 	}
@@ -928,14 +992,14 @@ void scenes::lobby::render(const XrFrameState & frame_state)
 
 		hand_model::apply(world, left, right);
 
-		if (not new_gui_position)
-			new_gui_position = check_recenter_gesture(xr::spaces::palm_left, left);
+		if (not new_gui_position and head_position)
+			new_gui_position = check_recenter_gesture(xr::spaces::palm_left, left, *head_position);
 
-		if (not new_gui_position)
-			new_gui_position = check_recenter_gesture(xr::spaces::palm_right, right);
+		if (not new_gui_position and head_position)
+			new_gui_position = check_recenter_gesture(xr::spaces::palm_right, right, *head_position);
 	}
 
-	if (head_position && new_gui_position)
+	if (head_position and new_gui_position)
 	{
 		move_gui(head_position->first, *new_gui_position);
 	}
