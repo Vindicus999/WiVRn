@@ -304,6 +304,10 @@ std::shared_ptr<scenes::stream> scenes::stream::create(std::unique_ptr<wivrn_ses
 		return info;
 	}());
 
+	self->network_session->send_control(from_headset::session_state_changed{
+	        .state = application::get_session_state(),
+	});
+
 	if (self->instance.has_extension(XR_KHR_VISIBILITY_MASK_EXTENSION_NAME))
 	{
 		for (uint8_t view = 0; view < view_count; ++view)
@@ -488,6 +492,17 @@ void scenes::stream::on_focused()
 	setup_reprojection_swapchain(
 	        video_stream_description->defoveated_width / view_count,
 	        video_stream_description->defoveated_height);
+
+	if (application::get_config().high_power_mode)
+	{
+		session.set_performance_level(XR_PERF_SETTINGS_DOMAIN_CPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT);
+		session.set_performance_level(XR_PERF_SETTINGS_DOMAIN_GPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT);
+	}
+	else
+	{
+		session.set_performance_level(XR_PERF_SETTINGS_DOMAIN_CPU_EXT, XR_PERF_SETTINGS_LEVEL_POWER_SAVINGS_EXT);
+		session.set_performance_level(XR_PERF_SETTINGS_DOMAIN_GPU_EXT, XR_PERF_SETTINGS_LEVEL_POWER_SAVINGS_EXT);
+	}
 }
 
 void scenes::stream::on_unfocused()

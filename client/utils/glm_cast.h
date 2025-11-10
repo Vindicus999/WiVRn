@@ -1,6 +1,6 @@
 /*
  * WiVRn VR streaming
- * Copyright (C) 2024  Guillaume Meunier <guillaume.meunier@centraliens.net>
+ * Copyright (C) 2025  Guillaume Meunier <guillaume.meunier@centraliens.net>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,6 +16,27 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "rectangle_partitionner.h"
+#pragma once
 
-#include "moc_rectangle_partitionner.cpp"
+#include <glm/gtc/quaternion.hpp>
+#include <openxr/openxr.h>
+
+inline glm::quat glm_cast(const XrQuaternionf & q)
+{
+	return glm::quat::wxyz(q.w, q.x, q.y, q.z);
+}
+
+inline XrQuaternionf glm_cast(const glm::quat & q)
+{
+	return XrQuaternionf(q.w, q.x, q.y, q.z);
+}
+
+inline glm::vec3 glm_cast(const XrVector3f & v)
+{
+	return glm::vec3(v.x, v.y, v.z);
+}
+
+inline XrVector3f glm_cast(const glm::vec3 & v)
+{
+	return XrVector3f(v.x, v.y, v.z);
+}

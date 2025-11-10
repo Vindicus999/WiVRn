@@ -15,17 +15,11 @@ Kirigami.ScrollablePage {
 
     flickable.interactive: false // Make sure the Kirigami.ScrollablePage does not eat the vertical mouse dragging events
 
+    property bool allowUpdates: false // ignore onXXX events until document is loaded
+
     Settings {
         id: config
     }
-
-    Core.Settings {
-        property alias adb_custom: settings.adb_custom
-        property alias adb_location: settings.adb_location
-        property alias show_system_checks: show_system_checks.checked
-    }
-    property bool adb_custom
-    property string adb_location
 
     ColumnLayout {
         id: column
@@ -35,7 +29,7 @@ Kirigami.ScrollablePage {
 
             Controls.CheckBox {
                 id: manual_foveation
-                checked: true
+                checked: config.scale != -1
                 Layout.row: 0
                 Layout.column: 0
                 text: i18nc("automatic foveation setup", "Manual foveation")
@@ -105,155 +99,59 @@ Kirigami.ScrollablePage {
                     }
                     return Number.fromLocaleString(text);
                 }
+
+                onValueModified: config.bitrate = value
             }
 
-            Controls.ComboBox {
-                id: encoder_layout
-                Kirigami.FormData.label: i18n("Encoder layout:")
-                model: [
-                    {
-                        label: i18nc("encoder preset", "Automatic"),
-                        value: null
-                    },
-                    {
-                        label: i18nc("encoder preset", "Manual"),
-                        value: null
-                    },
-                    {
-                        label: i18nc("encoder preset", "Default preset"),
-                        value: [
-                            {
-                                width: 0.5,
-                                height: 1,
-                                offset_x: 0,
-                                offset_y: 0
-                            },
-                            {
-                                width: 0.5,
-                                height: 1,
-                                offset_x: 0.5,
-                                offset_y: 0
-                            }
-                        ]
-                    },
-                    {
-                        label: i18nc("encoder preset", "Low latency preset"),
-                        value: [
-                            {
-                                width: 0.5,
-                                height: 1,
-                                offset_x: 0.5,
-                                offset_y: 0,
-                                encoder: 'x264',
-                                codec: 'h264'
-                            },
-                            {
-                                width: 0.5,
-                                height: 1,
-                                offset_x: 0,
-                                offset_y: 0
-                            }
-                        ]
-                    },
-                    {
-                        label: i18nc("encoder preset", "Safe preset"),
-                        value: [
-                            {
-                                width: 1,
-                                height: 1,
-                                offset_x: 0,
-                                offset_y: 0
-                            }]
+            Kirigami.InlineMessage {
+                Layout.fillWidth: true
+                text: i18n("The current encoder configuration is not supported")
+                type: Kirigami.MessageType.Information
+                visible: !config.simpleConfig
+                actions: [
+                    Kirigami.Action {
+                        text: i18n("Reset")
+                        onTriggered: config.encoder = Settings.EncoderAuto
                     }
                 ]
-                textRole: "label"
-                valueRole: "value"
-                onCurrentValueChanged: {
-                    if (currentValue)
-                    {
-                        config.set_encoder_preset(currentValue);
-                        partitionner.currentIndex = -1;
-                    }
-                }
-            }
-
-            Controls.Label {
-                visible: encoder_layout.currentIndex > 0
-                text: i18n("To add a new encoder, split an existing encoder by clicking near an edge.\nDrag an edge to resize or remove encoders.")
-                wrapMode: Text.WordWrap
-                Layout.fillWidth: true
-            }
-
-            RectanglePartitionner {
-                id: partitionner
-                implicitWidth: 600
-                implicitHeight: 300
-                visible: encoder_layout.currentIndex > 0
-                settings: config
-                onCodecChanged: {
-                    for (var i = 0; i < codec_combo.model.length; i++) {
-                        if (codec_combo.model[i].name == codec)
-                            codec_combo.currentIndex = i;
-                    }
-                }
-                onEncoderChanged: {
-                    for (var i = 0; i < encoder_combo.model.length; i++) {
-                        if (encoder_combo.model[i].name == encoder)
-                            encoder_combo.currentIndex = i;
-                    }
-                }
-                onEncoderLayoutChanged: encoder_layout.currentIndex = 1 // Manual layout
             }
 
             RowLayout {
                 Kirigami.FormData.label: i18n("Encoder:")
-                enabled: partitionner.selected
-                visible: encoder_layout.currentIndex > 0
+                enabled: config.simpleConfig
                 Controls.ComboBox {
                     id: encoder_combo
                     model: [
-                        // Keep it in sync with rectangle_partitionner.h (encoder_name_from_setting)
                         {
-                            name: "auto",
                             label: i18nc("automatic encoder setup", "Auto"),
-                            codecs: "auto"
+                            encoder: Settings.EncoderAuto
                         },
                         {
-                            name: "nvenc",
                             label: i18n("nvenc (NVIDIA GPUs)"),
-                            codecs: "auto,h264,h265,av1"
+                            encoder: Settings.Nvenc
                         },
                         {
-                            name: "vaapi",
                             label: i18n("vaapi (AMD and Intel GPUs)"),
-                            codecs: "auto,h264,h265,av1"
+                            encoder: Settings.Vaapi
                         },
                         {
-                            name: "x264",
+                            label: i18n("Vulkan (Any modern GPU)"),
+                            encoder: Settings.Vulkan
+                        },
+                        {
                             label: i18n("x264 (software encoding)"),
-                            codecs: "h264"
-                        },
-                        {
-                            name: "vulkan",
-                            label: i18n("Vulkan (Vulkan Video)"),
-                            codecs: "h264"
+                            encoder: Settings.X264
                         }
                     ]
+                    onCurrentIndexChanged: if (settings.allowUpdates) {config.encoder = model[currentIndex].encoder}
                     textRole: "label"
-                    onCurrentIndexChanged: {
-                        partitionner.encoder = encoder_combo.model[currentIndex].name;
-
-                        // Check if the currently selected codec is supported by the new encoder
-                        var supported_codecs = model[currentIndex].codecs.split(",");
-                        var current_codec = codec_combo.model[codec_combo.currentIndex].name;
-
-                        if (!supported_codecs.includes(current_codec)) {
-                            for (var i = 0; i < codec_combo.model.length; i++) {
-                                if (supported_codecs.includes(codec_combo.model[i].name)) {
-                                    codec_combo.currentIndex = i;
-                                    break;
-                                }
-                            }
+                    Connections {
+                        target: config
+                        function onEncoderChanged() {
+                            var encoder = config.encoder;
+                            var i = encoder_combo.model.findIndex( item => item.encoder == encoder)
+                            if (i > -1)
+                                encoder_combo.currentIndex = i
                         }
                     }
                 }
@@ -262,43 +160,62 @@ Kirigami.ScrollablePage {
                 }
             }
 
-            Controls.ComboBox {
-                id: codec_combo
+            RowLayout {
                 Kirigami.FormData.label: i18n("Codec:")
-                enabled: partitionner.selected
-                visible: encoder_layout.currentIndex > 0
-                model: [
-                    // Keep it in sync with rectangle_partitionner.h (codec_name_from_setting)
-                    {
-                        name: "auto",
-                        label: i18nc("automatic codec setup", "Auto")
-                    },
-                    {
-                        name: "h264",
-                        label: i18n("H.264")
-                    },
-                    {
-                        name: "h265",
-                        label: i18n("H.265")
-                    },
-                    {
-                        name: "av1",
-                        label: i18n("AV1")
+                Controls.ComboBox {
+                    id: codec_combo
+                    enabled: config.simpleConfig && config.encoder != Settings.EncoderAuto
+                    model: [
+                        {
+                            label: i18nc("automatic codec setup", "Auto"),
+                            codec: Settings.CodecAuto
+                        },
+                        {
+                            label: i18n("H.264"),
+                            codec: Settings.H264
+                        },
+                        {
+                            label: i18n("H.265"),
+                            codec: Settings.H265
+                        },
+                        {
+                            label: i18n("AV1"),
+                            codec: Settings.Av1
+                        }
+                    ]
+                    onCurrentIndexChanged: if (settings.allowUpdates) {config.codec = model[currentIndex].codec}
+                    textRole: "label"
+
+                    delegate: Controls.ItemDelegate {
+                        required property string label
+                        required property var codec
+
+                        width: codec_combo.width
+                        text: i18n(label)
+                        highlighted: ListView.isCurrentItem
+                        enabled: config.allowedCodecs.includes(codec)
                     }
-                ]
-                textRole: "label"
-                onCurrentIndexChanged: partitionner.codec = model[currentIndex].name
-
-                delegate: Controls.ItemDelegate {
-                    required property string label
-                    required property string name
-
-                    width: codec_combo.width
-                    text: i18n(label)
-                    highlighted: ListView.isCurrentItem
-                    enabled: encoder_combo.model[encoder_combo.currentIndex].codecs.split(",").includes(name)
+                    Connections {
+                        target: config
+                        function onCodecChanged() {
+                            var codec = config.codec;
+                            var i = codec_combo.model.findIndex( item => item.codec == codec)
+                            if (i > -1)
+                                codec_combo.currentIndex = i
+                        }
+                    }
+                }
+                Controls.CheckBox {
+                    enabled: config.can10bit
+                    text: i18n("10-bits")
+                    checked: config.tenbit
+                    onCheckedChanged: config.tenbit = checked
+                }
+                Kirigami.ContextualHelpButton {
+                    toolTipText: i18n("10-bit encoding improves image quality but is not supported by all codecs and hardware")
                 }
             }
+
 
             Kirigami.Separator {
                 Kirigami.FormData.isSection: true
@@ -349,7 +266,7 @@ Kirigami.ScrollablePage {
                 enabled: adb_custom.checked
                 Controls.TextField {
                     id: adb_location
-                    placeholderText: settings.adb_location
+                    placeholderText: DashboardSettings.adb_location
                     Layout.fillWidth: true
                 }
                 Controls.Button {
@@ -449,44 +366,36 @@ Kirigami.ScrollablePage {
     Component.onCompleted: {
         openvr_libs.init()
         config.load(WivrnServer);
+        // If bitrate was manually set higher, keep the limit
+        bitrate.to = Math.max(bitrate.to, config.bitrate)
+        bitrate.value = config.bitrate
+        settings.allowUpdates = true;
         settings.load();
     }
 
     function save() {
-        config.bitrate = bitrate.value * 1000000;
         config.scale = manual_foveation.checked ? 1 - scale_slider.value / 100.0 : -1;
-        config.manualEncoders = encoder_layout.currentIndex > 0;
         let openvr = openvr_combobox.model.get(openvr_combobox.currentIndex)
         if (openvr.is_custom) {
             config.openvr = openvr_text.text;
         } else {
             config.openvr = openvr.value
         }
-        settings.adb_custom = adb_custom.checked;
-        settings.adb_location = adb_location.text;
-        Adb.setPath(adb_custom.checked ? adb_location.text : "adb");
+        DashboardSettings.adb_custom = adb_custom.checked;
+        DashboardSettings.adb_location = adb_location.text;
+        Adb.setPath(DashboardSettings.adb_custom.checked ? adb_location.text : "adb");
+
+        DashboardSettings.show_system_checks = show_system_checks.checked;
 
         config.debugGui = debug_gui.checked;
         config.steamVrLh = steamvr_lh.checked;
     }
 
     function load() {
-        bitrate.value = config.bitrate / 1000000;
-
         if (config.scale > 0) {
             scale_slider.value = Math.round(100 - config.scale * 100);
-            manual_foveation.checked = true;
         } else {
             scale_slider.value = 50;
-            manual_foveation.checked = false;
-        }
-
-        if (config.manualEncoders) {
-            // auto_encoders.checked = false;
-            encoder_layout.currentIndex = 1;
-        } else {
-            // auto_encoders.checked = true;
-            encoder_layout.currentIndex = 0;
         }
 
         debug_gui.checked = config.debugGui;
@@ -494,8 +403,10 @@ Kirigami.ScrollablePage {
 
         openvr_combobox.load()
 
-        adb_custom.checked = settings.adb_custom;
-        adb_location.text = settings.adb_location;
+        adb_custom.checked = DashboardSettings.adb_custom;
+        adb_location.text = DashboardSettings.adb_location;
+
+        show_system_checks.checked = DashboardSettings.show_system_checks;
     }
 
     Shortcut {

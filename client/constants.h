@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <glm/glm.hpp>
 #include <imgui.h>
@@ -26,7 +27,7 @@
 namespace constants::gui
 {
 // Minimum distance between a GUI layer and a fingertip/controller to register a click
-constexpr float min_pointer_distance = -0.1;
+constexpr float min_controller_distance = -0.02;
 
 // Font to use (desktop only)
 constexpr const char font_name[] = "Noto Sans";
@@ -41,9 +42,11 @@ constexpr float scroll_ratio = 10;
 // Threshold on the trigger value to register a click
 constexpr float trigger_click_thd = 0.8;
 
-// Thresholds on the distance between the fingertip and GUI layers
-constexpr float fingertip_distance_hovering_thd = 0.15;
-constexpr float fingertip_distance_touching_thd = 0.0;
+// Thresholds on the distance between the fingertip and GUI layers (positive: in front of the GUI, negative: behind the GUI)
+constexpr float fingertip_distance_hovering_thd = 0.15;     // Max distance to have the cursor hovering
+constexpr float fingertip_distance_touching_thd_hi = -0.01; // Distance to register a click
+constexpr float fingertip_distance_touching_thd_lo = -0.15; // Distance to register a click
+constexpr float fingertip_distance_stick_thd = -0.02;       // Max distance where the fingertip is moved to be on the GUI
 
 // Minimum scroll value to enable a controller
 constexpr float scroll_value_thd = 0.01;
@@ -67,7 +70,14 @@ constexpr uint32_t pointer_color_border = 0xff000000;
 namespace constants::lobby
 {
 // Position and orientation of the GUI layers
-constexpr float gui_pitch = -0.2;
+constexpr auto gui_pitches = std::to_array<std::pair<float, float>>({
+        {-90, -90},
+        {-50, -90},
+        {-30, -12},
+        {30, -12},
+        {50, 78},
+        {90, 78},
+});
 constexpr float keyboard_pitch = -0.6;
 constexpr glm::vec3 popup_position = {0, 0, 0.05};
 constexpr glm::vec3 keyboard_position = {0, -0.3, 0.1};
@@ -76,7 +86,8 @@ constexpr glm::vec3 keyboard_position = {0, -0.3, 0.1};
 constexpr float near_plane = 0.02;
 
 // Recenter gesture thresholds
-constexpr float recenter_cosangle_min = 0.8;
+constexpr float recenter_cos_palm_angle_min = 0.7;
+constexpr float recenter_cos_fingertip_angle_max = 0.3;
 constexpr float recenter_distance_up = 0.3;
 constexpr float recenter_distance_front = 0.2;
 
