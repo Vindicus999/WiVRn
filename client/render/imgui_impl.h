@@ -93,6 +93,7 @@ public:
 
 	struct controller
 	{
+		uint8_t index; // left = 0, right = 1
 		XrSpace aim;
 		std::pair<glm::vec3, glm::quat> offset;
 
@@ -108,8 +109,6 @@ public:
 
 	struct controller_state
 	{
-		bool active = false;
-
 		glm::vec3 aim_position = {0, 0, 0};
 		glm::quat aim_orientation = {1, 0, 0, 0};
 
@@ -121,7 +120,6 @@ public:
 
 		bool squeeze_clicked = false;
 		bool trigger_clicked = false;
-		bool fingertip_hovering = false;
 		bool fingertip_touching = false;
 		ImGuiMouseSource source = ImGuiMouseSource_Mouse;
 	};
@@ -186,6 +184,8 @@ private:
 	bool button_pressed = false;
 	bool fingertip_touching = false;
 
+	std::array<bool, 2> aim_interaction = {true, true}; // left, right
+
 	ImGuiID hovered_item = 0;      // Hovered item in the current frame, reset at the beginning of the frame
 	ImGuiID hovered_item_prev = 0; // Hovered item at the previous frame
 
@@ -229,7 +229,7 @@ public:
 	}
 
 	std::vector<std::pair<ImVec2, float>> ray_plane_intersection(const controller_state & in) const;
-	void compute_pointer_position(controller_state & state);
+	void compute_pointer_position(controller_state & state) const;
 
 	// Convert position from viewport coordinates to real-world
 	glm::vec3 rw_from_vp(const ImVec2 & position);
@@ -242,6 +242,10 @@ public:
 	void set_hovered_item();
 	void set_controllers_enabled(bool value);
 	void tooltip(std::string_view text);
+	std::array<bool, 2> is_aim_interaction() const
+	{
+		return aim_interaction;
+	}
 };
 
 void ScrollWhenDragging();

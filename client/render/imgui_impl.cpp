@@ -210,9 +210,6 @@ imgui_textures::imgui_textures(
 
 std::vector<std::pair<ImVec2, float>> imgui_context::ray_plane_intersection(const imgui_context::controller_state & in) const
 {
-	if (!in.active)
-		return {};
-
 	std::vector<std::pair<ImVec2, float>> intersections;
 
 	for (const auto & i: layers_)
@@ -555,88 +552,102 @@ std::vector<imgui_context::controller_state> imgui_context::read_controllers_sta
 	size_t new_focused_controller = focused_controller;
 
 	std::vector<controller_state> new_states;
+	new_states.resize(controllers.size());
+	if (not controllers_enabled)
+		return new_states;
+
+	aim_interaction = {true, true};
 
 	// Get the hand/controller state from OpenXR
-	for (auto && [index, controller]: utils::enumerate(controllers))
+
+	// First hands, so we can set aim_interaction
+	for (const auto & [controller, state]: std::ranges::zip_view(controllers, new_states))
 	{
-		auto & [ctrl, state] = controller;
-
-		controller_state & new_state = new_states.emplace_back();
-
-		if (not controllers_enabled)
+		const auto & ctrl = controller.first;
+		if (not ctrl.hand)
 			continue;
+		state.source = ImGuiMouseSource_VRHandTracking;
 
-		if (ctrl.hand)
+		if (auto joints = ctrl.hand->locate(world, display_time))
 		{
-			if (auto joints = ctrl.hand->locate(world, display_time))
+			XrHandJointLocationEXT & index_tip = (*joints)[XR_HAND_JOINT_INDEX_TIP_EXT].first;
+			if (index_tip.locationFlags & XR_SPACE_LOCATION_POSITION_TRACKED_BIT)
 			{
-				XrHandJointLocationEXT & index_tip = (*joints)[XR_HAND_JOINT_INDEX_TIP_EXT].first;
-				if (index_tip.locationFlags & XR_SPACE_LOCATION_POSITION_TRACKED_BIT)
-				{
-					new_state.aim_position = {
-					        index_tip.pose.position.x,
-					        index_tip.pose.position.y,
-					        index_tip.pose.position.z};
-					// aim_orientation is ignored by ray_plane_intersection() for hands
-
-					new_state.active = true;
-					new_state.source = ImGuiMouseSource_VRHandTracking;
-				}
+				state.aim_position = {
+				        index_tip.pose.position.x,
+				        index_tip.pose.position.y,
+				        index_tip.pose.position.z};
+				// aim_orientation is ignored by ray_plane_intersection() for hands
 			}
+			compute_pointer_position(state);
 
-			continue;
-		}
-
-		new_state.source = ImGuiMouseSource_VRController;
-
-		if (auto location = application::locate_controller(ctrl.aim, world, display_time))
-		{
-			new_state.active = true;
-			new_state.aim_position = location->first + glm::mat3_cast(location->second * ctrl.offset.second) * ctrl.offset.first;
-			new_state.aim_orientation = location->second * ctrl.offset.second;
-
-			if (ctrl.trigger)
+			XrHandJointLocationEXT & palm = (*joints)[XR_HAND_JOINT_PALM_EXT].first;
+			if (palm.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT)
 			{
-				auto trigger = application::read_action_float(ctrl.trigger).value_or(std::pair{0, 0});
-				new_state.trigger_value = trigger.second;
-
-				// TODO tunable
-				/*if (new_state.trigger_value < 0.5)
-				        new_state.trigger_clicked = false;
-				else */
-				if (new_state.trigger_value > constants::gui::trigger_click_thd)
-					new_state.trigger_clicked = true;
-			}
-
-			if (ctrl.scroll)
-			{
-				if (auto act = application::read_action_vec2(ctrl.scroll); act)
-					new_state.scroll_value = {-act->second.x * scroll_scale, act->second.y * scroll_scale};
+				controller_state palm_state{
+				        .aim_position = {
+				                palm.pose.position.x,
+				                palm.pose.position.y,
+				                palm.pose.position.z,
+				        },
+				        .source = ImGuiMouseSource_VRHandTracking,
+				};
+				compute_pointer_position(palm_state);
+				if (palm_state.hover_distance < constants::gui::palm_distance_close_thd)
+					aim_interaction[ctrl.index] = false;
 				else
-					new_state.scroll_value = {0, 0};
+					state.pointer_position.reset();
 			}
-		}
-	}
-
-	// Compute the position in imgui frame according to the currently displayed windows (from the last frame)
-	for (auto & state: new_states)
-	{
-		compute_pointer_position(state);
-
-		if (state.source == ImGuiMouseSource_VRHandTracking)
-		{
-			if (state.hover_distance < constants::gui::fingertip_distance_hovering_thd)
-				state.fingertip_hovering = true;
 
 			if (state.hover_distance < constants::gui::fingertip_distance_touching_thd_hi and state.hover_distance > constants::gui::fingertip_distance_touching_thd_lo)
 				state.fingertip_touching = true;
 		}
 	}
 
+	// Then controllers
+	for (const auto & [controller, state]: std::ranges::zip_view(controllers, new_states))
+	{
+		const auto & ctrl = controller.first;
+		if (ctrl.hand)
+			continue;
+
+		state.source = ImGuiMouseSource_VRController;
+		if (not aim_interaction[ctrl.index])
+			continue;
+
+		if (auto location = application::locate_controller(ctrl.aim, world, display_time))
+		{
+			state.aim_position = location->first + glm::mat3_cast(location->second * ctrl.offset.second) * ctrl.offset.first;
+			state.aim_orientation = location->second * ctrl.offset.second;
+			compute_pointer_position(state);
+
+			if (ctrl.trigger)
+			{
+				auto trigger = application::read_action_float(ctrl.trigger).value_or(std::pair{0, 0});
+				state.trigger_value = trigger.second;
+
+				// TODO tunable
+				/*if (new_state.trigger_value < 0.5)
+				        new_state.trigger_clicked = false;
+				else */
+				if (state.trigger_value > constants::gui::trigger_click_thd)
+					state.trigger_clicked = true;
+			}
+
+			if (ctrl.scroll)
+			{
+				if (auto act = application::read_action_vec2(ctrl.scroll); act)
+					state.scroll_value = {-act->second.x * scroll_scale, act->second.y * scroll_scale};
+				else
+					state.scroll_value = {0, 0};
+			}
+		}
+	}
+
 	return new_states;
 }
 
-void imgui_context::compute_pointer_position(imgui_context::controller_state & state)
+void imgui_context::compute_pointer_position(imgui_context::controller_state & state) const
 {
 	auto intersections = ray_plane_intersection(state);
 
