@@ -1,7 +1,7 @@
-From 1025812acf7086c471cfe0c2ae4d85106794051b Mon Sep 17 00:00:00 2001
+From 2465ef4bdb091830488d2518c233ee94a2e7c426 Mon Sep 17 00:00:00 2001
 From: no name <git-am@invalid>
 Date: Sun, 28 Sep 2025 11:33:10 +0200
-Subject: [PATCH 9/9] d/steamvr_lh: prevent crash on vive pro2/WiVRn
+Subject: [PATCH 6/6] d/steamvr_lh: prevent crash on vive pro2/WiVRn
 
 ---
  src/xrt/drivers/steamvr_lh/steamvr_lh.cpp | 2 +-
@@ -21,5 +21,5 @@ index 8a4c55ed4..723cbb196 100644
  		}
  
 -- 
-2.51.1
+2.51.2
 

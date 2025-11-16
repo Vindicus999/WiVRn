@@ -376,7 +376,7 @@ xrt_result_t wivrn::wivrn_session::create_session(std::unique_ptr<wivrn_connecti
 
 void wivrn_session::start(ipc_server * server)
 {
-	assert(not thread);
+	assert(not thread.joinable());
 	mnd_ipc_server = server;
 	thread = std::jthread([this](auto stop_token) { return run(stop_token); });
 }
@@ -721,7 +721,7 @@ void wivrn_session::operator()(from_headset::visibility_mask_changed && mask)
 
 void wivrn_session::operator()(from_headset::session_state_changed && event)
 {
-	assert(server);
+	assert(mnd_ipc_server);
 	U_LOG_I("Session state changed: %s", xr::to_string(event.state));
 	bool visible, focused;
 	switch (event.state)
@@ -836,7 +836,7 @@ void wivrn_session::operator()(const from_headset::start_app & request)
 
 void wivrn_session::operator()(const from_headset::get_running_applications &)
 {
-	assert(server);
+	assert(mnd_ipc_server);
 	scoped_lock lock(mnd_ipc_server->global_state.lock);
 	to_headset::running_applications msg{};
 	for (auto & t: mnd_ipc_server->threads)
@@ -861,7 +861,7 @@ void wivrn_session::operator()(const from_headset::get_running_applications &)
 
 void wivrn_session::operator()(const from_headset::set_active_application & req)
 {
-	assert(server);
+	assert(mnd_ipc_server);
 	ipc_server_set_active_client(mnd_ipc_server, req.id);
 	ipc_server_update_state(mnd_ipc_server);
 	// Send a refreshed application list
@@ -870,7 +870,7 @@ void wivrn_session::operator()(const from_headset::set_active_application & req)
 
 void wivrn_session::operator()(const from_headset::stop_application & req)
 {
-	assert(server);
+	assert(mnd_ipc_server);
 	scoped_lock lock(mnd_ipc_server->global_state.lock);
 	for (auto & t: mnd_ipc_server->threads)
 	{
@@ -889,6 +889,12 @@ void wivrn_session::operator()(audio_data && data)
 {
 	if (audio_handle)
 		audio_handle->process_mic_data(std::move(data));
+}
+
+void wivrn_session::operator()(to_monado::stop &&)
+{
+	assert(mnd_ipc_server);
+	ipc_server_stop(mnd_ipc_server);
 }
 
 void wivrn_session::operator()(to_monado::disconnect &&)
@@ -1007,6 +1013,7 @@ static bool quit_if_no_client(u_system & xrt_system)
 
 void wivrn_session::reconnect()
 {
+	assert(mnd_ipc_server);
 	// Notify clients about disconnected status
 	xrt_session_event event{
 	        .state = {
@@ -1022,7 +1029,7 @@ void wivrn_session::reconnect()
 	}
 
 	U_LOG_I("Waiting for new connection");
-	auto tcp = accept_connection(0 /*stdin*/, [this]() { return quit_if_no_client(xrt_system); });
+	auto tcp = accept_connection(mnd_ipc_server, 0 /*stdin*/, [this]() { return quit_if_no_client(xrt_system); });
 	if (not tcp)
 		exit(0);
 
@@ -1069,7 +1076,7 @@ void wivrn_session::reconnect()
 
 void wivrn_session::poll_session_loss()
 {
-	assert(server);
+	assert(mnd_ipc_server);
 	auto locked = session_loss.lock();
 	auto now = os_monotonic_get_ns();
 	if (locked->empty())
