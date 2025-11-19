@@ -114,7 +114,7 @@ if (WIVRN_BUILD_SERVER)
     endif()
 
     if (WIVRN_USE_VAAPI)
-        pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET libavcodec libavutil libswscale libavfilter)
+        pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET libavcodec libavutil)
         pkg_check_modules(LIBDRM REQUIRED IMPORTED_TARGET libdrm)
     endif()
 
@@ -183,11 +183,11 @@ if (WIVRN_BUILD_DASHBOARD)
 endif()
 
 if (WIVRN_BUILD_CLIENT OR WIVRN_BUILD_DASHBOARD)
-    find_program(RSVG_CONVERT rsvg-convert REQUIRED)
     find_package(Gettext REQUIRED)
 endif()
 
 if (WIVRN_BUILD_CLIENT)
+    find_program(RSVG_CONVERT rsvg-convert REQUIRED)
     find_program(TOKTX toktx REQUIRED)
 
     if (WIVRN_COMPRESS_GLB)
@@ -200,7 +200,7 @@ if (WIVRN_BUILD_CLIENT)
 endif()
 
 if (WIVRN_BUILD_CLIENT AND NOT ANDROID)
-    pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET libavcodec libavutil libswscale libavfilter)
+    pkg_check_modules(LIBAV_CLIENT REQUIRED IMPORTED_TARGET libavcodec libavutil libswscale)
     find_package(Fontconfig REQUIRED)
 
     if (WIVRN_USE_SYSTEM_OPENXR)

@@ -5,52 +5,67 @@ on:
   pull_request:
 
 env:
-  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
   BUILD_TYPE: Release
+  SERVER_DEPS: libx264-dev libavcodec-dev libavutil-dev libbsd-dev libavahi-client-dev libavahi-glib-dev libeigen3-dev nlohmann-json3-dev librsvg2-dev libdrm-dev libglib2.0-dev-bin libpipewire-0.3-dev libpulse-dev libcli11-dev libnotify-dev libarchive-dev libudev-dev
 
 jobs:
-  build-server:
-    name: Linux server
-    # The CMake configure and build commands are platform agnostic and should work equally well on Windows or Mac.
-    # You can convert this to a matrix build if you need cross-platform coverage.
-    # See: https://docs.github.com/en/free-pro-team@latest/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix
+  build-linux:
+    name: Linux
     runs-on: ubuntu-24.04
     if: ${{ vars.APK_ONLY == '' }}
 
     strategy:
+      fail-fast: false
       matrix:
-        cmake_preset: ['server', 'server-no-systemd', 'server-no-system-boost']
+        config:
+          - preset: 'client'
+            packages: libboost-all-dev libharfbuzz-dev libfreetype-dev libavcodec-dev libavutil-dev libswscale-dev librsvg2-bin gettext libcurl4-openssl-dev libfontconfig-dev
+        # dashboard requires a more recent Ubuntu, have it out of this job
+          - preset: 'dissector-no-system-boost'
+            packages: libboost-all-dev wireshark-dev
+          - preset: 'server'
+            packages: libboost-all-dev libsystemd-dev
+          - preset: 'server-no-systemd'
+            packages: libboost-all-dev
+          - preset: 'server-no-system-boost'
+            packages: libsystemd-dev
 
     steps:
     - uses: actions/checkout@v4
+
+    - name: Apt dependencies
+      uses: awalsh128/cache-apt-pkgs-action@v1.6.0
       with:
-        fetch-depth: 0
+        packages: ccache ${{matrix.config.packages}} ${{ startsWith(matrix.config.preset, 'server') && env.SERVER_DEPS || ''}}
 
     - name: ccache
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        key: server-${{matrix.cmake_preset}}
-        restore-keys: server-
+        key: linux-${{matrix.config.preset}}
+        restore-keys: linux-
         append-timestamp: false
-        create-symlink: true
 
     - uses: actions/cache@v4
       with:
-        key: cmake-server-${{matrix.cmake_preset}}
+        key: cmake-linux-${{matrix.config.preset}}
         path: |
           ${{github.workspace}}/cmake-fetch/*-subbuild/*-populate-prefix/src/*.tar.*
           ${{github.workspace}}/cmake-fetch/*-subbuild/*-populate-prefix/src/*.zip
           ${{github.workspace}}/cmake-fetch/*.tar.*
-        restore-keys: cmake-server-
+        restore-keys: cmake-linux-
 
     - name: Install dependencies
-      run: >
-        sudo apt-get update && sudo apt-get install libvulkan-dev libcjson-dev libx264-dev libavcodec-dev libavutil-dev libswscale-dev libavfilter-dev libbsd-dev libavahi-client-dev libavahi-glib-dev libeigen3-dev glslang-tools libudev-dev libwayland-dev libx11-xcb-dev libxrandr-dev libxcb-randr0-dev libgl-dev libglx-dev mesa-common-dev libgl1-mesa-dev libglu1-mesa-dev libsystemd-dev libva-dev nlohmann-json3-dev libpulse-dev xz-utils libpipewire-0.3-dev libcli11-dev libboost-all-dev librsvg2-bin libssl-dev libnotify-dev librsvg2-dev libarchive-dev
+      if: ${{ matrix.config.preset == 'client' }}
+      run: |
+        wget https://github.com/KhronosGroup/KTX-Software/releases/download/v4.4.2/KTX-Software-4.4.2-Linux-x86_64.deb
+        sudo dpkg --install KTX-Software-4.4.2-Linux-x86_64.deb
+        npm install --global @gltf-transform/cli@4.1.1
+
     - name: Prepare Vulkan SDK
-      uses: humbletim/setup-vulkan-sdk@286ed76c72de45dbf50c515779cf4ca2f6aa3944
+      uses: humbletim/setup-vulkan-sdk@v1.2.1
       with:
         vulkan-query-version: 1.3.296.0
-        vulkan-components: Vulkan-Headers, Glslang, SPIRV-Tools
+        vulkan-components: Vulkan-Headers, Vulkan-Loader, Glslang, SPIRV-Reflect, SPIRV-Tools
         vulkan-use-cache: true
 
     - name: Configure CMake
@@ -59,12 +74,14 @@ jobs:
       run: >
         cmake -B ${{github.workspace}}/build
         -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
-        -DCMAKE_INSTALL_PREFIX=/usr
         -DFETCHCONTENT_BASE_DIR=${{github.workspace}}/cmake-fetch
-        --preset ${{ matrix.cmake_preset }}
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+        --preset ${{ matrix.config.preset }}
+        -DWIVRN_USE_SYSTEM_OPENXR=OFF
 
     - name: Package build dependencies
-      if: ${{ matrix.cmake_preset == 'server' }}
+      if: ${{ matrix.config.preset == 'server' }}
       # For easier packaging, build dependencies are made available as a separate archive
       run: (cd ${{github.workspace}}/cmake-fetch ; tar --create --xz *-src) > ${{github.workspace}}/server-build-deps.tar.xz
 
@@ -73,7 +90,7 @@ jobs:
       run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
 
     - name: Publish build dependencies
-      if: ${{ matrix.cmake_preset == 'server' }}
+      if: ${{ matrix.config.preset == 'server' }}
       uses: actions/upload-artifact@v4
       with:
         name: server-build-deps
@@ -81,7 +98,7 @@ jobs:
 
     - name: Release build dependencies
       uses: softprops/action-gh-release@v2
-      if: startsWith(github.ref, 'refs/tags/') && matrix.cmake_preset == 'server'
+      if: startsWith(github.ref, 'refs/tags/') && matrix.config.preset == 'server'
       with:
         tag_name: ${{ inputs.ref }}
         generate_release_notes: true
@@ -89,26 +106,51 @@ jobs:
         files: server-build-deps.tar.xz
 
   build-dashboard:
-    name: Linux dashboard
+    #FIXME: merge with the matrixed build once Ubuntu gets updated
+    name: Linux Dashboard
     runs-on: ubuntu-24.04
     container: ubuntu:plucky
     if: ${{ vars.APK_ONLY == '' }}
+
     steps:
     - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
 
-    - name: Install dependencies
-      run: >
-        apt-get update && apt-get install --yes libvulkan-dev libcjson-dev libx264-dev libavcodec-dev libavutil-dev libswscale-dev libavfilter-dev libbsd-dev  libwayland-dev libx11-xcb-dev libxrandr-dev libxcb-randr0-dev libgl-dev libglx-dev mesa-common-dev libgl1-mesa-dev libglu1-mesa-dev libsystemd-dev libva-dev nlohmann-json3-dev qt6-base-dev qt6-tools-dev libcap-dev pkexec libboost-all-dev librsvg2-bin libssl-dev libnotify-dev qt6-declarative-dev extra-cmake-modules libkirigami-dev libkf6i18n-dev libkf6coreaddons-dev libkf6qqc2desktopstyle-dev libkf6iconthemes-dev jq sudo cmake gcc g++ git qcoro-qt6-dev librsvg2-dev libarchive-dev libglm-dev glslang-tools
-# runtime: qml6-module-qtqml-workerscript qml6-module-qtquick-dialogs
+    - name: Prepare
+      run: |
+        apt update
+        apt install --yes curl wget sudo
+
+    - name: Apt dependencies
+      uses: awalsh128/cache-apt-pkgs-action@v1.6.0
+      with:
+        packages: sudo jq cmake gcc g++ git pkgconf libboost-all-dev libkirigami-dev gettext libarchive-dev nlohmann-json3-dev qcoro-qt6-dev libkf6i18n-dev libkf6coreaddons-dev libkf6qqc2desktopstyle-dev libkf6iconthemes-dev libvulkan-dev libssl-dev librsvg2-dev extra-cmake-modules libcap-dev
+
+    - uses: actions/cache@v4
+      with:
+        key: cmake-linux-dashboard
+        path: |
+          ${{github.workspace}}/cmake-fetch/*-subbuild/*-populate-prefix/src/*.tar.*
+          ${{github.workspace}}/cmake-fetch/*-subbuild/*-populate-prefix/src/*.zip
+          ${{github.workspace}}/cmake-fetch/*.tar.*
+        restore-keys: cmake-linux-
+
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: dashboard-${{matrix.cmake_preset}}
+        append-timestamp: false
 
     - name: Configure CMake
+      # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
+      # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
       run: >
         cmake -B ${{github.workspace}}/build
         -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
-        -DCMAKE_INSTALL_PREFIX=/usr
+        -DFETCHCONTENT_BASE_DIR=${{github.workspace}}/cmake-fetch
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
         --preset dashboard
+        -DWIVRN_USE_SYSTEM_OPENXR=OFF
 
     - name: Build
       # Build your program with the given configuration
@@ -171,95 +213,6 @@ jobs:
     - run: nix flake check
     - run: nix build --print-build-logs
 
-  build-test-client:
-    name: Linux client
-    runs-on: ubuntu-24.04
-    if: ${{ vars.APK_ONLY == '' }}
-
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-
-    - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
-      with:
-        key: client
-        restore-keys: server-
-        append-timestamp: false
-        create-symlink: true
-
-    - name: Prepare Vulkan SDK
-      uses: humbletim/setup-vulkan-sdk@286ed76c72de45dbf50c515779cf4ca2f6aa3944
-      with:
-        vulkan-query-version: 1.3.296.0
-        vulkan-components: Vulkan-Headers, Glslang, SPIRV-Tools
-        vulkan-use-cache: true
-
-    - name: Install dependencies
-      run: |
-        sudo apt-get update && sudo apt-get install libvulkan-dev libcjson-dev libx264-dev libavcodec-dev libavutil-dev libswscale-dev libavfilter-dev libbsd-dev libavahi-client-dev libeigen3-dev glslang-tools libudev-dev libwayland-dev libx11-xcb-dev libxrandr-dev libxcb-randr0-dev libgl-dev libglx-dev mesa-common-dev libgl1-mesa-dev libglu1-mesa-dev libsystemd-dev libva-dev libxcb-glx0-dev gettext libfontconfig-dev libboost-all-dev librsvg2-bin libssl-dev sway grim libcurl4-openssl-dev libharfbuzz-dev libfreetype-dev
-
-        wget https://github.com/KhronosGroup/KTX-Software/releases/download/v4.4.2/KTX-Software-4.4.2-Linux-x86_64.deb
-        sudo dpkg --install KTX-Software-4.4.2-Linux-x86_64.deb
-        npm install --global @gltf-transform/cli@4.1.1
-
-    - name: install server dependencies
-      run: >
-        sudo apt-get update && sudo apt-get install libavahi-glib-dev nlohmann-json3-dev xz-utils libpipewire-0.3-dev libcli11-dev libcap-dev pkexec libnotify-dev librsvg2-dev libarchive-dev
-
-    - name: Configure CMake
-      run: >
-        cmake -B ${{github.workspace}}/build
-        -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
-        -DCMAKE_INSTALL_PREFIX=/usr
-        -DWIVRN_USE_SYSTEM_OPENXR=OFF
-        --preset everything
-        -DWIVRN_USE_PULSEAUDIO=OFF
-        -DWIVRN_BUILD_DASHBOARD=OFF
-        -DWIVRN_BUILD_DISSECTOR=OFF
-
-    - name: Build
-      run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
-
-  build-dissector:
-    name: Wireshark dissector
-    runs-on: ubuntu-24.04
-    if: ${{ vars.APK_ONLY == '' }}
-
-    strategy:
-      matrix:
-        # Ubuntu 24.04 has boost 1.83, the dissector requires 1.84
-        # cmake_preset: ['dissector', 'dissector-no-system-boost']
-        cmake_preset: ['dissector-no-system-boost']
-
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-
-    - name: Prepare Vulkan SDK
-      uses: humbletim/setup-vulkan-sdk@286ed76c72de45dbf50c515779cf4ca2f6aa3944
-      with:
-        vulkan-query-version: 1.3.296.0
-        vulkan-components: Vulkan-Headers, Glslang, SPIRV-Tools
-        vulkan-use-cache: true
-
-    - name: Install dependencies
-      run: >
-        sudo apt-get update && sudo apt-get install libvulkan-dev libopenxr-dev wireshark wireshark-dev libssl-dev
-
-    - name: Configure CMake
-      run: >
-        cmake -B ${{github.workspace}}/build
-        -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
-        -DCMAKE_INSTALL_PREFIX=/usr
-        --preset ${{ matrix.cmake_preset }}
-        -DWIVRN_USE_SYSTEM_OPENXR=OFF
-
-    - name: Build
-      run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
-
   build-android:
     name: Android
     runs-on: ubuntu-24.04
@@ -276,7 +229,7 @@ jobs:
         fetch-depth: 0
 
     - name: Prepare Vulkan SDK
-      uses: humbletim/setup-vulkan-sdk@286ed76c72de45dbf50c515779cf4ca2f6aa3944
+      uses: humbletim/setup-vulkan-sdk@v1.2.1
       with:
         vulkan-query-version: 1.3.296.0
         vulkan-components: Glslang, SPIRV-Tools
@@ -494,7 +447,7 @@ jobs:
   release:
     name: Create release
     runs-on: ubuntu-22.04
-    needs: [build-server, build-android, build-test-client, build-dissector, build-server-flatpak, build-ubuntu, build-dashboard]
+    needs: [build-linux, build-android, build-server-flatpak, build-ubuntu]
     if: success() && startsWith(github.ref, 'refs/tags/')
 
     steps:
@@ -580,8 +533,8 @@ jobs:
   sync_fork_downstream:
     name: Sync fork downstream
     runs-on: ubuntu-24.04
-    needs: [build-server, build-android]
-    if: ${{ vars.APK_ONLY == '' }} && github.branch == 'master'
+    needs: [build-linux, build-android]
+    if: ${{ vars.APK_ONLY == '' && github.branch == 'master' }}
     steps:
       - name: Check for DOWNSTREAM_GITHUB_TOKEN
         id: downstream-secret-check
