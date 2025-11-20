@@ -42,6 +42,7 @@ jobs:
       uses: hendrikmuhs/ccache-action@v1.2
       with:
         key: linux-${{matrix.config.preset}}
+        job-summary: ""
         restore-keys: linux-
         append-timestamp: false
 
@@ -117,13 +118,8 @@ jobs:
 
     - name: Prepare
       run: |
-        apt update
-        apt install --yes curl wget sudo
-
-    - name: Apt dependencies
-      uses: awalsh128/cache-apt-pkgs-action@v1.6.0
-      with:
-        packages: sudo jq cmake gcc g++ git pkgconf libboost-all-dev libkirigami-dev gettext libarchive-dev nlohmann-json3-dev qcoro-qt6-dev libkf6i18n-dev libkf6coreaddons-dev libkf6qqc2desktopstyle-dev libkf6iconthemes-dev libvulkan-dev libssl-dev librsvg2-dev extra-cmake-modules libcap-dev
+        apt-get update
+        apt-get install --yes curl wget sudo jq cmake gcc g++ git pkgconf libboost-all-dev libkirigami-dev gettext libarchive-dev nlohmann-json3-dev qcoro-qt6-dev libkf6i18n-dev libkf6coreaddons-dev libkf6qqc2desktopstyle-dev libkf6iconthemes-dev libvulkan-dev libssl-dev librsvg2-dev extra-cmake-modules
 
     - uses: actions/cache@v4
       with:
@@ -134,12 +130,6 @@ jobs:
           ${{github.workspace}}/cmake-fetch/*.tar.*
         restore-keys: cmake-linux-
 
-    - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
-      with:
-        key: dashboard-${{matrix.cmake_preset}}
-        append-timestamp: false
-
     - name: Configure CMake
       # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
       # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
@@ -147,8 +137,6 @@ jobs:
         cmake -B ${{github.workspace}}/build
         -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
         -DFETCHCONTENT_BASE_DIR=${{github.workspace}}/cmake-fetch
-        -DCMAKE_C_COMPILER_LAUNCHER=ccache
-        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
         --preset dashboard
         -DWIVRN_USE_SYSTEM_OPENXR=OFF
 
@@ -385,7 +373,7 @@ jobs:
     - name: Install dependencies
       run: |
         apt update
-        apt install --yes libcjson-dev libx264-dev libavcodec-dev libavutil-dev libswscale-dev libavfilter-dev libbsd-dev libavahi-client-dev libavahi-glib-dev libeigen3-dev glslang-tools libudev-dev libwayland-dev libx11-xcb-dev libxrandr-dev libxcb-randr0-dev libgl-dev libglx-dev mesa-common-dev libgl1-mesa-dev libglu1-mesa-dev libsystemd-dev libva-dev nlohmann-json3-dev libpulse-dev xz-utils libpipewire-0.3-dev libcli11-dev qt6-base-dev qt6-tools-dev libcap-dev pkexec libboost-all-dev librsvg2-bin dpkg-dev pkg-config debhelper-compat build-essential lintian cmake libnotify-dev qt6-declarative-dev extra-cmake-modules libkirigami-dev libkf6i18n-dev libkf6coreaddons-dev libkf6qqc2desktopstyle-dev libkf6iconthemes-dev jq sudo cmake gcc g++ git wget libssl-dev qcoro-qt6-dev librsvg2-dev libarchive-dev npm
+        apt install --yes libcjson-dev libx264-dev libavcodec-dev libavutil-dev libswscale-dev libavfilter-dev libbsd-dev libavahi-client-dev libavahi-glib-dev libeigen3-dev glslang-tools libudev-dev libwayland-dev libx11-xcb-dev libxrandr-dev libxcb-randr0-dev libgl-dev libglx-dev mesa-common-dev libgl1-mesa-dev libglu1-mesa-dev libsystemd-dev libva-dev nlohmann-json3-dev libpulse-dev xz-utils libpipewire-0.3-dev libcli11-dev qt6-base-dev qt6-tools-dev pkexec libboost-all-dev librsvg2-bin dpkg-dev pkg-config debhelper-compat build-essential lintian cmake libnotify-dev qt6-declarative-dev extra-cmake-modules libkirigami-dev libkf6i18n-dev libkf6coreaddons-dev libkf6qqc2desktopstyle-dev libkf6iconthemes-dev jq sudo cmake gcc g++ git wget libssl-dev qcoro-qt6-dev librsvg2-dev libarchive-dev npm
 
         wget https://github.com/KhronosGroup/KTX-Software/releases/download/v4.3.2/KTX-Software-4.3.2-Linux-x86_64.deb
         sudo dpkg --install KTX-Software-4.3.2-Linux-x86_64.deb
@@ -534,7 +522,7 @@ jobs:
     name: Sync fork downstream
     runs-on: ubuntu-24.04
     needs: [build-linux, build-android]
-    if: ${{ vars.APK_ONLY == '' && github.branch == 'master' }}
+    if: ${{ vars.APK_ONLY == '' && github.ref == 'refs/heads/master' }}
     steps:
       - name: Check for DOWNSTREAM_GITHUB_TOKEN
         id: downstream-secret-check

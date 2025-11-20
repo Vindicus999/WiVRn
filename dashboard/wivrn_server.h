@@ -151,7 +151,6 @@ class wivrn_server : public QObject
 	std::unique_ptr<QDBusPendingCallWatcher> get_all_properties_call_watcher;
 
 	QProcess * server_process = nullptr;
-	std::unique_ptr<QProcess> setcap_process;
 
 public:
 	wivrn_server(QObject * parent = nullptr);
@@ -173,14 +172,13 @@ public:
 
 	// Server information
 	Q_PROPERTY(Status serverStatus READ serverStatus NOTIFY serverStatusChanged)
-	Q_PROPERTY(bool capSysNice READ capSysNice NOTIFY capSysNiceChanged)
 	Q_PROPERTY(bool headsetConnected READ isHeadsetConnected NOTIFY headsetConnectedChanged)
+	Q_PROPERTY(bool sessionRunning READ isSessionRunning NOTIFY sessionRunningChanged)
 	Q_PROPERTY(QString jsonConfiguration READ jsonConfiguration WRITE setJsonConfiguration NOTIFY jsonConfigurationChanged)
 	Q_PROPERTY(QString serverLogs READ serverLogs NOTIFY serverLogsChanged)
 	Q_INVOKABLE void start_server();
 	Q_INVOKABLE void stop_server();
 	Q_INVOKABLE void restart_server();
-	Q_INVOKABLE void grant_cap_sys_nice();
 	Q_INVOKABLE void open_server_logs();
 
 	// Authentication
@@ -222,14 +220,14 @@ public:
 		return m_serverStatus;
 	}
 
-	bool capSysNice() const
-	{
-		return m_capSysNice;
-	}
-
 	bool isHeadsetConnected() const
 	{
 		return m_headsetConnected;
+	}
+
+	bool isSessionRunning() const
+	{
+		return m_sessionRunning;
 	}
 
 	QString jsonConfiguration() const
@@ -349,8 +347,8 @@ private:
 	void refresh_server_properties();
 
 	Status m_serverStatus{Status::Stopped};
-	bool m_capSysNice{};
 	bool m_headsetConnected{};
+	bool m_sessionRunning{};
 	QString m_jsonConfiguration{};
 
 	QString m_pin{};
@@ -374,8 +372,8 @@ private:
 
 Q_SIGNALS:
 	void serverStatusChanged(Status);
-	void capSysNiceChanged(bool);
 	void headsetConnectedChanged(bool);
+	void sessionRunningChanged(bool);
 	void jsonConfigurationChanged(QString);
 	void needMonadoVulkanLayerChanged(bool);
 	void pinChanged(QString);

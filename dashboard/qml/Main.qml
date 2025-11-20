@@ -11,10 +11,6 @@ Kirigami.ApplicationWindow {
     id: root
     title: i18n("WiVRn dashboard")
 
-    Settings {
-        id: config
-    }
-
     ConnectUsbDialog {
         id: select_usb_device
     }
@@ -51,11 +47,6 @@ Kirigami.ApplicationWindow {
 
     Connections {
         target: WivrnServer
-        function onCapSysNiceChanged(value) {
-            if (WivrnServer.serverStatus != WivrnServer.Stopped)
-                restart_capsysnice.visible = true;
-        }
-
         function onServerStatusChanged(value) {
             var started = value == WivrnServer.Started;
 
@@ -77,10 +68,6 @@ Kirigami.ApplicationWindow {
         function onPairingEnabledChanged(value) {
             if (switch_pairing.checked != WivrnServer.pairingEnabled)
                 switch_pairing.checked = WivrnServer.pairingEnabled;
-        }
-
-        function onJsonConfigurationChanged() {
-            config.load(WivrnServer);
         }
 
         function onServerError(info) {
@@ -141,21 +128,6 @@ Kirigami.ApplicationWindow {
 
                     Kirigami.InlineMessage {
                         Layout.fillWidth: true
-                        text: i18n("The server does not have CAP_SYS_NICE capabilities")
-                        // type: Kirigami.MessageType.Warning
-                        type: Kirigami.MessageType.Information
-                        showCloseButton: true
-                        visible: DashboardSettings.show_system_checks && !WivrnServer.capSysNice
-                        actions: [
-                            Kirigami.Action {
-                                text: i18n("Fix it")
-                                onTriggered: WivrnServer.grant_cap_sys_nice()
-                            }
-                        ]
-                    }
-
-                    Kirigami.InlineMessage {
-                        Layout.fillWidth: true
                         text: i18n("Firewall may not allow port 9757")
                         type: Kirigami.MessageType.Warning
                         showCloseButton: true
@@ -164,24 +136,6 @@ Kirigami.ApplicationWindow {
                             Kirigami.Action {
                                 text: i18n("Fix it")
                                 onTriggered: Firewall.doSetup()
-                            }
-                        ]
-                    }
-
-                    Kirigami.InlineMessage {
-                        id: restart_capsysnice
-                        Layout.fillWidth: true
-                        text: i18n("The CAP_SYS_NICE capability will be used when the server is restarted")
-                        type: Kirigami.MessageType.Information
-                        showCloseButton: true
-                        visible: false
-                        actions: [
-                            Kirigami.Action {
-                                text: i18nc("restart the server", "Restart now")
-                                onTriggered: {
-                                    WivrnServer.restart_server();
-                                    restart_capsysnice.visible = false;
-                                }
                             }
                         ]
                     }
@@ -213,7 +167,60 @@ Kirigami.ApplicationWindow {
                         text: i18n("No OpenVR compatibility detected, Steam games won't be able to load VR.\nInstall xrizer or OpenComposite.")
                         type: Kirigami.MessageType.Warning
                         showCloseButton: true
-                        visible: WivrnServer.openVRCompat.length == 0 && config.openvr == ""
+                        visible: WivrnServer.openVRCompat.length == 0 && Settings.openvr == ""
+                    }
+
+                    Kirigami.InlineMessage {
+                        Layout.fillWidth: true
+                        text: i18n("Steam is installed as a snap. Snaps are not compatible with WiVRn.")
+                        type: Kirigami.MessageType.Warning
+                        showCloseButton: true
+                        visible: DashboardSettings.show_system_checks && Steam.snap
+                    }
+
+                    Kirigami.InlineMessage {
+                        Layout.fillWidth: true
+                        text: i18n("Steam is installed as a flatpak but does not have sufficient permissions.")
+                        type: Kirigami.MessageType.Warning
+                        showCloseButton: true
+                        visible: DashboardSettings.show_system_checks && Steam.flatpakNeedPerm
+                        actions: [
+                            Kirigami.Action {
+                                text: i18n("Fix it")
+                                onTriggered: Steam.fixFlatpakPerm()
+                            }
+                        ]
+                    }
+
+                    Kirigami.InlineMessage {
+                        id: config_restart
+                        Layout.fillWidth: true
+                        text: i18n("Restart the server for configuration changes to take effect")
+                        type: Kirigami.MessageType.Information
+                        showCloseButton: true
+                        visible: false
+                        actions: [
+                            Kirigami.Action {
+                                text: i18nc("restart the server", "Restart now")
+                                onTriggered: {
+                                    WivrnServer.restart_server();
+                                    config_restart.visible = false;
+                                }
+                            }
+                        ]
+                        Connections {
+                            target: Settings
+                            function onSettingsChanged() {
+                                if (WivrnServer.sessionRunning)
+                                    config_restart.visible = true;
+                            }
+                        }
+                        Connections {
+                            target: WivrnServer
+                            function onServerStatusChanged(value) {
+                                config_restart.visible = false;
+                            }
+                        }
                     }
 
                     Kirigami.InlineMessage {
