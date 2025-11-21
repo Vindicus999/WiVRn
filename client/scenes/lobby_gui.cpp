@@ -1090,7 +1090,7 @@ void scenes::lobby::gui_debug()
 void scenes::lobby::gui_about()
 {
 	ImGui::PushFont(nullptr, constants::gui::font_size_large);
-	CenterTextH(std::string("WiVRn ") + wivrn::git_version);
+	CenterTextH(std::string("WiVRn ") + wivrn::display_version());
 	ImGui::PopFont();
 
 	ImGui::Dummy(ImVec2(0, 60));
@@ -1145,6 +1145,8 @@ void scenes::lobby::gui_first_run()
 	ImGui::PushFont(nullptr, constants::gui::font_size_large);
 	CenterTextH(_("Welcome to WiVRn"));
 	ImGui::PopFont();
+
+	config.set_feature(feature::hand_tracking, true);
 
 	while (optional_feature_index < optional_features.size() and
 	       (not optional_features[optional_feature_index].supported or

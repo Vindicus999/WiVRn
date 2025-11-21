@@ -25,6 +25,7 @@
 #include <QList>
 #include <QObject>
 #include <cassert>
+#include <fcntl.h>
 #include <nlohmann/json.hpp>
 #include <qqmlintegration.h>
 
@@ -120,6 +121,7 @@ void Settings::emitAllChanged()
 	openvrChanged();
 	debugGuiChanged();
 	steamVrLhChanged();
+	hidForwardingChanged();
 }
 
 void Settings::load(const wivrn_server * server)
@@ -129,6 +131,7 @@ void Settings::load(const wivrn_server * server)
 	{
 		auto conf = server->jsonConfiguration();
 		m_jsonSettings = nlohmann::json::parse(conf.toUtf8());
+		m_originalSettings = m_jsonSettings;
 		if (not m_jsonSettings.is_object())
 			m_jsonSettings = nlohmann::json::object();
 		emitAllChanged();
@@ -384,6 +387,22 @@ void Settings::set_application(const QString & value)
 		applicationChanged();
 }
 
+bool Settings::hidForwarding() const
+{
+	auto it = m_jsonSettings.find("hid-forwarding");
+	if (it != m_jsonSettings.end() and it->is_boolean())
+		return *it;
+	return false;
+}
+
+void Settings::set_hidForwarding(const bool & value)
+{
+	auto old = hidForwarding();
+	m_jsonSettings["hid-forwarding"] = value;
+	if (old != value)
+		hidForwardingChanged();
+}
+
 bool Settings::debugGui() const
 {
 	// Advanced options (debug window, steamvr_lh)
@@ -495,6 +514,8 @@ bool Settings::can10bit() const
 void Settings::save(wivrn_server * server)
 {
 	server->setJsonConfiguration(QString::fromStdString(m_jsonSettings.dump(2)));
+	if (m_jsonSettings != m_originalSettings)
+		settingsChanged();
 }
 
 void Settings::restore_defaults()
@@ -504,6 +525,7 @@ void Settings::restore_defaults()
 	m_jsonSettings.erase("scale");
 	m_jsonSettings.erase("bitrate");
 	m_jsonSettings.erase("application");
+	m_jsonSettings.erase("hid-forwarding");
 	m_jsonSettings.erase("debug-gui");
 	m_jsonSettings.erase("use-steamvr-lh");
 	m_jsonSettings.erase("tcp-only");
@@ -531,6 +553,27 @@ bool Settings::steamvr_lh() const
 #else
 	return false;
 #endif
+}
+bool Settings::hid_forwarding() const
+{
+	// only called from the UI thread → no locking needed
+	static std::optional<bool> can_open_uinput;
+	if (can_open_uinput.has_value())
+		return can_open_uinput.value();
+
+	can_open_uinput = false;
+	constexpr std::array paths = {"/dev/uinput", "/dev/input/uinput"};
+	for (const char * p: paths)
+	{
+		int fd = ::open(p, O_WRONLY | O_NONBLOCK);
+		if (fd >= 0)
+		{
+			::close(fd);
+			can_open_uinput = true;
+			break;
+		}
+	}
+	return can_open_uinput.value();
 }
 
 #include "moc_settings.cpp"

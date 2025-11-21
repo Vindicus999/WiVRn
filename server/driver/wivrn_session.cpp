@@ -21,6 +21,7 @@
 
 #include "accept_connection.h"
 #include "application.h"
+#include "configuration.h"
 #include "driver/app_pacer.h"
 #include "main/comp_compositor.h"
 #include "main/comp_main_interface.h"
@@ -54,7 +55,6 @@
 #include <vulkan/vulkan.h>
 
 #if WIVRN_FEATURE_STEAMVR_LIGHTHOUSE
-#include "configuration.h"
 #include "steamvr_lh_interface.h"
 #endif
 
@@ -291,6 +291,24 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 		system_name += " on WiVRn";
 		strlcpy(xrt_system.base.properties.name, system_name.c_str(), std::size(xrt_system.base.properties.name));
 	}
+
+	if (configuration().hid_forwarding)
+	{
+		try
+		{
+			uinput_handler.emplace();
+			tracking_control.set_enabled(to_headset::tracking_control::id::hid_input, true);
+		}
+		catch (...)
+		{
+			U_LOG_W("Could not initialize keyboard & mouse forwarding");
+			U_LOG_W("Ensure that the uinput kernel module is loaded and your user is in the input group.");
+			wivrn_ipc_socket_monado->send(from_monado::server_error{
+			        .where = "Could not initialize keyboard & mouse forwarding",
+			        .message = "Ensure that the uinput kernel module is loaded and your user is in the input group.",
+			});
+		}
+	}
 }
 
 wivrn_session::~wivrn_session()
@@ -360,7 +378,7 @@ xrt_result_t wivrn::wivrn_session::create_session(std::unique_ptr<wivrn_connecti
 
 void wivrn_session::start(ipc_server * server)
 {
-	assert(not thread);
+	assert(not thread.joinable());
 	mnd_ipc_server = server;
 	thread = std::jthread([this](auto stop_token) { return run(stop_token); });
 }
@@ -389,6 +407,12 @@ void wivrn_session::unset_comp_target()
 void wivrn_session::operator()(from_headset::headset_info_packet &&)
 {
 	U_LOG_W("unexpected headset info packet, ignoring");
+}
+
+void wivrn_session::operator()(from_headset::settings_changed && settings)
+{
+	connection->info().preferred_refresh_rate = settings.preferred_refresh_rate;
+	connection->info().minimum_refresh_rate = settings.minimum_refresh_rate;
 }
 
 static xrt_device_name get_name(interaction_profile profile)
@@ -584,6 +608,24 @@ void wivrn_session::operator()(from_headset::inputs && inputs)
 		right_controller.set_inputs(inputs, offset);
 }
 
+void wivrn_session::operator()(from_headset::hid::input && e)
+{
+	try
+	{
+		if (uinput_handler)
+			uinput_handler->handle_input(e);
+	}
+	catch (const std::exception & e)
+	{
+		wivrn_ipc_socket_monado->send(from_monado::server_error{
+		        .where = "HID forwarding error",
+		        .message = e.what(),
+		});
+		U_LOG_E("HID forwarding error: %s", e.what());
+		uinput_handler.reset();
+	}
+}
+
 void wivrn_session::operator()(from_headset::timesync_response && timesync)
 {
 	offset_est.add_sample(timesync);
@@ -681,7 +723,7 @@ void wivrn_session::operator()(from_headset::visibility_mask_changed && mask)
 
 void wivrn_session::operator()(from_headset::session_state_changed && event)
 {
-	assert(server);
+	assert(mnd_ipc_server);
 	U_LOG_I("Session state changed: %s", xr::to_string(event.state));
 	bool visible, focused;
 	switch (event.state)
@@ -796,7 +838,7 @@ void wivrn_session::operator()(const from_headset::start_app & request)
 
 void wivrn_session::operator()(const from_headset::get_running_applications &)
 {
-	assert(server);
+	assert(mnd_ipc_server);
 	scoped_lock lock(mnd_ipc_server->global_state.lock);
 	to_headset::running_applications msg{};
 	for (auto & t: mnd_ipc_server->threads)
@@ -821,7 +863,7 @@ void wivrn_session::operator()(const from_headset::get_running_applications &)
 
 void wivrn_session::operator()(const from_headset::set_active_application & req)
 {
-	assert(server);
+	assert(mnd_ipc_server);
 	ipc_server_set_active_client(mnd_ipc_server, req.id);
 	ipc_server_update_state(mnd_ipc_server);
 	// Send a refreshed application list
@@ -830,14 +872,14 @@ void wivrn_session::operator()(const from_headset::set_active_application & req)
 
 void wivrn_session::operator()(const from_headset::stop_application & req)
 {
-	assert(server);
+	assert(mnd_ipc_server);
 	scoped_lock lock(mnd_ipc_server->global_state.lock);
 	for (auto & t: mnd_ipc_server->threads)
 	{
 		if (t.ics.client_state.id == req.id)
 		{
 			U_LOG_I("Notify session loss pending for %s", t.ics.client_state.info.application_name);
-			auto when = os_monotonic_get_ns() + 200 * U_TIME_1MS_IN_NS;
+			auto when = os_monotonic_get_ns() + 10l * U_TIME_1S_IN_NS;
 			xrt_syscomp_notify_loss_pending(system_compositor, t.ics.xc, when);
 			session_loss.lock()->emplace(when, req.id);
 			break;
@@ -849,6 +891,12 @@ void wivrn_session::operator()(audio_data && data)
 {
 	if (audio_handle)
 		audio_handle->process_mic_data(std::move(data));
+}
+
+void wivrn_session::operator()(to_monado::stop &&)
+{
+	assert(mnd_ipc_server);
+	ipc_server_stop(mnd_ipc_server);
 }
 
 void wivrn_session::operator()(to_monado::disconnect &&)
@@ -868,23 +916,17 @@ struct refresh_rate_adjuster
 {
 	std::chrono::seconds period{10};
 	std::chrono::steady_clock::time_point next = std::chrono::steady_clock::now() + period;
-	bool enabled;
 	pacing_app_factory & pacers;
-	const from_headset::headset_info_packet & info;
+	from_headset::headset_info_packet & info;
 	float last = 0;
 
-	refresh_rate_adjuster(const from_headset::headset_info_packet & info, pacing_app_factory & pacers) :
-	        enabled(info.preferred_refresh_rate == 0 and info.available_refresh_rates.size() > 1),
+	refresh_rate_adjuster(from_headset::headset_info_packet & info, pacing_app_factory & pacers) :
 	        pacers(pacers),
-	        info(info)
-	{
-		if (enabled)
-			U_LOG_I("Automatic refresh rate adjustment enabled");
-	}
+	        info(info) {}
 
 	void adjust(wivrn_connection & cnx)
 	{
-		if (not enabled or std::chrono::steady_clock::now() < next)
+		if (info.preferred_refresh_rate != 0 or info.available_refresh_rates.size() < 2 or std::chrono::steady_clock::now() < next)
 			return;
 
 		// Maximum refresh rate the application can reach
@@ -894,7 +936,7 @@ struct refresh_rate_adjuster
 		auto requested = info.available_refresh_rates.back();
 		for (auto rate: info.available_refresh_rates)
 		{
-			if (rate < app_rate * (rate == last ? 1. : 0.9))
+			if (rate > info.minimum_refresh_rate and rate < app_rate * (rate == last ? 1. : 0.9))
 				requested = rate;
 		}
 		if (requested != last)
@@ -914,7 +956,7 @@ struct refresh_rate_adjuster
 
 void wivrn_session::run(std::stop_token stop)
 {
-	refresh_rate_adjuster refresh(get_info(), app_pacers);
+	refresh_rate_adjuster refresh(connection->info(), app_pacers);
 	while (not stop.stop_requested())
 	{
 		try
@@ -973,6 +1015,7 @@ static bool quit_if_no_client(u_system & xrt_system)
 
 void wivrn_session::reconnect()
 {
+	assert(mnd_ipc_server);
 	// Notify clients about disconnected status
 	xrt_session_event event{
 	        .state = {
@@ -988,7 +1031,7 @@ void wivrn_session::reconnect()
 	}
 
 	U_LOG_I("Waiting for new connection");
-	auto tcp = accept_connection(0 /*stdin*/, [this]() { return quit_if_no_client(xrt_system); });
+	auto tcp = accept_connection(mnd_ipc_server, 0 /*stdin*/, [this]() { return quit_if_no_client(xrt_system); });
 	if (not tcp)
 		exit(0);
 
@@ -1035,7 +1078,7 @@ void wivrn_session::reconnect()
 
 void wivrn_session::poll_session_loss()
 {
-	assert(server);
+	assert(mnd_ipc_server);
 	auto locked = session_loss.lock();
 	auto now = os_monotonic_get_ns();
 	if (locked->empty())
