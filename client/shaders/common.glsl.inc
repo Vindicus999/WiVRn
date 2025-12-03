@@ -33,7 +33,16 @@ layout(set = 0, binding = 4) uniform sampler2D metallic_roughness_texture;
 layout(set = 0, binding = 5) uniform sampler2D occlusion_texture;
 layout(set = 0, binding = 6) uniform sampler2D emissive_texture;
 layout(set = 0, binding = 7) uniform sampler2D normal_map_texture;
-layout(set = 0, binding = 8) uniform material_ubo
+
+struct texture_info
+{
+	int texcoord;
+	float rotation;
+	vec2 offset;
+	vec2 scale;
+};
+
+layout(std140, set = 0, binding = 8) uniform material_ubo
 {
     vec4 base_color_factor;
     vec4 base_emissive_factor;
@@ -43,11 +52,11 @@ layout(set = 0, binding = 8) uniform material_ubo
     float normal_scale;
     float alpha_cutoff;
 
-    int base_color_texcoord;
-    int metallic_roughness_texcoord;
-    int occlusion_texcoord;
-    int emissive_texcoord;
-    int normal_texcoord;
+    texture_info base_color;
+    texture_info metallic_roughness;
+    texture_info occlusion;
+    texture_info emissive;
+    texture_info normal;
 } material;
 
 const float dither_pattern[4][4] = {
@@ -91,6 +100,26 @@ vec4 dither(ivec2 frag_coord, vec4 colour)
 	return colour + one_over_d_linear_to_srgb(colour) * vec4(dither_thd, dither_thd, dither_thd, 0) / 255.0f;
 }
 
+vec2 compute_texcoord(texture_info info, vec2 in_texcoord)
+{
+	mat3 translation = mat3(
+		1, 0, 0,
+		0, 1, 0,
+		info.offset.x, info.offset.y, 1);
+	mat3 rotation = mat3(
+		cos(info.rotation), sin(info.rotation), 0,
+		-sin(info.rotation), cos(info.rotation), 0,
+		0, 0, 1);
+	mat3 scale = mat3(
+		info.scale.x, 0, 0,
+		0, info.scale.y, 0,
+		0, 0, 1);
+
+	mat3 matrix = translation * rotation * scale;
+
+	return (matrix * vec3(in_texcoord, 1)).xy;
+}
+
 #ifdef FRAG_SHADER
 #define VS_TO_FS in
 #else
@@ -102,4 +131,8 @@ layout(location = 0) VS_TO_FS vec3 normal;
 layout(location = 1) VS_TO_FS vec4 tangent;
 layout(location = 2) VS_TO_FS vec4 frag_pos;
 layout(location = 3) VS_TO_FS vec4 light_pos;
-layout(location = 4) VS_TO_FS vec2 texcoord[nb_texcoords];
+layout(location = 4) VS_TO_FS vec2 texcoord_base_color;
+layout(location = 5) VS_TO_FS vec2 texcoord_metallic_roughness;
+layout(location = 6) VS_TO_FS vec2 texcoord_occlusion;
+layout(location = 7) VS_TO_FS vec2 texcoord_emissive;
+layout(location = 8) VS_TO_FS vec2 texcoord_normal;

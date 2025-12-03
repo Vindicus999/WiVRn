@@ -18,10 +18,12 @@
 
 #include "scene_loader.h"
 
+#include "application.h"
 #include "gpu_buffer.h"
 #include "image_loader.h"
 #include "render/scene_components.h"
 #include "render/vertex_layout.h"
+#include "utils/contains.h"
 #include "utils/files.h"
 #include "utils/json_string.h"
 #include "utils/mapped_file.h"
@@ -164,6 +166,11 @@ glm::vec4 convert(const fastgltf::math::nvec4 & v)
 glm::vec3 convert(const fastgltf::math::nvec3 & v)
 {
 	return {v[0], v[1], v[2]};
+}
+
+glm::vec2 convert(const fastgltf::math::nvec2 & v)
+{
+	return {v[0], v[1]};
 }
 
 components::animation_track_base::interpolation_t convert(fastgltf::AnimationInterpolation interpolation)
@@ -441,7 +448,9 @@ struct : std::error_category
 
 fastgltf::Asset load_gltf_asset(fastgltf::GltfDataBuffer & buffer, const std::filesystem::path & directory)
 {
-	fastgltf::Parser parser(fastgltf::Extensions::KHR_texture_basisu);
+	fastgltf::Parser parser(
+	        fastgltf::Extensions::KHR_texture_basisu |
+	        fastgltf::Extensions::KHR_texture_transform);
 
 	auto gltf_options =
 	        fastgltf::Options::DontRequireValidAssetMember |
@@ -750,37 +759,37 @@ public:
 			material_data.roughness_factor = gltf_material.pbrData.roughnessFactor;
 			material_data.alpha_cutoff = gltf_material.alphaCutoff;
 
-			if (gltf_material.pbrData.baseColorTexture)
-			{
-				material.base_color_texture = textures.at(gltf_material.pbrData.baseColorTexture->textureIndex);
-				material_data.base_color_texcoord = gltf_material.pbrData.baseColorTexture->texCoordIndex;
-			}
+			auto f = [&](const auto & texture_info,
+			             std::shared_ptr<renderer::texture> & texture,
+			             renderer::material::texture_info & info) {
+				if (not texture_info)
+					return;
 
-			if (gltf_material.pbrData.metallicRoughnessTexture)
-			{
-				material.metallic_roughness_texture = textures.at(gltf_material.pbrData.metallicRoughnessTexture->textureIndex);
-				material_data.metallic_roughness_texcoord = gltf_material.pbrData.metallicRoughnessTexture->texCoordIndex;
-			}
+				texture = textures.at(texture_info->textureIndex);
+				info.texcoord = texture_info->texCoordIndex;
+
+				if (auto & xform = texture_info->transform)
+				{
+					if (xform->texCoordIndex)
+						info.texcoord = *xform->texCoordIndex;
+
+					info.rotation = xform->rotation;
+					info.offset = convert(xform->uvOffset);
+					info.scale = convert(xform->uvScale);
+				}
+			};
+
+			f(gltf_material.pbrData.baseColorTexture, material.base_color_texture, material_data.base_color);
+			f(gltf_material.pbrData.metallicRoughnessTexture, material.metallic_roughness_texture, material_data.metallic_roughness);
+			f(gltf_material.occlusionTexture, material.occlusion_texture, material_data.occlusion);
+			f(gltf_material.emissiveTexture, material.emissive_texture, material_data.emissive);
+			f(gltf_material.normalTexture, material.normal_texture, material_data.normal);
 
 			if (gltf_material.occlusionTexture)
-			{
-				material.occlusion_texture = textures.at(gltf_material.occlusionTexture->textureIndex);
-				material_data.occlusion_texcoord = gltf_material.occlusionTexture->texCoordIndex;
 				material_data.occlusion_strength = gltf_material.occlusionTexture->strength;
-			}
-
-			if (gltf_material.emissiveTexture)
-			{
-				material.emissive_texture = textures.at(gltf_material.emissiveTexture->textureIndex);
-				material_data.emissive_texcoord = gltf_material.emissiveTexture->texCoordIndex;
-			}
 
 			if (gltf_material.normalTexture)
-			{
-				material.normal_texture = textures.at(gltf_material.normalTexture->textureIndex);
-				material_data.normal_texcoord = gltf_material.normalTexture->texCoordIndex;
 				material_data.normal_scale = gltf_material.normalTexture->scale;
-			}
 
 			material.offset = staging_buffer.add_uniform(material_data);
 		}
@@ -808,30 +817,8 @@ public:
 					fastgltf::Accessor & indices_accessor = gltf.accessors.at(*gltf_primitive.indicesAccessor);
 
 					primitive_ref.indexed = true;
-					primitive_ref.index_offset = staging_buffer.add_indices(indices_accessor);
+					std::tie(primitive_ref.index_offset, primitive_ref.index_type) = staging_buffer.add_indices(indices_accessor);
 					primitive_ref.index_count = indices_accessor.count;
-
-					switch (indices_accessor.componentType)
-					{
-						case fastgltf::ComponentType::Byte:
-						case fastgltf::ComponentType::UnsignedByte:
-							primitive_ref.index_type = vk::IndexType::eUint8EXT;
-							break;
-
-						case fastgltf::ComponentType::Short:
-						case fastgltf::ComponentType::UnsignedShort:
-							primitive_ref.index_type = vk::IndexType::eUint16;
-							break;
-
-						case fastgltf::ComponentType::Int:
-						case fastgltf::ComponentType::UnsignedInt:
-							primitive_ref.index_type = vk::IndexType::eUint32;
-							break;
-
-						default:
-							throw std::runtime_error("Invalid index type");
-							break;
-					}
 				}
 				else
 					primitive_ref.indexed = false;
@@ -1089,8 +1076,6 @@ std::shared_ptr<entt::registry> scene_loader::operator()(
         const std::filesystem::path & gltf_texture_cache,
         std::function<void(float)> progress_cb)
 {
-	vk::PhysicalDeviceProperties physical_device_properties = physical_device.getProperties();
-
 	auto data_buffer = fastgltf::GltfDataBuffer::FromBytes(data.data(), data.size());
 	if (auto error = data_buffer.error(); error != fastgltf::Error::None)
 		throw std::system_error((int)error, fastgltf_error_category);
@@ -1108,7 +1093,7 @@ std::shared_ptr<entt::registry> scene_loader::operator()(
 	// Load all buffers from URIs
 	ctx.load_all_buffers();
 
-	gpu_buffer staging_buffer(physical_device_properties, asset);
+	gpu_buffer staging_buffer(physical_device, asset);
 
 	// Load all textures
 	auto textures = ctx.load_all_textures(gltf_texture_cache, progress_cb);
