@@ -34,6 +34,7 @@
 #include "utils/scoped_lock.h"
 
 #include "audio/audio_setup.h"
+#include "wivrn_android_face_tracker.h"
 #include "wivrn_comp_target.h"
 #include "wivrn_config.h"
 #include "wivrn_eye_tracker.h"
@@ -228,6 +229,12 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 	}
 
 	auto face = get_info().face_tracking;
+	if (face == from_headset::face_type::android || is_forced_extension("ANDROID_face_tracking"))
+	{
+		android_face_tracker = std::make_unique<wivrn_android_face_tracker>(&hmd, *this);
+		static_roles.face = android_face_tracker.get();
+		xdevs[xdev_count++] = android_face_tracker.get();
+	}
 	if (face == from_headset::face_type::fb2 || is_forced_extension("FB_face_tracking2"))
 	{
 		fb_face2_tracker = std::make_unique<wivrn_fb_face2_tracker>(&hmd, *this);
@@ -354,6 +361,7 @@ xrt_result_t wivrn::wivrn_session::create_session(std::unique_ptr<wivrn_connecti
 	u_builder_create_space_overseer_legacy(
 	        &self->xrt_system.broadcast,
 	        &self->hmd,
+	        self->eye_tracker.get(),
 	        &self->left_controller,
 	        &self->right_controller,
 	        nullptr,
@@ -551,7 +559,9 @@ void wivrn_session::operator()(const from_headset::tracking & tracking)
 			comp_target->foveation->update_tracking(tracking, offset);
 	}
 
-	if (fb_face2_tracker)
+	if (android_face_tracker)
+		android_face_tracker->update_tracking(tracking, offset);
+	else if (fb_face2_tracker)
 		fb_face2_tracker->update_tracking(tracking, offset);
 	else if (htc_face_tracker)
 		htc_face_tracker->update_tracking(tracking, offset);
@@ -746,7 +756,7 @@ void wivrn_session::operator()(from_headset::session_state_changed && event)
 			continue;
 		bool current = t.ics.client_state.session_overlay or
 		               mnd_ipc_server->global_state.active_client_index == t.ics.server_thread_index;
-		xrt_syscomp_set_state(system_compositor, t.ics.xc, visible and current, focused and current);
+		xrt_syscomp_set_state(system_compositor, t.ics.xc, visible and current, focused and current, os_monotonic_get_ns());
 	}
 }
 void wivrn_session::operator()(from_headset::user_presence_changed && event)
@@ -1112,6 +1122,7 @@ xrt_result_t wivrn_session::feature_inc(xrt_device_feature_type type)
 		case XRT_DEVICE_FEATURE_HAND_TRACKING_LEFT:
 		case XRT_DEVICE_FEATURE_HAND_TRACKING_RIGHT:
 		case XRT_DEVICE_FEATURE_EYE_TRACKING:
+		case XRT_DEVICE_FEATURE_FACE_TRACKING:
 			return XRT_SUCCESS;
 		default:
 			return XRT_ERROR_FEATURE_NOT_SUPPORTED;
@@ -1125,6 +1136,7 @@ xrt_result_t wivrn_session::feature_dec(xrt_device_feature_type type)
 		case XRT_DEVICE_FEATURE_HAND_TRACKING_LEFT:
 		case XRT_DEVICE_FEATURE_HAND_TRACKING_RIGHT:
 		case XRT_DEVICE_FEATURE_EYE_TRACKING:
+		case XRT_DEVICE_FEATURE_FACE_TRACKING:
 			return XRT_SUCCESS;
 		default:
 			return XRT_ERROR_FEATURE_NOT_SUPPORTED;

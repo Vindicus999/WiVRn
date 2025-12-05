@@ -3,6 +3,7 @@
  * Copyright (C) 2024  Guillaume Meunier <guillaume.meunier@centraliens.net>
  * Copyright (C) 2024  Patrick Nicolas <patricknicolas@laposte.net>
  * Copyright (C) 2024  galister <galister@librevr.org>
+ * Copyright (C) 2025  Sapphire <imsapphire0@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +29,6 @@
 
 #include <array>
 #include <cmath>
-#include <openxr/openxr.h>
 
 namespace wivrn
 {
@@ -36,82 +36,65 @@ namespace wivrn
 struct clock_offset;
 class wivrn_session;
 
-struct wivrn_htc_face_data
+struct wivrn_android_face_data
 {
-	int64_t eye_sample_time;
-	int64_t lip_sample_time;
-	std::array<float, XRT_FACIAL_EXPRESSION_EYE_COUNT_HTC> eye;
-	std::array<float, XRT_FACIAL_EXPRESSION_LIP_COUNT_HTC> lip;
-	bool eye_active;
-	bool lip_active;
+	std::array<float, XRT_FACE_PARAMETER_COUNT_ANDROID> parameters;
+	std::array<float, XRT_FACE_REGION_CONFIDENCE_COUNT_ANDROID> confidences;
+	xrt_face_tracking_state_android state;
+	int64_t sample_time;
+	bool is_calibrated;
+	bool is_valid;
 };
 
-class htc_face_list : public history<htc_face_list, wivrn_htc_face_data>
+class android_face_list : public history<android_face_list, wivrn_android_face_data>
 {
 public:
-	static wivrn_htc_face_data interpolate(const wivrn_htc_face_data & a, const wivrn_htc_face_data & b, float t)
+	static wivrn_android_face_data interpolate(const wivrn_android_face_data & a, const wivrn_android_face_data & b, float t)
 	{
-		wivrn_htc_face_data result = b;
-
-		if (not a.eye_active)
+		if (not a.is_valid)
 		{
-			result.eye = b.eye;
-			result.eye_active = b.eye_active;
+			// in case neither is valid, both will be zeroed,
+			// so return the later one for timestamp's sake
+			return b;
 		}
-		else if (not b.eye_active)
+		else if (not b.is_valid)
 		{
-			result.eye = a.eye;
-			result.eye_active = a.eye_active;
-		}
-		else
-		{
-			result.eye_active = true;
-			for (size_t i = 0; i < result.eye.size(); i++)
-			{
-				result.eye[i] = std::clamp(std::lerp(a.eye[i], b.eye[i], t), 0.0f, 1.0f);
-			}
+			return a;
 		}
 
-		if (not a.lip_active)
+		wivrn_android_face_data result = b;
+
+		for (size_t i = 0; i < result.parameters.size(); i++)
 		{
-			result.lip = b.lip;
-			result.lip_active = b.lip_active;
+			result.parameters[i] = std::clamp(std::lerp(a.parameters[i], b.parameters[i], t), 0.0f, 1.0f);
 		}
-		else if (not b.lip_active)
+		for (size_t i = 0; i < result.confidences.size(); i++)
 		{
-			result.lip = a.lip;
-			result.lip_active = a.lip_active;
-		}
-		else
-		{
-			result.lip_active = true;
-			for (size_t i = 0; i < result.lip.size(); i++)
-			{
-				result.lip[i] = std::clamp(std::lerp(a.lip[i], b.lip[i], t), 0.0f, 1.0f);
-			}
+			result.confidences[i] = std::clamp(std::lerp(a.confidences[i], b.confidences[i], t), 0.0f, 1.0f);
 		}
 		return result;
 	}
 
-	bool update_tracking(const XrTime & production_timestamp, const XrTime & timestamp, const wivrn_htc_face_data & data, const clock_offset & offset)
+	bool update_tracking(const XrTime & production_timestamp, const XrTime & timestamp, const wivrn_android_face_data & data, const clock_offset & offset)
 	{
 		return this->add_sample(production_timestamp, timestamp, data, offset);
 	}
 };
 
-class wivrn_htc_face_tracker : public xrt_device
+class wivrn_android_face_tracker : public xrt_device
 {
-	htc_face_list face_list;
-	std::array<xrt_input, 2> inputs_array;
+	android_face_list face_list;
+	xrt_input face_input;
 
 	wivrn::wivrn_session & cnx;
 
 public:
 	using base = xrt_device;
-	wivrn_htc_face_tracker(xrt_device * hmd, wivrn::wivrn_session & cnx);
+	wivrn_android_face_tracker(xrt_device * hmd, wivrn::wivrn_session & cnx);
 
 	xrt_result_t update_inputs();
 	void update_tracking(const from_headset::tracking &, const clock_offset &);
 	xrt_result_t get_face_tracking(enum xrt_input_name facial_expression_type, int64_t at_timestamp_ns, struct xrt_facial_expression_set * out_value);
+	xrt_result_t get_face_calibration_state_android(bool * out_face_is_calibrated);
 };
 } // namespace wivrn

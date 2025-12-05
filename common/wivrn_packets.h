@@ -38,7 +38,7 @@
 namespace wivrn
 {
 
-static constexpr int protocol_revision = 2;
+static constexpr int protocol_revision = 0;
 
 enum class device_id : uint8_t
 {
@@ -211,6 +211,7 @@ struct visibility_mask_changed
 enum face_type : uint8_t
 {
 	none,
+	android,
 	fb2,
 	htc,
 };
@@ -301,23 +302,36 @@ struct tracking
 	std::array<view, 2> views;
 	std::vector<pose> device_poses;
 
+	struct android_face
+	{
+		std::array<float, XR_FACE_PARAMETER_COUNT_ANDROID> parameters;
+		std::array<float, XR_FACE_REGION_CONFIDENCE_COUNT_ANDROID> confidences;
+		XrFaceTrackingStateANDROID state;
+		XrTime sample_time;
+		bool is_calibrated;
+		bool is_valid;
+	};
+
 	struct fb_face2
 	{
 		std::array<float, XR_FACE_EXPRESSION2_COUNT_FB> weights;
 		std::array<float, XR_FACE_CONFIDENCE2_COUNT_FB> confidences;
 		bool is_valid;
 		bool is_eye_following_blendshapes_valid;
+		XrTime time;
 	};
 
 	struct htc_face
 	{
+		XrTime eye_sample_time;
+		XrTime lip_sample_time;
 		std::array<float, XR_FACIAL_EXPRESSION_EYE_COUNT_HTC> eye;
 		std::array<float, XR_FACIAL_EXPRESSION_LIP_COUNT_HTC> lip;
 		bool eye_active;
 		bool lip_active;
 	};
 
-	std::variant<std::monostate, fb_face2, htc_face> face;
+	std::variant<std::monostate, android_face, fb_face2, htc_face> face;
 };
 
 struct trackings
