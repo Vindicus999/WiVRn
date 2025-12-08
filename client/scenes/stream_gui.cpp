@@ -383,10 +383,12 @@ void scenes::stream::gui_compact_view()
 	}
 }
 
-static void send_settings_changed_packet(xr::session & session, wivrn_session * network, const configuration & config, float predicted_display_period)
+static void send_settings_changed_packet(xr::session & session, wivrn_session * network, const configuration & config, uint32_t bitrate, float predicted_display_period)
 {
 	const auto & refresh_rates = session.get_refresh_rates();
-	from_headset::settings_changed packet{};
+	from_headset::settings_changed packet{
+	        .bitrate_bps = bitrate,
+	};
 	if (config.preferred_refresh_rate and (config.preferred_refresh_rate == 0 or utils::contains(refresh_rates, *config.preferred_refresh_rate)))
 	{
 		packet.preferred_refresh_rate = *config.preferred_refresh_rate;
@@ -402,6 +404,7 @@ static void send_settings_changed_packet(xr::session & session, wivrn_session * 
 std::string openxr_post_processing_flag_name(XrCompositionLayerSettingsFlagsFB flag); // TODO declaration in a .h file
 void scenes::stream::gui_settings(float predicted_display_period)
 {
+	const ImGuiStyle & style = ImGui::GetStyle();
 	auto & config = application::get_config();
 
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(20, 20));
@@ -418,7 +421,7 @@ void scenes::stream::gui_settings(float predicted_display_period)
 				{
 					session.set_refresh_rate(0);
 					config.preferred_refresh_rate = 0;
-					send_settings_changed_packet(session, network_session.get(), config, predicted_display_period);
+					send_settings_changed_packet(session, network_session.get(), config, bitrate, predicted_display_period);
 					config.save();
 				}
 				if (ImGui::IsItemHovered())
@@ -429,7 +432,7 @@ void scenes::stream::gui_settings(float predicted_display_period)
 					{
 						session.set_refresh_rate(rate);
 						config.preferred_refresh_rate = rate;
-						send_settings_changed_packet(session, network_session.get(), config, predicted_display_period);
+						send_settings_changed_packet(session, network_session.get(), config, bitrate, predicted_display_period);
 						config.save();
 					}
 				}
@@ -447,7 +450,7 @@ void scenes::stream::gui_settings(float predicted_display_period)
 						if (ImGui::Selectable(fmt::format("{}", rate).c_str(), rate == config.minimum_refresh_rate, ImGuiSelectableFlags_SelectOnRelease))
 						{
 							config.minimum_refresh_rate = rate;
-							send_settings_changed_packet(session, network_session.get(), config, predicted_display_period);
+							send_settings_changed_packet(session, network_session.get(), config, bitrate, predicted_display_period);
 							config.save();
 						}
 					}
@@ -456,6 +459,20 @@ void scenes::stream::gui_settings(float predicted_display_period)
 				imgui_ctx->vibrate_on_hover();
 			}
 		}
+	}
+
+	{
+		const auto text = _("Bitrate:");
+		const auto size = ImGui::CalcTextSize(text.c_str());
+		ImGui::Text("%s", text.c_str());
+
+		ImGui::SameLine(0.f, 10.f);
+		ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (size.y / 4.f) - style.FramePadding.y * 3.f);
+		if (ImGui::Button(fmt::format("{}Mbit/s", bitrate / 1'000'000).c_str()))
+			gui_status = gui_status::bitrate_settings;
+		imgui_ctx->vibrate_on_hover();
+		if (ImGui::IsItemHovered())
+			imgui_ctx->tooltip(_("Click to adjust bitrate"));
 	}
 
 	if (application::get_openxr_post_processing_supported())
@@ -571,6 +588,27 @@ void scenes::stream::gui_settings(float predicted_display_period)
 	ImGui::PopStyleVar();
 }
 
+void scenes::stream::gui_bitrate_settings(float predicted_display_period)
+{
+	ImGui::PushFont(nullptr, constants::gui::font_size_large);
+	ImGui::Text("%s", _S("Use the right thumbstick to adjust the bitrate"));
+	ImGui::Text("%s", _S("Press A to go back"));
+	ImGui::Text("%s", fmt::format(_F("Bitrate: {}Mbit/s"), bitrate / 1'000'000).c_str());
+	ImGui::PopFont();
+
+	// Maximum speed of 20Mbit/s
+	float delta = application::read_action_float(settings_adjust).value_or(std::pair{0, 0}).second * 20'000'000.f * predicted_display_period;
+
+	bitrate = std::clamp(bitrate + static_cast<int32_t>(delta), 1'000'000u, 200'000'000u);
+
+	bool ok = application::read_action_bool(foveation_ok).value_or(std::pair{0, false}).second;
+
+	if (ok)
+		gui_status = gui_status::settings;
+
+	send_settings_changed_packet(session, network_session.get(), application::get_config(), bitrate, predicted_display_period);
+}
+
 void scenes::stream::gui_foveation_settings(float predicted_display_period)
 {
 	ImGui::PushFont(nullptr, constants::gui::font_size_large);
@@ -581,7 +619,7 @@ void scenes::stream::gui_foveation_settings(float predicted_display_period)
 	ImGui::PopFont();
 
 	// Maximum speed 1 rad/s
-	float delta_pitch = application::read_action_float(foveation_pitch).value_or(std::pair{0, 0}).second * predicted_display_period;
+	float delta_pitch = application::read_action_float(settings_adjust).value_or(std::pair{0, 0}).second * predicted_display_period;
 
 	// Maximum speed 2m/s @ 1m
 	float delta_distance = std::exp(std::log(2) * application::read_action_float(foveation_distance).value_or(std::pair{0, 0}).second * predicted_display_period);
@@ -726,6 +764,7 @@ void scenes::stream::draw_gui(XrTime predicted_display_time, XrDuration predicte
 	switch (gui_status)
 	{
 		case gui_status::hidden:
+		case gui_status::bitrate_settings:
 		case gui_status::foveation_settings:
 		case gui_status::overlay_only:
 		case gui_status::compact:
@@ -788,6 +827,7 @@ void scenes::stream::draw_gui(XrTime predicted_display_time, XrDuration predicte
 		glm::mat3 M = glm::mat3_cast(head_position->second);
 		switch (gui_status)
 		{
+			case gui_status::bitrate_settings:
 			case gui_status::foveation_settings:
 				imgui_ctx->layers()[0].orientation = head_position->second;
 				imgui_ctx->layers()[0].position = head_position->first + M * glm::vec3{0, -override_foveation_distance * sin(override_foveation_pitch), -override_foveation_distance};
@@ -831,6 +871,7 @@ void scenes::stream::draw_gui(XrTime predicted_display_time, XrDuration predicte
 			break;
 
 		case gui_status::hidden:
+		case gui_status::bitrate_settings:
 		case gui_status::foveation_settings:
 			ImGui::SetNextWindowPos(ImGui::GetMainViewport()->Size / 2, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 			always_auto_resize = true;
@@ -903,6 +944,10 @@ void scenes::stream::draw_gui(XrTime predicted_display_time, XrDuration predicte
 			ImGui::BeginChild("Main", ImVec2(ImGui::GetWindowSize().x - ImGui::GetCursorPosX(), 0));
 			gui_settings(predicted_display_period * 1.e-9f);
 			ImGui::EndChild();
+			break;
+
+		case gui_status::bitrate_settings:
+			gui_bitrate_settings(predicted_display_period * 1.e-9f);
 			break;
 
 		case gui_status::foveation_settings:

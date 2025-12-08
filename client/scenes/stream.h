@@ -132,6 +132,7 @@ private:
 		compact,
 		stats,
 		settings,
+		bitrate_settings,
 		foveation_settings,
 		applications,
 		application_launcher,
@@ -149,7 +150,7 @@ private:
 	XrAction plots_toggle_2 = XR_NULL_HANDLE;
 	XrAction recenter_left = XR_NULL_HANDLE;
 	XrAction recenter_right = XR_NULL_HANDLE;
-	XrAction foveation_pitch = XR_NULL_HANDLE;
+	XrAction settings_adjust = XR_NULL_HANDLE;
 	XrAction foveation_distance = XR_NULL_HANDLE;
 	XrAction foveation_ok = XR_NULL_HANDLE;
 	XrAction foveation_cancel = XR_NULL_HANDLE;
@@ -171,6 +172,8 @@ private:
 
 	XrTime running_application_req = 0;
 	thread_safe<to_headset::running_applications> running_applications;
+
+	std::atomic_uint32_t bitrate = 0;
 
 	stream(std::string server_name, scene & parent_scene);
 
@@ -207,6 +210,7 @@ public:
 	void operator()(to_headset::tracking_control &&);
 	void operator()(to_headset::audio_stream_description &&);
 	void operator()(to_headset::video_stream_description &&);
+	void operator()(to_headset::settings &&);
 	void operator()(to_headset::refresh_rate_change &&);
 	void operator()(to_headset::application_list &&);
 	void operator()(to_headset::application_icon &&);
@@ -312,6 +316,7 @@ private:
 	void gui_performance_metrics();
 	void gui_compact_view();
 	void gui_settings(float predicted_display_period);
+	void gui_bitrate_settings(float predicted_display_period);
 	void gui_foveation_settings(float predicted_display_period);
 	void gui_applications();
 	void draw_gui(XrTime predicted_display_time, XrDuration predicted_display_period);
