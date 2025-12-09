@@ -319,15 +319,17 @@ std::string controller_name()
 		case model::pico_neo_3:
 			return "pico-neo3";
 		case model::pico_4:
-		case model::pico_4s: // TODO: split when we have the pico-4s 3d model
 		case model::pico_4_pro:
 		case model::pico_4_enterprise:
 			return "pico-4";
+		case model::pico_4s:
+			return "pico-4u";
 		case model::htc_vive_focus_3:
 		case model::htc_vive_focus_vision:
 		case model::htc_vive_xr_elite:
 			return "htc-vive-focus-3";
 		case model::samsung_galaxy_xr:
+			return "samsung-galaxyxr";
 		case model::lynx_r1:
 		case model::unknown:
 			return "generic-trigger-squeeze";
@@ -421,6 +423,16 @@ std::pair<glm::vec3, glm::quat> controller_offset(std::string_view profile, xr::
 			case xr::spaces::grip_right:
 				return {{0, -0.014, -0.048}, glm::angleAxis(glm::radians(-35.060f), glm::vec3{1, 0, 0})};
 
+			default:
+				break;
+		}
+	else if (profile == "samsung-galaxyxr")
+		switch (space)
+		{
+			case xr::spaces::grip_left:
+				return {{-0.005, 0.000, 0.035}, {1, 0, 0, 0}};
+			case xr::spaces::grip_right:
+				return {{0.005, 0.000, 0.035}, {1, 0, 0, 0}};
 			default:
 				break;
 		}
