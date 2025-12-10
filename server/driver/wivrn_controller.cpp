@@ -2,6 +2,7 @@
  * WiVRn VR streaming
  * Copyright (C) 2022  Guillaume Meunier <guillaume.meunier@centraliens.net>
  * Copyright (C) 2022  Patrick Nicolas <patricknicolas@laposte.net>
+ * Copyright (C) 2025  Sapphire <imsapphire0@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,11 +27,12 @@
 
 #include "util/u_logging.h"
 #include <array>
+#include <format>
+#include <fstream>
 #include <magic_enum.hpp>
 #include <numbers>
 #include <optional>
-
-#include <fstream>
+#include <stdexcept>
 
 #include "xrt/xrt_defines.h"
 
@@ -80,6 +82,16 @@ enum wivrn_controller_input_index
 	WIVRN_CONTROLLER_TRACKPAD_FORCE,                     // /user/hand/XXXX/input/trackpad/force
 	WIVRN_CONTROLLER_TRACKPAD_TOUCH,                     // /user/hand/XXXX/input/trackpad/touch
 	WIVRN_CONTROLLER_STYLUS_FORCE,                       // /user/hand/XXXX/input/stylus_fb/force
+
+	// XR_EXT_hand_interaction
+	WIVRN_CONTROLLER_PINCH_POSE,         // /user/hand/XXXX/input/pinch_ext/pose
+	WIVRN_CONTROLLER_PINCH_VALUE,        // /user/hand/XXXX/input/pinch_ext/value
+	WIVRN_CONTROLLER_PINCH_READY,        // /user/hand/XXXX/input/pinch_ext/ready_ext
+	WIVRN_CONTROLLER_POKE_POSE,          // /user/hand/XXXX/input/poke_ext/pose
+	WIVRN_CONTROLLER_AIM_ACTIVATE_VALUE, // /user/hand/XXXX/input/aim_activate_ext/value
+	WIVRN_CONTROLLER_AIM_ACTIVATE_READY, // /user/hand/XXXX/input/aim_activate_ext/ready_ext
+	WIVRN_CONTROLLER_GRASP_VALUE,        // /user/hand/XXXX/input/grasp_ext/value
+	WIVRN_CONTROLLER_GRASP_READY,        // /user/hand/XXXX/input/ready_ext/value
 
 	WIVRN_CONTROLLER_INPUT_COUNT
 };
@@ -237,16 +249,44 @@ input_data map_input(device_id id)
 			return {WIVRN_CONTROLLER_THUMBREST_FORCE, wivrn_input_type::FLOAT, XRT_DEVICE_TYPE_RIGHT_HAND_CONTROLLER};
 		case device_id::RIGHT_STYLUS_FORCE:
 			return {WIVRN_CONTROLLER_STYLUS_FORCE, wivrn_input_type::FLOAT, XRT_DEVICE_TYPE_RIGHT_HAND_CONTROLLER};
+		// XR_EXT_hand_interaction
+		case device_id::LEFT_PINCH_POSE:
+			return {WIVRN_CONTROLLER_PINCH_POSE, wivrn_input_type::POSE, XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER};
+		case device_id::LEFT_PINCH_VALUE:
+			return {WIVRN_CONTROLLER_PINCH_VALUE, wivrn_input_type::FLOAT, XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER};
+		case device_id::LEFT_PINCH_READY:
+			return {WIVRN_CONTROLLER_PINCH_READY, wivrn_input_type::BOOL, XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER};
+		case device_id::RIGHT_PINCH_POSE:
+			return {WIVRN_CONTROLLER_PINCH_POSE, wivrn_input_type::POSE, XRT_DEVICE_TYPE_RIGHT_HAND_CONTROLLER};
+		case device_id::RIGHT_PINCH_VALUE:
+			return {WIVRN_CONTROLLER_PINCH_VALUE, wivrn_input_type::FLOAT, XRT_DEVICE_TYPE_RIGHT_HAND_CONTROLLER};
+		case device_id::RIGHT_PINCH_READY:
+			return {WIVRN_CONTROLLER_PINCH_READY, wivrn_input_type::BOOL, XRT_DEVICE_TYPE_RIGHT_HAND_CONTROLLER};
+		case device_id::LEFT_POKE:
+			return {WIVRN_CONTROLLER_POKE_POSE, wivrn_input_type::POSE, XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER};
+		case device_id::RIGHT_POKE:
+			return {WIVRN_CONTROLLER_POKE_POSE, wivrn_input_type::POSE, XRT_DEVICE_TYPE_RIGHT_HAND_CONTROLLER};
+		case device_id::LEFT_AIM_ACTIVATE_VALUE:
+			return {WIVRN_CONTROLLER_AIM_ACTIVATE_VALUE, wivrn_input_type::FLOAT, XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER};
+		case device_id::LEFT_AIM_ACTIVATE_READY:
+			return {WIVRN_CONTROLLER_AIM_ACTIVATE_READY, wivrn_input_type::BOOL, XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER};
+		case device_id::RIGHT_AIM_ACTIVATE_VALUE:
+			return {WIVRN_CONTROLLER_AIM_ACTIVATE_VALUE, wivrn_input_type::FLOAT, XRT_DEVICE_TYPE_RIGHT_HAND_CONTROLLER};
+		case device_id::RIGHT_AIM_ACTIVATE_READY:
+			return {WIVRN_CONTROLLER_AIM_ACTIVATE_READY, wivrn_input_type::BOOL, XRT_DEVICE_TYPE_RIGHT_HAND_CONTROLLER};
+		case device_id::LEFT_GRASP_VALUE:
+			return {WIVRN_CONTROLLER_GRASP_VALUE, wivrn_input_type::FLOAT, XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER};
+		case device_id::LEFT_GRASP_READY:
+			return {WIVRN_CONTROLLER_GRASP_READY, wivrn_input_type::BOOL, XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER};
+		case device_id::RIGHT_GRASP_VALUE:
+			return {WIVRN_CONTROLLER_GRASP_VALUE, wivrn_input_type::FLOAT, XRT_DEVICE_TYPE_RIGHT_HAND_CONTROLLER};
+		case device_id::RIGHT_GRASP_READY:
+			return {WIVRN_CONTROLLER_GRASP_READY, wivrn_input_type::BOOL, XRT_DEVICE_TYPE_RIGHT_HAND_CONTROLLER};
 		default:
 			break;
 	}
-	// If the headset supports hand_interaction_ext, upon switch
-	// to/from hand tracking we may get the inputs packet before
-	// the interaction profile change, so if we get a bad input
-	// just return an invalid index so we can ignore it
-	U_LOG_D("wivrn_controller: bad input id %s", std::string(magic_enum::enum_name(id)).c_str());
-	// the type here doesn't really matter
-	return {WIVRN_CONTROLLER_INPUT_INVALID, wivrn_input_type::BOOL, XRT_DEVICE_TYPE_UNKNOWN};
+
+	throw std::range_error("bad input id " + std::string(magic_enum::enum_name(id)));
 }
 
 xrt_binding_input_pair simple_input_binding[] = {
@@ -254,6 +294,8 @@ xrt_binding_input_pair simple_input_binding[] = {
         {XRT_INPUT_SIMPLE_MENU_CLICK, XRT_INPUT_TOUCH_MENU_CLICK},
         {XRT_INPUT_SIMPLE_GRIP_POSE, XRT_INPUT_TOUCH_GRIP_POSE},
         {XRT_INPUT_SIMPLE_AIM_POSE, XRT_INPUT_TOUCH_AIM_POSE},
+        {XRT_INPUT_HAND_PINCH_POSE, XRT_INPUT_HAND_PINCH_POSE},
+        {XRT_INPUT_HAND_POKE_POSE, XRT_INPUT_HAND_POKE_POSE},
 };
 
 xrt_binding_output_pair simple_output_binding[] = {
@@ -280,6 +322,8 @@ xrt_binding_input_pair index_input_binding_left[] = {
         {XRT_INPUT_INDEX_TRACKPAD_TOUCH, XRT_INPUT_INDEX_TRACKPAD_TOUCH},
         {XRT_INPUT_INDEX_GRIP_POSE, XRT_INPUT_TOUCH_GRIP_POSE},
         {XRT_INPUT_INDEX_AIM_POSE, XRT_INPUT_TOUCH_AIM_POSE},
+        {XRT_INPUT_HAND_PINCH_POSE, XRT_INPUT_HAND_PINCH_POSE},
+        {XRT_INPUT_HAND_POKE_POSE, XRT_INPUT_HAND_POKE_POSE},
 };
 
 xrt_binding_input_pair index_input_binding_right[] = {
@@ -302,6 +346,8 @@ xrt_binding_input_pair index_input_binding_right[] = {
         {XRT_INPUT_INDEX_TRACKPAD_TOUCH, XRT_INPUT_INDEX_TRACKPAD_TOUCH},
         {XRT_INPUT_INDEX_GRIP_POSE, XRT_INPUT_TOUCH_GRIP_POSE},
         {XRT_INPUT_INDEX_AIM_POSE, XRT_INPUT_TOUCH_AIM_POSE},
+        {XRT_INPUT_HAND_PINCH_POSE, XRT_INPUT_HAND_PINCH_POSE},
+        {XRT_INPUT_HAND_POKE_POSE, XRT_INPUT_HAND_POKE_POSE},
 };
 
 xrt_binding_output_pair index_output_binding[] = {
@@ -327,6 +373,8 @@ xrt_binding_input_pair focus3_input_binding[] = {
         {XRT_INPUT_VIVE_FOCUS3_THUMBREST_TOUCH, XRT_INPUT_TOUCH_THUMBREST_TOUCH},
         {XRT_INPUT_VIVE_FOCUS3_GRIP_POSE, XRT_INPUT_TOUCH_GRIP_POSE},
         {XRT_INPUT_VIVE_FOCUS3_AIM_POSE, XRT_INPUT_TOUCH_AIM_POSE},
+        {XRT_INPUT_HAND_PINCH_POSE, XRT_INPUT_HAND_PINCH_POSE},
+        {XRT_INPUT_HAND_POKE_POSE, XRT_INPUT_HAND_POKE_POSE},
 };
 
 xrt_binding_output_pair focus3_output_binding[] = {
@@ -359,6 +407,8 @@ xrt_binding_input_pair touch_pro_input_binding[] = {
         {XRT_INPUT_TOUCH_PRO_TRIGGER_CURL, XRT_INPUT_TOUCH_PRO_TRIGGER_CURL},
         {XRT_INPUT_TOUCH_PRO_TRIGGER_SLIDE, XRT_INPUT_TOUCH_PRO_TRIGGER_SLIDE},
         {XRT_INPUT_TOUCH_PRO_STYLUS_FORCE, XRT_INPUT_TOUCH_PRO_STYLUS_FORCE},
+        {XRT_INPUT_HAND_PINCH_POSE, XRT_INPUT_HAND_PINCH_POSE},
+        {XRT_INPUT_HAND_POKE_POSE, XRT_INPUT_HAND_POKE_POSE},
 };
 
 xrt_binding_output_pair touch_pro_output_binding[] = {
@@ -392,6 +442,8 @@ xrt_binding_input_pair touch_plus_input_binding[] = {
         {XRT_INPUT_TOUCH_PLUS_THUMB_PROXIMITY, XRT_INPUT_TOUCH_THUMB_PROXIMITY},
         {XRT_INPUT_TOUCH_PLUS_TRIGGER_CURL, XRT_INPUT_TOUCH_PRO_TRIGGER_CURL},
         {XRT_INPUT_TOUCH_PLUS_TRIGGER_SLIDE, XRT_INPUT_TOUCH_PRO_TRIGGER_SLIDE},
+        {XRT_INPUT_HAND_PINCH_POSE, XRT_INPUT_HAND_PINCH_POSE},
+        {XRT_INPUT_HAND_POKE_POSE, XRT_INPUT_HAND_POKE_POSE},
 };
 
 xrt_binding_output_pair touch_plus_output_binding[] = {
@@ -419,6 +471,8 @@ xrt_binding_input_pair pico_neo3_input_binding[] = {
         {XRT_INPUT_PICO_NEO3_A_TOUCH, XRT_INPUT_TOUCH_A_TOUCH},
         {XRT_INPUT_PICO_NEO3_B_CLICK, XRT_INPUT_TOUCH_B_CLICK},
         {XRT_INPUT_PICO_NEO3_B_TOUCH, XRT_INPUT_TOUCH_B_TOUCH},
+        {XRT_INPUT_HAND_PINCH_POSE, XRT_INPUT_HAND_PINCH_POSE},
+        {XRT_INPUT_HAND_POKE_POSE, XRT_INPUT_HAND_POKE_POSE},
 };
 
 xrt_binding_output_pair pico_neo3_output_binding[] = {
@@ -446,6 +500,8 @@ xrt_binding_input_pair pico4_input_binding[] = {
         {XRT_INPUT_PICO4_B_CLICK, XRT_INPUT_TOUCH_B_CLICK},
         {XRT_INPUT_PICO4_B_TOUCH, XRT_INPUT_TOUCH_B_TOUCH},
         {XRT_INPUT_PICO4_MENU_CLICK, XRT_INPUT_TOUCH_MENU_CLICK},
+        {XRT_INPUT_HAND_PINCH_POSE, XRT_INPUT_HAND_PINCH_POSE},
+        {XRT_INPUT_HAND_POKE_POSE, XRT_INPUT_HAND_POKE_POSE},
 };
 
 xrt_binding_output_pair pico4_output_binding[] = {
@@ -511,8 +567,24 @@ make_binding_profiles()
 	});
 }
 
-constexpr auto wivrn_per_hand_binding_profiles = std::to_array({make_binding_profiles<0>(),
-                                                                make_binding_profiles<1>()});
+constexpr auto controller_per_hand_binding_profiles = std::to_array({make_binding_profiles<0>(),
+                                                                     make_binding_profiles<1>()});
+
+xrt_binding_input_pair hand_interaction_simple_input_binding[] = {
+        {XRT_INPUT_SIMPLE_SELECT_CLICK, XRT_INPUT_HAND_PINCH_VALUE},
+        {XRT_INPUT_SIMPLE_GRIP_POSE, XRT_INPUT_HAND_GRIP_POSE},
+        {XRT_INPUT_SIMPLE_AIM_POSE, XRT_INPUT_HAND_AIM_POSE},
+};
+
+xrt_binding_profile hand_interaction_binding_profiles[] = {
+        {
+                .name = XRT_DEVICE_SIMPLE_CONTROLLER,
+                .inputs = hand_interaction_simple_input_binding,
+                .input_count = std::size(hand_interaction_simple_input_binding),
+                .outputs = nullptr,
+                .output_count = 0,
+        },
+};
 
 struct xrt_space_relation_csv_header
 {};
@@ -536,21 +608,22 @@ std::ostream & operator<<(std::ostream & out, const xrt_space_relation_csv_heade
 }
 } // namespace
 
-wivrn_controller::wivrn_controller(int hand_id,
+wivrn_controller::wivrn_controller(xrt_device_name name,
+                                   int hand_id,
                                    xrt_device * hmd,
                                    wivrn::wivrn_session * cnx) :
         xrt_device{
-                .name = XRT_DEVICE_TOUCH_CONTROLLER,
+                .name = name,
                 .device_type = hand_id == 0 ? XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER : XRT_DEVICE_TYPE_RIGHT_HAND_CONTROLLER,
                 .hmd = nullptr,
                 .tracking_origin = hmd->tracking_origin,
-                .binding_profile_count = wivrn_per_hand_binding_profiles[hand_id].size(),
-                .binding_profiles = (struct xrt_binding_profile *)wivrn_per_hand_binding_profiles[hand_id].data(),
+                .binding_profile_count = name != XRT_DEVICE_EXT_HAND_INTERACTION ? controller_per_hand_binding_profiles[hand_id].size() : std::size(hand_interaction_binding_profiles),
+                .binding_profiles = name != XRT_DEVICE_EXT_HAND_INTERACTION ? (struct xrt_binding_profile *)controller_per_hand_binding_profiles[hand_id].data() : hand_interaction_binding_profiles,
                 .input_count = WIVRN_CONTROLLER_INPUT_COUNT,
                 .supported = {
                         .orientation_tracking = true,
                         .position_tracking = true,
-                        .hand_tracking = cnx->get_info().hand_tracking,
+                        .hand_tracking = name != XRT_DEVICE_EXT_HAND_INTERACTION and cnx->get_info().hand_tracking,
                 },
                 .update_inputs = method_pointer<&wivrn_controller::update_inputs>,
                 .get_tracked_pose = method_pointer<&wivrn_controller::get_tracked_pose>,
@@ -561,6 +634,8 @@ wivrn_controller::wivrn_controller(int hand_id,
         grip(hand_id == 0 ? device_id::LEFT_GRIP : device_id::RIGHT_GRIP),
         aim(hand_id == 0 ? device_id::LEFT_AIM : device_id::RIGHT_AIM),
         palm(hand_id == 0 ? device_id::LEFT_PALM : device_id::RIGHT_PALM),
+        pinch_ext(hand_id == 0 ? device_id::LEFT_PINCH_POSE : device_id::RIGHT_PINCH_POSE),
+        poke_ext(hand_id == 0 ? device_id::LEFT_POKE : device_id::RIGHT_POKE),
         joints(hand_id),
         inputs_array(input_count, xrt_input{}),
         cnx(cnx)
@@ -574,10 +649,6 @@ wivrn_controller::wivrn_controller(int hand_id,
 		inputs[WIVRN_CONTROLLER_##NAME].name = XRT_INPUT_##VENDOR##_##NAME; \
 		inputs[WIVRN_CONTROLLER_##NAME].active = true;                      \
 	} while (0)
-
-	SET_INPUT(TOUCH, AIM_POSE);
-	SET_INPUT(TOUCH, GRIP_POSE);
-	SET_INPUT(GENERIC, PALM_POSE);
 
 	if (auto grip_surface = configuration().grip_surface)
 	{
@@ -596,81 +667,86 @@ wivrn_controller::wivrn_controller(int hand_id,
 		cnx->set_enabled(palm.device, false);
 	}
 
-	if (hand_id == 0)
+	if (name != XRT_DEVICE_EXT_HAND_INTERACTION)
 	{
-		inputs[WIVRN_CONTROLLER_HAND_TRACKING_LEFT].name = XRT_INPUT_HT_UNOBSTRUCTED_LEFT;
-		inputs[WIVRN_CONTROLLER_HAND_TRACKING_LEFT].active = true;
-		SET_INPUT(TOUCH, MENU_CLICK);
-		SET_INPUT(TOUCH, X_CLICK);
-		SET_INPUT(TOUCH, Y_CLICK);
-		SET_INPUT(TOUCH, X_TOUCH);
-		SET_INPUT(TOUCH, Y_TOUCH);
+		SET_INPUT(TOUCH, AIM_POSE);
+		SET_INPUT(TOUCH, GRIP_POSE);
+		SET_INPUT(GENERIC, PALM_POSE);
+		SET_INPUT(HAND, PINCH_POSE);
+		SET_INPUT(HAND, POKE_POSE);
+		if (hand_id == 0)
+		{
+			inputs[WIVRN_CONTROLLER_HAND_TRACKING_LEFT].name = XRT_INPUT_HT_UNOBSTRUCTED_LEFT;
+			inputs[WIVRN_CONTROLLER_HAND_TRACKING_LEFT].active = true;
+			SET_INPUT(TOUCH, MENU_CLICK);
+			SET_INPUT(TOUCH, X_CLICK);
+			SET_INPUT(TOUCH, Y_CLICK);
+			SET_INPUT(TOUCH, X_TOUCH);
+			SET_INPUT(TOUCH, Y_TOUCH);
+		}
+		else
+		{
+			inputs[WIVRN_CONTROLLER_HAND_TRACKING_RIGHT].name = XRT_INPUT_HT_UNOBSTRUCTED_RIGHT;
+			inputs[WIVRN_CONTROLLER_HAND_TRACKING_RIGHT].active = true;
+			SET_INPUT(TOUCH, SYSTEM_CLICK);
+			SET_INPUT(TOUCH, A_CLICK);
+			SET_INPUT(TOUCH, B_CLICK);
+			SET_INPUT(TOUCH, A_TOUCH);
+			SET_INPUT(TOUCH, B_TOUCH);
+		}
+		SET_INPUT(VIVE_FOCUS3, SQUEEZE_CLICK);
+		SET_INPUT(INDEX, SQUEEZE_FORCE);
+		SET_INPUT(TOUCH, SQUEEZE_VALUE);
+		SET_INPUT(INDEX, TRIGGER_CLICK);
+		SET_INPUT(TOUCH, TRIGGER_VALUE);
+		SET_INPUT(TOUCH, TRIGGER_TOUCH);
+		SET_INPUT(TOUCH, TRIGGER_PROXIMITY);
+		SET_INPUT(TOUCH_PRO, TRIGGER_CURL);
+		SET_INPUT(TOUCH_PRO, TRIGGER_SLIDE);
+		SET_INPUT(TOUCH_PLUS, TRIGGER_FORCE);
+		SET_INPUT(TOUCH, THUMBSTICK);
+		SET_INPUT(TOUCH, THUMBSTICK_CLICK);
+		SET_INPUT(TOUCH, THUMBSTICK_TOUCH);
+		SET_INPUT(TOUCH, THUMBREST_TOUCH);
+		SET_INPUT(TOUCH_PRO, THUMBREST_FORCE);
+		SET_INPUT(TOUCH, THUMB_PROXIMITY);
+		SET_INPUT(INDEX, TRACKPAD);
+		SET_INPUT(VIVE, TRACKPAD_CLICK);
+		SET_INPUT(INDEX, TRACKPAD_FORCE);
+		SET_INPUT(INDEX, TRACKPAD_TOUCH);
+		SET_INPUT(TOUCH_PRO, STYLUS_FORCE);
+
+		outputs_array = {
+		        {.name = XRT_OUTPUT_NAME_TOUCH_HAPTIC},
+		        {.name = XRT_OUTPUT_NAME_TOUCH_PRO_HAPTIC_THUMB},
+		        {.name = XRT_OUTPUT_NAME_TOUCH_PRO_HAPTIC_TRIGGER},
+		};
+
+		output_count = outputs_array.size();
+		outputs = outputs_array.data();
 	}
 	else
 	{
-		inputs[WIVRN_CONTROLLER_HAND_TRACKING_RIGHT].name = XRT_INPUT_HT_UNOBSTRUCTED_RIGHT;
-		inputs[WIVRN_CONTROLLER_HAND_TRACKING_RIGHT].active = true;
-		SET_INPUT(TOUCH, SYSTEM_CLICK);
-		SET_INPUT(TOUCH, A_CLICK);
-		SET_INPUT(TOUCH, B_CLICK);
-		SET_INPUT(TOUCH, A_TOUCH);
-		SET_INPUT(TOUCH, B_TOUCH);
+		SET_INPUT(HAND, AIM_POSE);
+		SET_INPUT(HAND, GRIP_POSE);
+		SET_INPUT(GENERIC, PALM_POSE);
+		SET_INPUT(HAND, PINCH_POSE);
+		SET_INPUT(HAND, PINCH_VALUE);
+		SET_INPUT(HAND, PINCH_READY);
+		SET_INPUT(HAND, POKE_POSE);
+		SET_INPUT(HAND, AIM_ACTIVATE_VALUE);
+		SET_INPUT(HAND, AIM_ACTIVATE_READY);
+		SET_INPUT(HAND, GRASP_VALUE);
+		SET_INPUT(HAND, GRASP_READY);
 	}
-	SET_INPUT(VIVE_FOCUS3, SQUEEZE_CLICK);
-	SET_INPUT(INDEX, SQUEEZE_FORCE);
-	SET_INPUT(TOUCH, SQUEEZE_VALUE);
-	SET_INPUT(INDEX, TRIGGER_CLICK);
-	SET_INPUT(TOUCH, TRIGGER_VALUE);
-	SET_INPUT(TOUCH, TRIGGER_TOUCH);
-	SET_INPUT(TOUCH, TRIGGER_PROXIMITY);
-	SET_INPUT(TOUCH_PRO, TRIGGER_CURL);
-	SET_INPUT(TOUCH_PRO, TRIGGER_SLIDE);
-	SET_INPUT(TOUCH_PLUS, TRIGGER_FORCE);
-	SET_INPUT(TOUCH, THUMBSTICK);
-	SET_INPUT(TOUCH, THUMBSTICK_CLICK);
-	SET_INPUT(TOUCH, THUMBSTICK_TOUCH);
-	SET_INPUT(TOUCH, THUMBREST_TOUCH);
-	SET_INPUT(TOUCH_PRO, THUMBREST_FORCE);
-	SET_INPUT(TOUCH, THUMB_PROXIMITY);
-	SET_INPUT(INDEX, TRACKPAD);
-	SET_INPUT(VIVE, TRACKPAD_CLICK);
-	SET_INPUT(INDEX, TRACKPAD_FORCE);
-	SET_INPUT(INDEX, TRACKPAD_TOUCH);
-	SET_INPUT(TOUCH_PRO, STYLUS_FORCE);
 
 #undef SET_INPUT
 	inputs_staging = inputs_array;
 
-	// Make sure everything is mapped
-	for (const auto & item: inputs_array)
-	{
-		assert(item.name);
-	}
-
-	outputs_array = {
-	        {.name = XRT_OUTPUT_NAME_TOUCH_HAPTIC},
-	        {.name = XRT_OUTPUT_NAME_TOUCH_PRO_HAPTIC_THUMB},
-	        {.name = XRT_OUTPUT_NAME_TOUCH_PRO_HAPTIC_TRIGGER},
-	};
-
-	output_count = outputs_array.size();
-	outputs = outputs_array.data();
-
-	switch (hand_id)
-	{
-		case 0:
-			// Print name.
-			strcpy(str, "WiVRn left controller");
-			strcpy(serial, "WiVRn left controller");
-			break;
-		case 1:
-			// Print name.
-			strcpy(str, "WiVRn right controller");
-			strcpy(serial, "WiVRn right controller");
-			break;
-		default:
-			throw std::runtime_error("Invalid hand ID");
-	}
+	auto name_str = std::format("WiVRn {} {}", hand_id == 0 ? "left" : "right", name != XRT_DEVICE_EXT_HAND_INTERACTION ? "controller" : "hand interaction");
+	// Print name.
+	strcpy(str, name_str.c_str());
+	strcpy(serial, name_str.c_str());
 }
 
 xrt_result_t wivrn_controller::update_inputs()
@@ -738,21 +814,27 @@ xrt_result_t wivrn_controller::get_tracked_pose(xrt_input_name name, int64_t at_
 	switch (name)
 	{
 		case XRT_INPUT_TOUCH_AIM_POSE:
+		case XRT_INPUT_HAND_AIM_POSE:
 			std::tie(extrapolation_time, *res, device) = aim.get_pose_at(at_timestamp_ns);
-			cnx->set_enabled(device, true);
 			break;
 		case XRT_INPUT_TOUCH_GRIP_POSE:
+		case XRT_INPUT_HAND_GRIP_POSE:
 			std::tie(extrapolation_time, *res, device) = grip.get_pose_at(at_timestamp_ns);
-			cnx->set_enabled(device, true);
 			break;
 		case XRT_INPUT_GENERIC_PALM_POSE:
 			std::tie(extrapolation_time, *res, device) = palm.get_pose_at(at_timestamp_ns);
-			cnx->set_enabled(device, true);
+			break;
+		case XRT_INPUT_HAND_PINCH_POSE:
+			std::tie(extrapolation_time, *res, device) = pinch_ext.get_pose_at(at_timestamp_ns);
+			break;
+		case XRT_INPUT_HAND_POKE_POSE:
+			std::tie(extrapolation_time, *res, device) = poke_ext.get_pose_at(at_timestamp_ns);
 			break;
 		default:
 			U_LOG_XDEV_UNSUPPORTED_INPUT(this, u_log_get_global_level(), name);
 			return XRT_ERROR_INPUT_UNSUPPORTED;
 	}
+	cnx->set_enabled(device, true);
 	cnx->add_predict_offset(extrapolation_time);
 	if (auto out = tracking_dump())
 	{
@@ -762,6 +844,8 @@ xrt_result_t wivrn_controller::get_tracked_pose(xrt_input_name name, int64_t at_
 			case XRT_INPUT_TOUCH_AIM_POSE: return aim.device;
 			case XRT_INPUT_TOUCH_GRIP_POSE: return grip.device;
 			case XRT_INPUT_GENERIC_PALM_POSE: return palm.device;
+			case XRT_INPUT_HAND_PINCH_POSE: return pinch_ext.device;
+			case XRT_INPUT_HAND_POKE_POSE: return poke_ext.device;
 			default:
 				assert(false);
 				__builtin_unreachable();
@@ -800,7 +884,7 @@ xrt_result_t wivrn_controller::get_hand_tracking(xrt_input_name name, int64_t de
 void wivrn_controller::set_derived_pose(const from_headset::derived_pose & derived)
 {
 	auto list = [this](device_id id) -> pose_list * {
-		for (auto item: {&grip, &aim, &palm})
+		for (auto item: {&grip, &aim, &palm, &pinch_ext, &poke_ext})
 		{
 			if (item->device == id)
 				return item;
@@ -825,13 +909,17 @@ void wivrn_controller::update_tracking(const from_headset::tracking & tracking, 
 		cnx->set_enabled(grip.device, false);
 	if (not palm.update_tracking(tracking, offset))
 		cnx->set_enabled(palm.device, false);
+	if (not pinch_ext.update_tracking(tracking, offset))
+		cnx->set_enabled(pinch_ext.device, false);
+	if (not poke_ext.update_tracking(tracking, offset))
+		cnx->set_enabled(poke_ext.device, false);
 	if (auto out = tracking_dump(); out and offset)
 	{
 		auto locked = out->lock();
 		auto now = os_monotonic_get_ns();
 		for (const auto & pose: tracking.device_poses)
 		{
-			if (pose.device == aim.device or pose.device == grip.device or pose.device == palm.device)
+			if (pose.device == aim.device or pose.device == grip.device or pose.device == palm.device or pose.device == pinch_ext.device or pose.device == poke_ext.device)
 				*locked << magic_enum::enum_name(pose.device) << ','
 				        << now << ','
 				        << offset.from_headset(tracking.timestamp) << ','
@@ -887,6 +975,8 @@ void wivrn_controller::reset_history()
 	grip.reset();
 	aim.reset();
 	palm.reset();
+	pinch_ext.reset();
+	poke_ext.reset();
 }
 
 thread_safe<std::ofstream> * wivrn_controller::tracking_dump()
