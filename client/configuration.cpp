@@ -20,6 +20,7 @@
 #include "configuration.h"
 #include "application.h"
 #include "utils/json_string.h"
+#include "wivrn_packets.h"
 
 #include <fstream>
 #include <magic_enum.hpp>
@@ -129,6 +130,27 @@ configuration::configuration(xr::system & system)
 		if (auto val = root["resolution_scale"]; val.is_double())
 			resolution_scale = val.get_double();
 
+		if (auto val = root["stream_scale"]; val.is_double())
+			stream_scale = val.get_double();
+
+		if (auto val = root["codec"]; val.is_string())
+		{
+			const auto codec_str = val.get_string().value();
+			for (const auto & [c, name]: magic_enum::enum_entries<wivrn::video_codec>())
+			{
+				if (codec_str == name)
+				{
+					codec = c;
+				}
+			}
+		}
+
+		if (auto val = root["bit_depth"]; val.is_uint64())
+			bit_depth = val.get_uint64();
+
+		if (auto val = root["bitrate_bps"]; val.is_number())
+			bitrate_bps = val.get_uint64();
+
 		if (auto val = root["enable_stream_gui"]; val.is_bool())
 			enable_stream_gui = val.get_bool();
 
@@ -188,8 +210,12 @@ configuration::configuration(xr::system & system)
 		preferred_refresh_rate.reset();
 		minimum_refresh_rate.reset();
 		resolution_scale = 1.0;
+		codec.reset();
+		bit_depth = 10;
+		bitrate_bps = 50'000'000;
 		openxr_post_processing = {};
 		passthrough_enabled = system.passthrough_supported() == xr::passthrough_type::color;
+		stream_scale.reset();
 	}
 }
 
@@ -250,6 +276,12 @@ void configuration::save()
 	if (minimum_refresh_rate)
 		json << ",\"minimum_refresh_rate\":" << *minimum_refresh_rate;
 	json << ",\"resolution_scale\":" << resolution_scale;
+	if (stream_scale)
+		json << ",\"stream_scale\":" << *stream_scale;
+	if (codec)
+		json << ",\"codec\":" << json_string(magic_enum::enum_name(*codec));
+	json << ",\"bit_depth\":" << (uint64_t)bit_depth;
+	json << ",\"bitrate_bps\":" << bitrate_bps;
 	json << ",\"openxr_post_processing\":";
 	write_openxr_post_processing(json, openxr_post_processing);
 	json << ",\"passthrough_enabled\":" << std::boolalpha << passthrough_enabled;
@@ -268,4 +300,18 @@ void configuration::save()
 	json << ",\"environment_model\":" << json_string(environment_model);
 	json << ",\"high_power_mode\":" << std::boolalpha << high_power_mode;
 	json << "}";
+}
+
+void configuration::set_stream_scale(float val)
+{
+	stream_scale = val;
+}
+
+float configuration::get_stream_scale() const
+{
+	if (stream_scale)
+		return *stream_scale;
+	if (check_feature(feature::eye_gaze))
+		return 0.3;
+	return 0.5;
 }

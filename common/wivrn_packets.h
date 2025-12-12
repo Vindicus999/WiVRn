@@ -216,14 +216,26 @@ enum face_type : uint8_t
 	htc,
 };
 
-struct headset_info_packet
+struct settings_changed
 {
-	uint32_t recommended_eye_width;
-	uint32_t recommended_eye_height;
-	std::vector<float> available_refresh_rates;
 	float preferred_refresh_rate;
 	// for automatic
 	float minimum_refresh_rate;
+
+	uint32_t bitrate_bps;
+};
+
+struct headset_info_packet
+{
+	uint16_t render_eye_width;
+	uint16_t render_eye_height;
+	uint16_t stream_eye_width;
+	uint16_t stream_eye_height;
+	std::vector<float> available_refresh_rates;
+
+	// runtime configurable settings
+	settings_changed settings;
+
 	struct audio_description
 	{
 		uint8_t num_channels;
@@ -240,24 +252,13 @@ struct headset_info_packet
 	face_type face_tracking;
 	uint32_t num_generic_trackers;
 	std::vector<video_codec> supported_codecs; // from preferred to least preferred
+	std::optional<uint8_t> bit_depth;
 	std::string system_name;
 
 	// Used for the application list
 	std::string language;
 	std::string country;
 	std::string variant;
-};
-
-struct settings_request
-{};
-
-struct settings_changed
-{
-	float preferred_refresh_rate;
-	// for automatic
-	float minimum_refresh_rate;
-
-	uint32_t bitrate_bps;
 };
 
 struct handshake
@@ -547,7 +548,6 @@ using packets = std::variant<
         pin_check_1,
         pin_check_3,
         headset_info_packet,
-        settings_request,
         settings_changed,
         feedback,
         audio_data,
@@ -636,52 +636,27 @@ struct audio_stream_description
 
 struct video_stream_description
 {
-	enum class channels_t
-	{
-		colour,
-		alpha,
-	};
-	struct item
-	{
-		// useful dimensions of the video stream
-		uint16_t width;
-		uint16_t height;
-		// dimensions of the video, may include padding at the end
-		uint16_t video_width;
-		uint16_t video_height;
-		uint16_t offset_x;
-		uint16_t offset_y;
-		video_codec codec;
-		channels_t channels;
-		uint8_t subsampling; // applies to width/height only, offsets are in full size pixels
-		std::optional<VkSamplerYcbcrRange> range;
-		std::optional<VkSamplerYcbcrModelConversion> color_model;
-	};
+	// dimensions of the video stream per eye
+	// alpha is half resolution
 	uint16_t width;
 	uint16_t height;
+	std::array<video_codec, 3> codec; // left, right, alpha
 	float fps;
-	uint16_t defoveated_width;
-	uint16_t defoveated_height;
-	std::vector<item> items;
 };
 
 class video_stream_data_shard
 {
 public:
 	inline static const size_t max_payload_size = 1400;
-	enum flags : uint8_t
-	{
-		start_of_slice = 1,
-		end_of_slice = 1 << 1,
-		end_of_frame = 1 << 2,
-	};
-	// Identifier of stream in video_stream_description
+	// Identifier of stream:
+	// 0 left
+	// 1 right
+	// 2 alpha
 	uint8_t stream_item_idx;
 	// Counter increased for each frame
 	uint64_t frame_idx;
 	// Identifier of the shard within the frame
 	uint16_t shard_idx;
-	uint8_t flags;
 
 	// Position information, must be present on first video shard
 	struct view_info_t
@@ -755,11 +730,6 @@ struct tracking_control
 	std::array<bool, size_t(id::last) + 1> enabled;
 };
 
-struct settings
-{
-	uint32_t bitrate_bps;
-};
-
 struct refresh_rate_change
 {
 	float fps;
@@ -808,7 +778,6 @@ using packets = std::variant<
         haptics,
         timesync_query,
         tracking_control,
-        settings,
         refresh_rate_change,
         application_list,
         application_icon,
