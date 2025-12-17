@@ -55,7 +55,7 @@ set(OVR_COMPAT_SEARCH_PATH "/opt/xrizer:/usr/local/lib/OpenComposite:/usr/lib/Op
 option(WIVRN_FEATURE_DEBUG_GUI "Enable Monado debug GUI" OFF)
 option(WIVRN_FEATURE_RENDERDOC "Support renderdoc" OFF)
 set(WIVRN_FEATURE_SOLARXR OFF) # Will be added back when merged in upstream Monado
-option(WIVRN_FEATURE_STEAMVR_LIGHTHOUSE "Enable SteamVR Lighthouse driver" OFF)
+option(WIVRN_FEATURE_STEAMVR_LIGHTHOUSE "Enable SteamVR Lighthouse driver" ON)
 
 set(WIVRN_CSS "${CMAKE_SOURCE_DIR}/images/wivrn-local.css" CACHE STRING "Stylesheet to use to render SVGs" )
 
@@ -67,6 +67,7 @@ set(WIVRN_OPENXR_MANIFEST_TYPE "relative" CACHE STRING "How to reference librari
 if (NOT WIVRN_OPENXR_MANIFEST_TYPE IN_LIST WIVRN_OPENXR_MANIFEST_TYPE_VALUES)
     message(FATAL_ERROR "WIVRN_OPENXR_MANIFEST_TYPE must be one of ${WIVRN_OPENXR_MANIFEST_TYPE_VALUES}")
 endif()
+option(WIVRN_OPENXR_MANIFEST_ABI "Generate an ABI specific OpenXR manifest")
 
 option(ENABLE_COLOURED_OUTPUT "Always produce ANSI-coloured output (GNU/Clang only)." ON)
 
