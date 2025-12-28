@@ -1281,22 +1281,9 @@ void scenes::lobby::on_focused()
 	        vps,
 	        image_cache);
 
-	supported_codecs = wivrn::decoder::supported_codecs();
+	std::string image = "wivrn";
 
-	auto t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-	auto tm = std::localtime(&t);
-	switch (tm->tm_mon)
-	{
-		case 5:
-			about_picture = imgui_ctx->load_texture("assets://wivrn-pride.ktx2");
-			break;
-		case 11:
-			about_picture = imgui_ctx->load_texture("assets://wivrn-christmas.ktx2");
-			break;
-		default:
-			about_picture = imgui_ctx->load_texture("assets://wivrn.ktx2");
-			break;
-	}
+	about_picture = imgui_ctx->load_texture("assets://" + image + ".ktx2");
 
 	default_environment_screenshot = imgui_ctx->load_texture("assets://default-environment.ktx2");
 
