@@ -32,12 +32,14 @@
 #include "utils/i18n.h"
 #include "utils/mapped_file.h"
 #include "utils/overloaded.h"
+#if WIVRN_CLIENT_DEBUG_MENU
 #include "utils/ranges.h"
+#endif
 #include "version.h"
 #include "xr/body_tracker.h"
 #include <algorithm>
 #include <cassert>
-#include <chrono>
+#include <chrono> // IWYU pragma: keep
 #include <entt/entity/fwd.hpp>
 #include <fastgltf/math.hpp>
 #include <fastgltf/types.hpp>
@@ -566,6 +568,7 @@ void scenes::lobby::gui_settings()
 			}
 			ImGui::EndCombo();
 		}
+		imgui_ctx->vibrate_on_hover();
 	}
 
 	if (instance.has_extension(XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME))
@@ -642,20 +645,21 @@ void scenes::lobby::gui_settings()
 		imgui_ctx->vibrate_on_hover();
 	}
 
+	// Render resolution
 	{
 		const auto current = config.resolution_scale;
 		const auto width = stream_view.recommendedImageRectWidth;
 		const auto height = stream_view.recommendedImageRectHeight;
-		auto intScale = int(current * 100);
+		auto intScale = int(current * 10);
 		const auto slider = ImGui::SliderInt(
-		        _("Resolution scale").append("##resolution_scale").c_str(),
+		        _("Render resolution").append("##resolution_scale").c_str(),
 		        &intScale,
-		        50,
-		        350,
-		        fmt::format(_F("%d%% - {}x{} per eye"), int(width * current), int(height * current)).c_str());
+		        5,
+		        35,
+		        fmt::format(_F("{}%% - {}x{} per eye"), intScale * 10, int(width * current), int(height * current)).c_str());
 		if (slider)
 		{
-			config.resolution_scale = intScale * 0.01;
+			config.resolution_scale = intScale * 0.1;
 			config.save();
 		}
 		imgui_ctx->vibrate_on_hover();
@@ -665,6 +669,102 @@ void scenes::lobby::gui_settings()
 			ImGui::SameLine();
 			ImGui::Text("%s", fmt::format(_F("Resolution larger than {}x{} may not be supported by the headset"), stream_view.maxImageRectWidth, stream_view.maxImageRectHeight).c_str());
 		}
+	}
+
+	// Stream resolution
+	{
+		const int step = 10;
+		const auto current = config.get_stream_scale();
+		auto intval = int(current * 100 / step);
+		const auto slider = ImGui::SliderInt(
+		        _("Stream resolution").append("##stream_scale").c_str(),
+		        &intval,
+		        0,
+		        100 / step,
+		        fmt::format(_F("{}%%"), intval * step).c_str());
+		if (slider)
+		{
+			// clamp out of the slider to have the 50% value centered
+			intval = std::clamp(intval, 20 / step, 100 / step);
+			config.set_stream_scale(intval * step * 0.01);
+			config.save();
+		}
+		imgui_ctx->vibrate_on_hover();
+	}
+
+	{
+		auto codec_name = [](const std::optional<wivrn::video_codec> codec) {
+			if (not codec)
+				return _C("Codec", "Automatic");
+			switch (*codec)
+			{
+				case wivrn::h264:
+					return _C("Codec", "H.264");
+				case wivrn::h265:
+					return _C("Codec", "H.265");
+				case wivrn::av1:
+					return _C("Codec", "AV1");
+				case wivrn::raw:
+					break;
+			}
+			assert(false);
+			__builtin_unreachable();
+		};
+
+		if (ImGui::BeginCombo(_S("Codec"), codec_name(config.codec).c_str()))
+		{
+			if (ImGui::Selectable(codec_name({}).c_str(), not config.codec))
+			{
+				config.codec = std::nullopt;
+				config.save();
+			}
+			for (auto codec: supported_codecs)
+			{
+				// don't show raw in GUI
+				if (codec == wivrn::raw)
+					continue;
+
+				if (ImGui::Selectable(codec_name(codec).c_str(), config.codec == codec))
+				{
+					config.codec = codec;
+					config.save();
+				}
+			}
+
+			ImGui::EndCombo();
+		}
+		imgui_ctx->vibrate_on_hover();
+
+		if (config.codec == wivrn::video_codec::av1 or config.codec == wivrn::video_codec::h265)
+		{
+			ImGui::SameLine(0.f, 10.f);
+			bool ten_bit = config.bit_depth == 10;
+			if (ImGui::Checkbox(_S("10-bit"), &ten_bit))
+			{
+				config.bit_depth = ten_bit ? 10 : 8;
+				config.save();
+			}
+			imgui_ctx->vibrate_on_hover();
+		}
+	}
+
+	// Bitrate
+	{
+		const int mb = 1'000'000;
+		const auto current = config.bitrate_bps;
+		auto val = int(current / mb);
+		const auto slider = ImGui::SliderInt(
+		        _("Bitrate").append("##bitrate").c_str(),
+		        &val,
+		        1,
+		        200,
+		        fmt::format(_F("{}Mbit/s"), val).c_str());
+		if (slider)
+		{
+			config.bitrate_bps = val * mb;
+			config.save();
+		}
+		imgui_ctx->vibrate_on_hover();
 	}
 
 	if (instance.has_extension(XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME))
@@ -722,7 +822,7 @@ void scenes::lobby::gui_settings()
 		ImGui::EndDisabled();
 	}
 	{
-		ImGui::BeginDisabled(std::holds_alternative<std::monostate>(face_tracker));
+		ImGui::BeginDisabled(system.face_tracker_supported() == xr::face_tracker_type::none);
 		bool enabled = config.check_feature(feature::face_tracking);
 		if (ImGui::Checkbox(_S("Enable face tracking"), &enabled))
 		{
@@ -1159,6 +1259,8 @@ void scenes::lobby::gui_first_run()
 		current_tab = tab::server_list;
 		config.first_run = false;
 		config.save();
+		ImGui::PopStyleVar(); // ImGuiStyleVar_ItemSpacing
+		return;
 	}
 
 	ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10);
@@ -1425,6 +1527,7 @@ static const char * get_face_icon(XrTime predicted_display_time, xr::face_tracke
 	const char * result = nullptr;
 	std::visit(utils::overloaded{
 	                   [](std::monostate &) {},
+	                   [&](xr::android_face_tracker &) { result = ICON_FA_FACE_SMILE_WINK; },
 	                   [&](xr::htc_face_tracker &) { result = ICON_FA_FACE_SMILE_WINK; },
 	                   [&](auto & ft) {
 		                   ft.get_weights(predicted_display_time, expression);
@@ -1506,6 +1609,10 @@ void scenes::lobby::draw_features_status(XrTime predicted_display_time)
 		        .icon_enabled = get_face_icon(predicted_display_time, face_tracker),
 		        .icon_disabled = ICON_FA_FACE_MEH_BLANK,
 		});
+	}
+	else if (system.face_tracker_supported() != xr::face_tracker_type::none and config.check_feature(feature::face_tracking))
+	{
+		face_tracker = xr::make_face_tracker(instance, system, session);
 	}
 
 	if (system.body_tracker_supported() != xr::body_tracker_type::none)

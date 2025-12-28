@@ -135,8 +135,10 @@ NV_ENC_RC_PARAMS video_encoder_nvenc::get_rc_params(uint64_t bitrate, float fram
 	return {
 	        .rateControlMode = NV_ENC_PARAMS_RC_CBR,
 	        .averageBitRate = static_cast<uint32_t>(bitrate),
-	        .vbvBufferSize = static_cast<uint32_t>(bitrate / framerate),
+	        .vbvBufferSize = static_cast<uint32_t>(bitrate / framerate * 2.0f),
 	        .vbvInitialDelay = static_cast<uint32_t>(bitrate / framerate),
+	        .enableLookahead = 0,
+	        .lowDelayKeyFrameScale = 1,
 	        .multiPass = NV_ENC_TWO_PASS_QUARTER_RESOLUTION};
 }
 
@@ -148,30 +150,19 @@ void video_encoder_nvenc::set_init_params_fps(float framerate)
 
 video_encoder_nvenc::video_encoder_nvenc(
         wivrn_vk_bundle & vk,
-        encoder_settings & settings,
-        float fps,
+        const encoder_settings & settings,
         uint8_t stream_idx) :
-        video_encoder(stream_idx, settings.channels, std::make_unique<default_idr_handler>(), settings.bitrate_multiplier, true),
+        video_encoder(stream_idx, settings, std::make_unique<default_idr_handler>(), true),
         vk(vk),
         shared_state(video_encoder_nvenc_shared_state::get()),
-        fps(fps),
+        fps(settings.fps),
         bitrate(settings.bitrate)
 {
 	if (settings.bit_depth != 8 && settings.bit_depth != 10)
 		throw std::runtime_error("nvenc encoder only supports 8-bit and 10-bit encoding");
 
-	assert(settings.width % 32 == 0);
-	assert(settings.height % 32 == 0);
-	rect = vk::Rect2D{
-	        .offset = {
-	                .x = settings.offset_x,
-	                .y = settings.offset_y,
-	        },
-	        .extent = {
-	                .width = settings.width,
-	                .height = settings.height,
-	        },
-	};
+	assert(extent.width % 32 == 0);
+	assert(extent.height % 32 == 0);
 
 	NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS session_params = {
 	        .version = NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS_VER,
@@ -202,6 +193,9 @@ video_encoder_nvenc::video_encoder_nvenc(
 
 	// Bitrate control
 	config.rcParams = get_rc_params(bitrate, fps);
+	config.rcParams.enableTemporalAQ = 0;
+	config.rcParams.enableAQ = 1;
+	config.rcParams.enableNonRefP = 1;
 
 	config.gopLength = NVENC_INFINITE_GOPLENGTH;
 	config.frameIntervalP = 1;
@@ -279,10 +273,10 @@ video_encoder_nvenc::video_encoder_nvenc(
 	        .version = NV_ENC_INITIALIZE_PARAMS_VER,
 	        .encodeGUID = encodeGUID,
 	        .presetGUID = presetGUID,
-	        .encodeWidth = settings.video_width,
-	        .encodeHeight = settings.video_height,
-	        .darWidth = settings.video_width,
-	        .darHeight = settings.video_height,
+	        .encodeWidth = extent.width,
+	        .encodeHeight = extent.height,
+	        .darWidth = extent.width,
+	        .darHeight = extent.height,
 	        .enableEncodeAsync = 0,
 	        .enablePTD = 1,
 	        .encodeConfig = &config,
@@ -298,7 +292,7 @@ video_encoder_nvenc::video_encoder_nvenc(
 	NVENC_CHECK(shared_state->fn.nvEncCreateBitstreamBuffer(session_handle, &out_buf_params));
 	outputBuffer = out_buf_params.bitstreamBuffer;
 
-	vk::DeviceSize buffer_size = rect.extent.width * settings.video_height * bytesPerPixel * 3 / 2;
+	vk::DeviceSize buffer_size = extent.width * extent.height * bytesPerPixel * 3 / 2;
 
 	vk::StructureChain buffer_create_info{
 	        vk::BufferCreateInfo{
@@ -360,9 +354,9 @@ video_encoder_nvenc::video_encoder_nvenc(
 		NV_ENC_REGISTER_RESOURCE resource_params{
 		        .version = NV_ENC_REGISTER_RESOURCE_VER,
 		        .resourceType = NV_ENC_INPUT_RESOURCE_TYPE_CUDADEVICEPTR,
-		        .width = settings.video_width,
-		        .height = settings.video_height,
-		        .pitch = rect.extent.width * bytesPerPixel,
+		        .width = extent.width,
+		        .height = extent.height,
+		        .pitch = extent.width * bytesPerPixel,
 		        .resourceToRegister = (void *)frame,
 		        .bufferFormat = (bitDepth == NV_ENC_BIT_DEPTH_10 ? NV_ENC_BUFFER_FORMAT_YUV420_10BIT : NV_ENC_BUFFER_FORMAT_NV12),
 		        .bufferUsage = NV_ENC_INPUT_IMAGE,
@@ -387,35 +381,31 @@ std::pair<bool, vk::Semaphore> video_encoder_nvenc::present_image(vk::Image y_cb
 	        *in[slot].yuv,
 	        std::array{
 	                vk::BufferImageCopy{
-	                        .bufferRowLength = rect.extent.width,
+	                        .bufferRowLength = extent.width,
 	                        .imageSubresource = {
 	                                .aspectMask = vk::ImageAspectFlagBits::ePlane0,
-	                                .baseArrayLayer = uint32_t(channels),
+	                                .baseArrayLayer = stream_idx,
 	                                .layerCount = 1,
 	                        },
-	                        .imageOffset = {
-	                                .x = rect.offset.x,
-	                                .y = rect.offset.y,
-	                        },
 	                        .imageExtent = {
-	                                .width = rect.extent.width,
-	                                .height = rect.extent.height,
+	                                .width = extent.width,
+	                                .height = extent.height,
 	                                .depth = 1,
 	                        }},
-	                vk::BufferImageCopy{.bufferOffset = rect.extent.width * rect.extent.height * bytesPerPixel, .bufferRowLength = uint32_t(rect.extent.width / 2), .imageSubresource = {
-	                                                                                                                                                                        .aspectMask = vk::ImageAspectFlagBits::ePlane1,
-	                                                                                                                                                                        .baseArrayLayer = uint32_t(channels),
-	                                                                                                                                                                        .layerCount = 1,
-	                                                                                                                                                                },
-	                                    .imageOffset = {
-	                                            .x = rect.offset.x / 2,
-	                                            .y = rect.offset.y / 2,
-	                                    },
-	                                    .imageExtent = {
-	                                            .width = rect.extent.width / 2,
-	                                            .height = rect.extent.height / 2,
-	                                            .depth = 1,
-	                                    }}});
+	                vk::BufferImageCopy{
+	                        .bufferOffset = extent.width * extent.height * bytesPerPixel,
+	                        .bufferRowLength = uint32_t(extent.width / 2),
+	                        .imageSubresource = {
+	                                .aspectMask = vk::ImageAspectFlagBits::ePlane1,
+	                                .baseArrayLayer = stream_idx,
+	                                .layerCount = 1,
+	                        },
+	                        .imageExtent = {
+	                                .width = extent.width / 2,
+	                                .height = extent.height / 2,
+	                                .depth = 1,
+	                        },
+	                }});
 
 	return {false, nullptr};
 }
@@ -474,9 +464,9 @@ std::optional<video_encoder::data> video_encoder_nvenc::encode(uint8_t slot, uin
 
 	NV_ENC_PIC_PARAMS frame_params{
 	        .version = NV_ENC_PIC_PARAMS_VER,
-	        .inputWidth = rect.extent.width,
-	        .inputHeight = rect.extent.height,
-	        .inputPitch = rect.extent.width,
+	        .inputWidth = extent.width,
+	        .inputHeight = extent.height,
+	        .inputPitch = extent.width,
 	        .encodePicFlags = 0,
 	        .frameIdx = 0,
 	        .inputTimeStamp = 0,
@@ -491,8 +481,10 @@ std::optional<video_encoder::data> video_encoder_nvenc::encode(uint8_t slot, uin
 	{
 		case default_idr_handler::frame_type::i:
 			frame_params.encodePicFlags |= NV_ENC_PIC_FLAG_FORCEIDR | NV_ENC_PIC_FLAG_OUTPUT_SPSPPS;
+			frame_params.pictureType = NV_ENC_PIC_TYPE_IDR;
 			break;
 		case default_idr_handler::frame_type::p:
+			frame_params.pictureType = NV_ENC_PIC_TYPE_UNKNOWN;
 			break;
 	}
 	NVENC_CHECK(shared_state->fn.nvEncEncodePicture(session_handle, &frame_params));
@@ -503,6 +495,9 @@ std::optional<video_encoder::data> video_encoder_nvenc::encode(uint8_t slot, uin
 	        .outputBitstream = outputBuffer,
 	};
 	NVENC_CHECK(shared_state->fn.nvEncLockBitstream(session_handle, &buf_lock_params));
+
+	if (buf_lock_params.pictureType == NV_ENC_PIC_TYPE_NONREF_P)
+		idr_handler.set_non_ref(frame_index);
 
 	CU_CHECK(shared_state->cuda_fn->cuCtxPopCurrent(NULL));
 	return data{

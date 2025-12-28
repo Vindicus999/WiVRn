@@ -54,8 +54,8 @@ set(OVR_COMPAT_SEARCH_PATH "/usr/local/lib/OpenComposite:/usr/lib/OpenComposite:
 
 option(WIVRN_FEATURE_DEBUG_GUI "Enable Monado debug GUI" OFF)
 option(WIVRN_FEATURE_RENDERDOC "Support renderdoc" OFF)
-option(WIVRN_FEATURE_SOLARXR "Enable SolarXR driver" OFF)
-option(WIVRN_FEATURE_STEAMVR_LIGHTHOUSE "Enable SteamVR Lighthouse driver" OFF)
+option(WIVRN_FEATURE_SOLARXR "Enable SolarXR driver" ON)
+option(WIVRN_FEATURE_STEAMVR_LIGHTHOUSE "Enable SteamVR Lighthouse driver" ON)
 
 set(WIVRN_CSS "${CMAKE_SOURCE_DIR}/images/wivrn-local.css" CACHE STRING "Stylesheet to use to render SVGs" )
 
@@ -67,6 +67,7 @@ set(WIVRN_OPENXR_MANIFEST_TYPE "relative" CACHE STRING "How to reference librari
 if (NOT WIVRN_OPENXR_MANIFEST_TYPE IN_LIST WIVRN_OPENXR_MANIFEST_TYPE_VALUES)
     message(FATAL_ERROR "WIVRN_OPENXR_MANIFEST_TYPE must be one of ${WIVRN_OPENXR_MANIFEST_TYPE_VALUES}")
 endif()
+option(WIVRN_OPENXR_MANIFEST_ABI "Generate an ABI specific OpenXR manifest")
 
 option(ENABLE_COLOURED_OUTPUT "Always produce ANSI-coloured output (GNU/Clang only)." ON)
 
@@ -199,7 +200,7 @@ if (WIVRN_BUILD_CLIENT AND NOT ANDROID)
     find_package(Fontconfig REQUIRED)
 
     if (WIVRN_USE_SYSTEM_OPENXR)
-        find_package(OpenXR 1.1.48 REQUIRED)
+        find_package(OpenXR 1.1.53 REQUIRED)
     endif()
 
     if (WIVRN_USE_SYSTEM_LIBKTX)
@@ -216,7 +217,7 @@ endif()
 
 if (WIVRN_BUILD_DISSECTOR)
     if (WIVRN_USE_SYSTEM_OPENXR)
-        find_package(OpenXR 1.1.48 REQUIRED)
+        find_package(OpenXR 1.1.53 REQUIRED)
     endif()
     find_package(Wireshark REQUIRED)
 endif()
@@ -239,8 +240,8 @@ FetchContent_Declare(fastgltf      EXCLUDE_FROM_ALL SYSTEM URL https://github.co
                                    URL_HASH SHA256=0bb564e127b14c22f062db50f89381dd2e0a20dbaf4987ca138a4ae8728712f9)
 FetchContent_Declare(glm           EXCLUDE_FROM_ALL SYSTEM URL https://github.com/g-truc/glm/releases/download/1.0.2/glm-1.0.2.zip
                                    URL_HASH SHA256=a41adf423315e35489c1e67689c7bb74c7edd4d207a477b7b19c45cd440c2f67)
-FetchContent_Declare(openxr_loader EXCLUDE_FROM_ALL SYSTEM URL https://github.com/KhronosGroup/OpenXR-SDK/archive/refs/tags/release-1.1.48.tar.gz
-                                   URL_HASH SHA256=c9372992dcdfac643e28796e41d4dbd36c4cdf0388d01fa89245628edae9d411)
+FetchContent_Declare(openxr_loader EXCLUDE_FROM_ALL SYSTEM URL https://github.com/KhronosGroup/OpenXR-SDK/archive/refs/tags/release-1.1.54.tar.gz
+                                   URL_HASH SHA256=2055688081066e37238be996534f349420ac52ed34f8514836704232121ee7f3)
 FetchContent_Declare(spdlog        EXCLUDE_FROM_ALL SYSTEM URL https://github.com/gabime/spdlog/archive/refs/tags/v1.16.0.tar.gz
                                    URL_HASH SHA256=8741753e488a78dd0d0024c980e1fb5b5c85888447e309d9cb9d949bdb52aa3e)
 FetchContent_Declare(stb           EXCLUDE_FROM_ALL SYSTEM URL https://github.com/nothings/stb/archive/013ac3beddff3dbffafd5177e7972067cd2b5083.zip
@@ -253,14 +254,14 @@ FetchContent_Declare(libktx        EXCLUDE_FROM_ALL SYSTEM URL https://github.co
 FetchContent_Declare(implot        EXCLUDE_FROM_ALL SYSTEM URL https://github.com/epezent/implot/archive/3da8bd34299965d3b0ab124df743fe3e076fa222.zip
                                    URL_HASH SHA256=e9b439a94aa6f09fcf12ed9c2cd784efe5e99e96242122aa683e690b29f7a59f)
 file(GLOB IMGUI_PATCHES CONFIGURE_DEPENDS patches/imgui/*)
-FetchContent_Declare(imgui         EXCLUDE_FROM_ALL SYSTEM URL https://github.com/ocornut/imgui/archive/refs/tags/v1.92.4.tar.gz
-                                   URL_HASH SHA256=0e175d4d941112532549b418ced0bd546abe9024ecb9b5f431f8a67a2197b0ba
+FetchContent_Declare(imgui         EXCLUDE_FROM_ALL SYSTEM URL https://github.com/ocornut/imgui/archive/refs/tags/v1.92.5.tar.gz
+                                   URL_HASH SHA256=0eb50fe9aeba1a51f96b5843c7f630a32ed2e9362d693c61b87e4fa870cf826d
                                    PATCH_COMMAND    ${CMAKE_CURRENT_LIST_DIR}/patches/apply.sh ${IMGUI_PATCHES}
 )
 FetchContent_Declare(uni-algo      EXCLUDE_FROM_ALL SYSTEM URL https://github.com/uni-algo/uni-algo/archive/v1.2.0.tar.gz
                                    URL_HASH SHA256=f2a1539cd8635bc6088d05144a73ecfe7b4d74ee0361fabed6f87f9f19e74ca9)
-FetchContent_Declare(entt          EXCLUDE_FROM_ALL SYSTEM URL https://github.com/skypjack/entt/archive/refs/tags/v3.15.0.tar.gz
-                                   URL_HASH SHA256=01466fcbf77618a79b62891510c0bbf25ac2804af5751c84982b413852234d66)
+FetchContent_Declare(entt          EXCLUDE_FROM_ALL SYSTEM URL https://github.com/skypjack/entt/archive/refs/tags/v3.16.0.tar.gz
+                                   URL_HASH SHA256=7d7b4037b737992342049ffab14f22fa10243e01664f8c3a0657aa247ac52f71)
 FetchContent_Declare(curl          EXCLUDE_FROM_ALL SYSTEM URL https://github.com/curl/curl/releases/download/curl-8_17_0/curl-8.17.0.tar.xz
                                    URL_HASH SHA256=955f6e729ad6b3566260e8fef68620e76ba3c31acf0a18524416a185acf77992)
 FetchContent_Declare(spirv-reflect EXCLUDE_FROM_ALL SYSTEM URL https://github.com/KhronosGroup/SPIRV-Reflect/archive/refs/tags/vulkan-sdk-1.4.328.1.tar.gz
@@ -271,7 +272,9 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS monado-rev)
 file(STRINGS monado-rev MONADO_REV)
 # Server dependencies
 FetchContent_Declare(monado
-    URL https://gitlab.freedesktop.org/monado/monado/-/archive/${MONADO_REV}/monado-${MONADO_REV}.tar.gz
+    GIT_REPOSITORY   https://gitlab.freedesktop.org/monado/monado.git
+    # The flatpak manifest is updated automatically
+    GIT_TAG          ${MONADO_REV}
     PATCH_COMMAND    ${CMAKE_CURRENT_LIST_DIR}/patches/apply.sh ${MONADO_PATCHES}
     EXCLUDE_FROM_ALL
 )
@@ -289,18 +292,18 @@ if (WIVRN_BUILD_SERVER OR WIVRN_BUILD_SERVER_LIBRARY)
     add_subdirectory(server)
 
     if (WIVRN_BUILD_SERVER)
-        message("Selected encoders:")
-        message("\tNVENC : ${WIVRN_USE_NVENC}")
-        message("\tVAAPI : ${WIVRN_USE_VAAPI}")
-        message("\tVulkan: ${WIVRN_USE_VULKAN_ENCODE}")
-        message("\tx264  : ${WIVRN_USE_X264}")
-        message("")
-        message("Audio backends:")
-        message("\tPipewire  : ${WIVRN_USE_PIPEWIRE}")
-        message("\tPulseaudio: ${WIVRN_USE_PULSEAUDIO}")
-        message("")
-        message("Optional features:")
-        message("\tsystemd: ${WIVRN_USE_SYSTEMD}")
+        message(STATUS "Selected encoders:")
+        message(STATUS "\tNVENC : ${WIVRN_USE_NVENC}")
+        message(STATUS "\tVAAPI : ${WIVRN_USE_VAAPI}")
+        message(STATUS "\tVulkan: ${WIVRN_USE_VULKAN_ENCODE}")
+        message(STATUS "\tx264  : ${WIVRN_USE_X264}")
+        message(STATUS "")
+        message(STATUS "Audio backends:")
+        message(STATUS "\tPipewire  : ${WIVRN_USE_PIPEWIRE}")
+        message(STATUS "\tPulseaudio: ${WIVRN_USE_PULSEAUDIO}")
+        message(STATUS "")
+        message(STATUS "Optional features:")
+        message(STATUS "\tsystemd: ${WIVRN_USE_SYSTEMD}")
     endif()
 endif()
 

@@ -34,6 +34,7 @@
 #include "utils/scoped_lock.h"
 
 #include "audio/audio_setup.h"
+#include "wivrn_android_face_tracker.h"
 #include "wivrn_comp_target.h"
 #include "wivrn_config.h"
 #include "wivrn_eye_tracker.h"
@@ -45,6 +46,7 @@
 
 #include "wivrn_packets.h"
 #include "xr/to_string.h"
+#include "xrt/xrt_defines.h"
 #include "xrt/xrt_device.h"
 #include "xrt/xrt_session.h"
 #include <algorithm>
@@ -150,10 +152,11 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
         connection(std::move(connection)),
         xrt_system(system),
         hmd(this, get_info()),
-        left_controller(0, &hmd, this),
-        left_hand_interaction(0, &hmd, this),
-        right_controller(1, &hmd, this),
-        right_hand_interaction(1, &hmd, this)
+        left_controller(XRT_DEVICE_TOUCH_CONTROLLER, 0, &hmd, this),
+        right_controller(XRT_DEVICE_TOUCH_CONTROLLER, 1, &hmd, this),
+        left_hand_interaction(XRT_DEVICE_EXT_HAND_INTERACTION, 0, &hmd, this),
+        right_hand_interaction(XRT_DEVICE_EXT_HAND_INTERACTION, 1, &hmd, this),
+        settings(get_info().settings)
 {
 	try
 	{
@@ -196,27 +199,48 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 	auto use_steamvr_lh = configuration().use_steamvr_lh || std::getenv("WIVRN_USE_STEAMVR_LH");
 	xrt_system_devices * lhdevs = NULL;
 
-	if (use_steamvr_lh && steamvr_lh_create_devices(nullptr, &lhdevs) == XRT_SUCCESS)
+	if (use_steamvr_lh)
 	{
-		for (int i = 0; i < lhdevs->xdev_count; i++)
+		U_LOG_W("=====================");
+		U_LOG_W("Disregard lighthousedb / chaperone related error messages from the lighthouse driver. These are irrelevant in case of WiVRn.");
+		U_LOG_W("If getting a SIGSEGV right after this, you are likely using an unsupported SteamVR version!");
+		U_LOG_W("=====================");
+		if (steamvr_lh_create_devices(nullptr, &lhdevs) == XRT_SUCCESS)
 		{
-			auto lhdev = lhdevs->xdevs[i];
-			switch (lhdev->device_type)
+			for (int i = 0; i < lhdevs->xdev_count; i++)
 			{
-				case XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER:
-					roles.left = xdev_count;
-					static_roles.hand_tracking.unobstructed.left = nullptr;
-					static_roles.hand_tracking.conforming.left = lhdev;
-					break;
-				case XRT_DEVICE_TYPE_RIGHT_HAND_CONTROLLER:
-					roles.right = xdev_count;
-					static_roles.hand_tracking.unobstructed.right = nullptr;
-					static_roles.hand_tracking.conforming.right = lhdev;
-					break;
-				default:
-					break;
+				auto lhdev = lhdevs->xdevs[i];
+				switch (lhdev->device_type)
+				{
+					case XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER:
+						roles.left = xdev_count;
+						static_roles.hand_tracking.unobstructed.left = nullptr;
+						static_roles.hand_tracking.conforming.left = lhdev;
+						break;
+					case XRT_DEVICE_TYPE_RIGHT_HAND_CONTROLLER:
+						roles.right = xdev_count;
+						static_roles.hand_tracking.unobstructed.right = nullptr;
+						static_roles.hand_tracking.conforming.right = lhdev;
+						break;
+					case XRT_DEVICE_TYPE_ANY_HAND_CONTROLLER:
+						if (roles.left == left_controller_index)
+						{
+							roles.left = xdev_count;
+							static_roles.hand_tracking.unobstructed.left = nullptr;
+							static_roles.hand_tracking.conforming.left = lhdev;
+						}
+						else if (roles.right == right_controller_index)
+						{
+							roles.right = xdev_count;
+							static_roles.hand_tracking.unobstructed.right = nullptr;
+							static_roles.hand_tracking.conforming.right = lhdev;
+						}
+						break;
+					default:
+						break;
+				}
+				xdevs[xdev_count++] = lhdev;
 			}
-			xdevs[xdev_count++] = lhdev;
 		}
 	}
 #endif
@@ -228,6 +252,12 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 	}
 
 	auto face = get_info().face_tracking;
+	if (face == from_headset::face_type::android || is_forced_extension("ANDROID_face_tracking"))
+	{
+		android_face_tracker = std::make_unique<wivrn_android_face_tracker>(&hmd, *this);
+		static_roles.face = android_face_tracker.get();
+		xdevs[xdev_count++] = android_face_tracker.get();
+	}
 	if (face == from_headset::face_type::fb2 || is_forced_extension("FB_face_tracking2"))
 	{
 		fb_face2_tracker = std::make_unique<wivrn_fb_face2_tracker>(&hmd, *this);
@@ -270,7 +300,7 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 	}
 
 #if WIVRN_FEATURE_SOLARXR
-	uint32_t num_devs = solarxr_device_create_xdevs(&hmd.tracking_origin, &xdevs[xdev_count], ARRAY_SIZE(xdevs) - xdev_count);
+	uint32_t num_devs = solarxr_device_create_xdevs(static_cast<xrt_device>(hmd).tracking_origin, &xdevs[xdev_count], ARRAY_SIZE(xdevs) - xdev_count);
 	if (num_devs != 0)
 	{
 		static_roles.body = xdevs[xdev_count];
@@ -314,7 +344,7 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 wivrn_session::~wivrn_session()
 {
 #if WIVRN_FEATURE_SOLARXR
-	solarxr_device_set_feeder_devices(static_roles.body, nullptr, 0);
+	solarxr_device_clear_feeder_devices(static_roles.body);
 #endif
 
 	for (size_t i = 0; i < ARRAY_SIZE(xdevs); i++)
@@ -356,6 +386,7 @@ xrt_result_t wivrn::wivrn_session::create_session(std::unique_ptr<wivrn_connecti
 	u_builder_create_space_overseer_legacy(
 	        &self->xrt_system.broadcast,
 	        &self->hmd,
+	        self->eye_tracker.get(),
 	        &self->left_controller,
 	        &self->right_controller,
 	        nullptr,
@@ -411,8 +442,16 @@ void wivrn_session::operator()(from_headset::headset_info_packet &&)
 
 void wivrn_session::operator()(from_headset::settings_changed && settings)
 {
-	connection->info().preferred_refresh_rate = settings.preferred_refresh_rate;
-	connection->info().minimum_refresh_rate = settings.minimum_refresh_rate;
+	*this->settings.lock() = settings;
+
+	if (settings.bitrate_bps != 0)
+	{
+		std::lock_guard lock(comp_target_mutex);
+		if (comp_target)
+			comp_target->set_bitrate(settings.bitrate_bps);
+	}
+
+	wivrn_ipc_socket_monado->send(std::move(settings));
 }
 
 static xrt_device_name get_name(interaction_profile profile)
@@ -469,8 +508,8 @@ static xrt_device_name get_name(interaction_profile profile)
 }
 void wivrn_session::operator()(from_headset::trackings && tracking)
 {
-	auto left = (roles.left == left_controller_index || roles.left == left_hand_interaction_index) ? get_name(tracking.interaction_profiles[0]) : XRT_DEVICE_INVALID;
-	auto right = (roles.right == right_controller_index || roles.right == right_hand_interaction_index) ? get_name(tracking.interaction_profiles[1]) : XRT_DEVICE_INVALID;
+	auto left = (roles.left == -1 || roles.left == left_controller_index || roles.left == left_hand_interaction_index) ? get_name(tracking.interaction_profiles[0]) : XRT_DEVICE_INVALID;
+	auto right = (roles.right == -1 || roles.right == right_controller_index || roles.right == right_hand_interaction_index) ? get_name(tracking.interaction_profiles[1]) : XRT_DEVICE_INVALID;
 	if (left != roles.left_profile or right != roles.right_profile)
 	{
 		U_LOG_I("Updating interaction profiles: from \n"
@@ -483,36 +522,44 @@ void wivrn_session::operator()(from_headset::trackings && tracking)
 		std::lock_guard lock(roles_mutex);
 
 		// don't change role when hand from other driver is used
-		if (roles.left == left_hand_interaction_index || roles.left == left_controller_index)
+		if (roles.left == -1 || roles.left == left_hand_interaction_index || roles.left == left_controller_index)
 		{
 			if (left == XRT_DEVICE_EXT_HAND_INTERACTION)
 			{
 				left_hand_interaction.reset_history();
 				roles.left = left_hand_interaction_index;
 			}
-			else
+			else if (left != XRT_DEVICE_INVALID)
 			{
 				left_controller.reset_history();
 				roles.left = left_controller_index;
 				set_enabled(device_id::LEFT_PINCH_POSE, false);
 				set_enabled(device_id::LEFT_POKE, false);
 			}
+			else
+			{
+				roles.left = -1;
+			}
 		}
 		roles.left_profile = left;
 
-		if (roles.right == right_hand_interaction_index || roles.right == right_controller_index)
+		if (roles.right == -1 || roles.right == right_hand_interaction_index || roles.right == right_controller_index)
 		{
 			if (right == XRT_DEVICE_EXT_HAND_INTERACTION)
 			{
 				right_hand_interaction.reset_history();
 				roles.right = right_hand_interaction_index;
 			}
-			else
+			else if (right != XRT_DEVICE_INVALID)
 			{
 				right_controller.reset_history();
 				roles.right = right_controller_index;
 				set_enabled(device_id::RIGHT_PINCH_POSE, false);
 				set_enabled(device_id::RIGHT_POKE, false);
+			}
+			else
+			{
+				roles.right = -1;
 			}
 		}
 		roles.right_profile = right;
@@ -553,7 +600,9 @@ void wivrn_session::operator()(const from_headset::tracking & tracking)
 			comp_target->foveation->update_tracking(tracking, offset);
 	}
 
-	if (fb_face2_tracker)
+	if (android_face_tracker)
+		android_face_tracker->update_tracking(tracking, offset);
+	else if (fb_face2_tracker)
 		fb_face2_tracker->update_tracking(tracking, offset);
 	else if (htc_face_tracker)
 		htc_face_tracker->update_tracking(tracking, offset);
@@ -748,7 +797,7 @@ void wivrn_session::operator()(from_headset::session_state_changed && event)
 			continue;
 		bool current = t.ics.client_state.session_overlay or
 		               mnd_ipc_server->global_state.active_client_index == t.ics.server_thread_index;
-		xrt_syscomp_set_state(system_compositor, t.ics.xc, visible and current, focused and current);
+		xrt_syscomp_set_state(system_compositor, t.ics.xc, visible and current, focused and current, os_monotonic_get_ns());
 	}
 }
 void wivrn_session::operator()(from_headset::user_presence_changed && event)
@@ -917,16 +966,20 @@ struct refresh_rate_adjuster
 	std::chrono::seconds period{10};
 	std::chrono::steady_clock::time_point next = std::chrono::steady_clock::now() + period;
 	pacing_app_factory & pacers;
-	from_headset::headset_info_packet & info;
+	const from_headset::headset_info_packet & info;
+	thread_safe<from_headset::settings_changed> & settings;
 	float last = 0;
 
-	refresh_rate_adjuster(from_headset::headset_info_packet & info, pacing_app_factory & pacers) :
+	refresh_rate_adjuster(const from_headset::headset_info_packet & info, thread_safe<from_headset::settings_changed> & settings, pacing_app_factory & pacers) :
 	        pacers(pacers),
-	        info(info) {}
+	        info(info),
+	        settings(settings)
+	{}
 
 	void adjust(wivrn_connection & cnx)
 	{
-		if (info.preferred_refresh_rate != 0 or info.available_refresh_rates.size() < 2 or std::chrono::steady_clock::now() < next)
+		auto locked = settings.lock();
+		if (locked->preferred_refresh_rate != 0 or info.available_refresh_rates.size() < 2 or std::chrono::steady_clock::now() < next)
 			return;
 
 		// Maximum refresh rate the application can reach
@@ -936,7 +989,7 @@ struct refresh_rate_adjuster
 		auto requested = info.available_refresh_rates.back();
 		for (auto rate: info.available_refresh_rates)
 		{
-			if (rate > info.minimum_refresh_rate and rate < app_rate * (rate == last ? 1. : 0.9))
+			if (rate > locked->minimum_refresh_rate and rate < app_rate * (rate == last ? 1. : 0.9))
 				requested = rate;
 		}
 		if (requested != last)
@@ -956,7 +1009,7 @@ struct refresh_rate_adjuster
 
 void wivrn_session::run(std::stop_token stop)
 {
-	refresh_rate_adjuster refresh(connection->info(), app_pacers);
+	refresh_rate_adjuster refresh(connection->info(), settings, app_pacers);
 	while (not stop.stop_requested())
 	{
 		try
@@ -1114,6 +1167,7 @@ xrt_result_t wivrn_session::feature_inc(xrt_device_feature_type type)
 		case XRT_DEVICE_FEATURE_HAND_TRACKING_LEFT:
 		case XRT_DEVICE_FEATURE_HAND_TRACKING_RIGHT:
 		case XRT_DEVICE_FEATURE_EYE_TRACKING:
+		case XRT_DEVICE_FEATURE_FACE_TRACKING:
 			return XRT_SUCCESS;
 		default:
 			return XRT_ERROR_FEATURE_NOT_SUPPORTED;
@@ -1127,6 +1181,7 @@ xrt_result_t wivrn_session::feature_dec(xrt_device_feature_type type)
 		case XRT_DEVICE_FEATURE_HAND_TRACKING_LEFT:
 		case XRT_DEVICE_FEATURE_HAND_TRACKING_RIGHT:
 		case XRT_DEVICE_FEATURE_EYE_TRACKING:
+		case XRT_DEVICE_FEATURE_FACE_TRACKING:
 			return XRT_SUCCESS;
 		default:
 			return XRT_ERROR_FEATURE_NOT_SUPPORTED;

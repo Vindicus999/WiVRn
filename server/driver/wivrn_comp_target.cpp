@@ -31,6 +31,7 @@
 #include "xrt_cast.h"
 
 #include <algorithm>
+#include <ranges>
 #include <vector>
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_core.h>
@@ -80,10 +81,10 @@ static inline struct vk_bundle * get_vk(struct wivrn_comp_target * cn)
 	return &cn->c->base.vk;
 }
 
-static float get_default_rate(const from_headset::headset_info_packet & info)
+static float get_default_rate(const from_headset::headset_info_packet & info, const from_headset::settings_changed & settings)
 {
-	if (info.preferred_refresh_rate)
-		return info.preferred_refresh_rate;
+	if (settings.preferred_refresh_rate)
+		return settings.preferred_refresh_rate;
 	return info.available_refresh_rates.back();
 }
 
@@ -143,25 +144,17 @@ static void create_encoders(wivrn_comp_target * cn)
 	to_headset::video_stream_description & desc = cn->desc;
 	desc.width = cn->width;
 	desc.height = cn->height;
-	const auto & hmd = cn->cnx.get_hmd().hmd;
-	desc.defoveated_width = hmd->views[0].display.w_pixels * 2;
-	desc.defoveated_height = hmd->views[0].display.h_pixels;
 
 	std::map<int, std::vector<std::shared_ptr<video_encoder>>> thread_params;
 
-	uint32_t bitrate = 0;
-
-	for (auto & settings: cn->settings)
+	for (auto [i, settings]: std::ranges::enumerate_view(cn->settings))
 	{
-		bitrate += settings.bitrate;
-		uint8_t stream_index = cn->encoders.size();
 		auto & encoder = cn->encoders.emplace_back(
-		        video_encoder::create(*cn->wivrn_bundle, settings, stream_index, desc.width, desc.height, desc.fps));
-		desc.items.push_back(settings);
+		        video_encoder::create(*cn->wivrn_bundle, settings, i));
+		desc.codec[i] = settings.codec;
 
 		thread_params[settings.group].emplace_back(encoder);
 	}
-	wivrn_ipc_socket_monado->send(from_monado::bitrate_changed{bitrate});
 
 	for (auto & [group, params]: thread_params)
 	{
@@ -204,7 +197,7 @@ static VkResult create_images(struct wivrn_comp_target * cn, vk::ImageUsageFlags
 	                        .depth = 1,
 	                },
 	                .mipLevels = 1,
-	                .arrayLayers = 2, // colour then alpha
+	                .arrayLayers = 3, // left, right then alpha
 	                .samples = vk::SampleCountFlagBits::e1,
 	                .tiling = vk::ImageTiling::eOptimal,
 	                .usage = flags | vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc,
@@ -218,10 +211,10 @@ static VkResult create_images(struct wivrn_comp_target * cn, vk::ImageUsageFlags
 #if WIVRN_USE_VULKAN_ENCODE
 	if (
 	        vk->features.video_maintenance_1 and
-	        std::ranges::any_of(
+	        std::ranges::contains(
 	                cn->settings,
-	                [](const auto & item) { return item.encoder_name == encoder_vulkan //
-		                                       and item.offset_x == 0 and item.offset_y == 0; }))
+	                encoder_vulkan,
+	                &encoder_settings::encoder_name))
 	{
 		image_info.get().flags |= vk::ImageCreateFlagBits::eVideoProfileIndependentKHR;
 		image_info.get().usage |= vk::ImageUsageFlagBits::eVideoEncodeSrcKHR;
@@ -255,7 +248,7 @@ static VkResult create_images(struct wivrn_comp_target * cn, vk::ImageUsageFlags
 		                                                .subresourceRange = {
 		                                                        .aspectMask = vk::ImageAspectFlagBits::ePlane0,
 		                                                        .levelCount = 1,
-		                                                        .layerCount = 2,
+		                                                        .layerCount = vk::RemainingArrayLayers,
 		                                                },
 		                                        });
 		item.image_view_cbcr = vk::raii::ImageView(device,
@@ -267,7 +260,7 @@ static VkResult create_images(struct wivrn_comp_target * cn, vk::ImageUsageFlags
 		                                                   .subresourceRange = {
 		                                                           .aspectMask = vk::ImageAspectFlagBits::ePlane1,
 		                                                           .levelCount = 1,
-		                                                           .layerCount = 2,
+		                                                           .layerCount = vk::RemainingArrayLayers,
 		                                                   },
 		                                           });
 		cn->images[i].view = VkImageView(*item.image_view_y);
@@ -319,10 +312,12 @@ static bool comp_wivrn_init_post_vulkan(struct comp_target * ct, uint32_t prefer
 	{
 		cn->settings = get_encoder_settings(
 		        *cn->wivrn_bundle,
-		        cn->c->settings.preferred.width,
-		        cn->c->settings.preferred.height,
-		        cn->cnx.get_info());
+		        cn->cnx.get_info(),
+		        *cn->cnx.get_settings());
 		print_encoders(cn->settings);
+
+		cn->c->settings.preferred.width = cn->settings[0].width;
+		cn->c->settings.preferred.height = cn->settings[0].height;
 	}
 	catch (const std::exception & e)
 	{
@@ -491,7 +486,7 @@ static void comp_wivrn_present_thread(std::stop_token stop_token, wivrn_comp_tar
 		{
 			for (auto & encoder: encoders)
 			{
-				if (encoder->channels == to_headset::video_stream_description::channels_t::colour or view_info.alpha)
+				if (encoder->stream_idx < 2 or view_info.alpha)
 					encoder->encode(cn->cnx, view_info, frame_index);
 			}
 		}
@@ -572,7 +567,7 @@ static VkResult comp_wivrn_present(struct comp_target * ct,
 	std::vector<vk::Semaphore> present_done_sem;
 	for (auto & encoder: cn->encoders)
 	{
-		if (encoder->channels == to_headset::video_stream_description::channels_t::alpha and not do_alpha)
+		if (encoder->stream_idx == 2 and not do_alpha)
 			continue;
 		auto [transfer, sem] = encoder->present_image(psc_image.image, command_buffer, info.frame_id);
 		need_queue_transfer |= transfer;
@@ -595,7 +590,7 @@ static VkResult comp_wivrn_present(struct comp_target * ct,
 		                             .baseMipLevel = 0,
 		                             .levelCount = 1,
 		                             .baseArrayLayer = 0,
-		                             .layerCount = 2},
+		                             .layerCount = vk::RemainingArrayLayers},
 		};
 		command_buffer.pipelineBarrier(
 		        vk::PipelineStageFlagBits::eTransfer,
@@ -615,7 +610,7 @@ static VkResult comp_wivrn_present(struct comp_target * ct,
 		cn->wivrn_bundle->queue.submit(submit_info, *cn->psc.fence);
 		for (auto & encoder: cn->encoders)
 		{
-			if (encoder->channels == to_headset::video_stream_description::channels_t::alpha and not do_alpha)
+			if (encoder->stream_idx == 2 and not do_alpha)
 				continue;
 			encoder->post_submit();
 		}
@@ -794,7 +789,7 @@ static xrt_result_t comp_wivrn_request_refresh_rate(struct comp_target * ct, flo
 	struct wivrn_comp_target * cn = (struct wivrn_comp_target *)ct;
 	cn->requested_refresh_rate = refresh_rate_hz;
 	if (refresh_rate_hz == 0.0f)
-		refresh_rate_hz = get_default_rate(cn->cnx.get_info());
+		refresh_rate_hz = get_default_rate(cn->cnx.get_info(), *cn->cnx.get_settings());
 
 	cn->cnx.send_control(to_headset::refresh_rate_change{.fps = refresh_rate_hz});
 	return XRT_SUCCESS;
@@ -838,12 +833,11 @@ void wivrn_comp_target::reset_encoders()
 	cnx.send_control(to_headset::video_stream_description{desc});
 }
 
-void wivrn_comp_target::set_bitrate(int bitrate_bps)
+void wivrn_comp_target::set_bitrate(uint32_t bitrate_bps)
 {
 	for (auto & encoder: encoders)
 	{
-		// Alpha will have multiplier of 0 and will be left unchanged.
-		auto encoder_bps = (int)(bitrate_bps * encoder->bitrate_multiplier);
+		auto encoder_bps = (uint32_t)(bitrate_bps * encoder->bitrate_multiplier);
 		U_LOG_D("Encoder %d bitrate: %d", encoder->stream_idx, encoder_bps);
 		encoder->set_bitrate(encoder_bps);
 	}
@@ -880,7 +874,7 @@ wivrn_comp_target::wivrn_comp_target(wivrn::wivrn_session & cnx, struct comp_com
                 .request_refresh_rate = comp_wivrn_request_refresh_rate,
                 .destroy = comp_wivrn_destroy,
         },
-        desc{.fps = get_default_rate(cnx.get_info())},
+        desc{.fps = get_default_rate(cnx.get_info(), *cnx.get_settings())},
         pacer(U_TIME_1S_IN_NS / desc.fps),
         cnx(cnx)
 {
