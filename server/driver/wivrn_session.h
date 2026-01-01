@@ -161,6 +161,9 @@ public:
 	void start(ipc_server *);
 	void stop();
 
+	bool request_stop();
+	void quit_if_no_client();
+
 	clock_offset get_offset();
 	bool connected();
 	const from_headset::headset_info_packet & get_info() const
@@ -193,7 +196,7 @@ public:
 	void operator()(from_headset::pin_check_1 &&) {}
 	void operator()(from_headset::pin_check_3 &&) {}
 	void operator()(from_headset::headset_info_packet &&);
-	void operator()(from_headset::settings_changed &&);
+	void operator()(const from_headset::settings_changed &);
 	void operator()(from_headset::handshake &&) {}
 	void operator()(from_headset::trackings &&);
 	void operator()(const from_headset::tracking &);
@@ -245,7 +248,7 @@ public:
 
 private:
 	void run(std::stop_token stop);
-	void reconnect();
+	void reconnect(std::stop_token stop);
 
 	void poll_session_loss();
 
