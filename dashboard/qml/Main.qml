@@ -81,6 +81,10 @@ Kirigami.ApplicationWindow {
                 }
             ));
         }
+
+        function onJsonConfigurationChanged(value) {
+            Settings.load(WivrnServer);
+        }
     }
 
     Connections {
@@ -403,5 +407,12 @@ Kirigami.ApplicationWindow {
                 onTriggered: root.pageStack.push(Qt.createComponent("TroubleshootPage.qml").createObject())
             }
         ]
+
+        footer: Controls.Label {
+            text: i18n("Version %1", ApkInstaller.currentVersion)
+            horizontalAlignment: Text.AlignHCenter
+            opacity: 0.6
+            padding: Kirigami.Units.smallSpacing
+        }
     }
 }
