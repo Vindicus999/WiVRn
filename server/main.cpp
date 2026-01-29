@@ -146,7 +146,7 @@ static void append_delim(std::string & to, std::string_view what, char delim)
 // if it can't be found, return the full path
 static std::filesystem::path find_dir(const std::filesystem::path & d, const std::filesystem::path & needle)
 {
-	for (auto copy = d; not copy.empty(); copy = copy.parent_path())
+	for (auto copy = d; copy != copy.parent_path(); copy = copy.parent_path())
 	{
 		if (copy.filename() == needle)
 			return copy;
@@ -182,7 +182,6 @@ int control_pipe_fds[2];
 
 GMainLoop * main_loop;
 const AvahiPoll * poll_api;
-bool use_systemd;
 
 guint server_watch;
 guint server_kill_watch;
@@ -514,7 +513,7 @@ gboolean control_received(gint fd, GIOCondition condition, gpointer user_data)
 		                   [&](const wivrn::from_headset::start_app & request) {
 			                   const auto & apps = list_applications();
 			                   if (auto it = apps.find(request.app_id); it != apps.end())
-				                   children->start_application(it->second.exec);
+				                   children->start_application(it->second.exec, it->second.path);
 		                   },
 		                   [&](const from_monado::headset_connected &) {
 			                   stop_publishing();
@@ -769,16 +768,17 @@ void on_headset_info_packet(const wivrn::from_headset::headset_info_packet & inf
 	}
 	codecs.push_back(nullptr);
 	wivrn_server_set_supported_codecs(dbus_server, codecs.data());
+	wivrn_server_set_system_name(dbus_server, info.system_name.c_str());
 }
 
 void on_name_acquired(GDBusConnection * connection, const gchar * name, gpointer user_data)
 {
 #if WIVRN_USE_SYSTEMD
-	if (use_systemd)
+	try
 	{
 		children = std::make_unique<systemd_units_manager>(connection, update_fsm);
 	}
-	else
+	catch (...)
 #endif
 	{
 		children = std::make_unique<forked_children>(update_fsm);
@@ -976,9 +976,6 @@ int main(int argc, char * argv[])
 	auto no_fork = app.add_flag("--no-fork")->description("disable fork to serve connection")->group("Debug");
 	auto no_publish = app.add_flag("--no-publish-service")->description("disable publishing the service through avahi");
 	auto no_encrypt = app.add_flag("--no-encrypt")->description("disable encryption")->group("Debug");
-#if WIVRN_USE_SYSTEMD
-	app.add_flag("--systemd", use_systemd, "use systemd to launch user-configured application");
-#endif
 
 	CLI11_PARSE(app, argc, argv);
 

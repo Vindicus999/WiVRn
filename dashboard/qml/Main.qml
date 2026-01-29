@@ -81,6 +81,10 @@ Kirigami.ApplicationWindow {
                 }
             ));
         }
+
+        function onJsonConfigurationChanged(value) {
+            Settings.load(WivrnServer);
+        }
     }
 
     Connections {
@@ -253,27 +257,31 @@ Kirigami.ApplicationWindow {
             }
 
             GridLayout {
-                columns: 2
+                columns: 3
 
                 Layout.leftMargin: Kirigami.Units.largeSpacing
                 Layout.rightMargin: Kirigami.Units.largeSpacing
-                Item {}
-                Item {
-                    Layout.fillWidth: true
-                }
+                columnSpacing: 0
 
                 Image {
                     source: Qt.resolvedUrl("wivrn.svg")
+                    Layout.columnSpan: parent.width < implicitWidth + main_form.implicitWidth ? 3 : 1
                 }
 
-                GridLayout {
-                    columns: 2
-                    Layout.fillWidth: true
+                Kirigami.FormLayout {
+                    id: main_form
+                    Layout.alignment: Qt.AlignTop
+                    Layout.horizontalStretchFactor: 0
+
+                    Kirigami.Heading {
+                        text: i18n("Server status")
+                        level: 1
+                        type: Kirigami.Heading.Type.Primary
+                    }
+
                     Controls.Switch {
+                        Kirigami.FormData.label: i18nc("whether the server is running, displayed in front of a checkbox", "Running")
                         id: switch_running
-                        Layout.row: 0
-                        Layout.column: 0
-                        text: i18nc("whether the server is running, displayed in front of a checkbox", "Running")
 
                         checked: true
                         onCheckedChanged: {
@@ -284,84 +292,100 @@ Kirigami.ApplicationWindow {
                         }
                     }
 
-                    Controls.Switch {
-                        id: switch_pairing
-                        Layout.row: 1
-                        Layout.column: 0
-                        text: i18nc("whether pairing is enabled, displayed in front of a checkbox", "Pairing")
-                        onCheckedChanged: {
-                            if (checked && !WivrnServer.pairingEnabled)
-                                WivrnServer.enable_pairing();
-                            else if (!checked && WivrnServer.pairingEnabled)
-                                WivrnServer.disable_pairing();
+                    RowLayout {
+                        Kirigami.FormData.label: i18nc("whether pairing is enabled, displayed in front of a checkbox", "Pairing")
+                        enabled: root.server_started
+                        Controls.Switch {
+                            id: switch_pairing
+                            onCheckedChanged: {
+                                if (checked && !WivrnServer.pairingEnabled)
+                                    WivrnServer.enable_pairing();
+                                else if (!checked && WivrnServer.pairingEnabled)
+                                    WivrnServer.disable_pairing();
+                            }
                         }
+
+                        Controls.Label {
+                            visible: WivrnServer.pairingEnabled 
+                            text: WivrnServer.pin
+                            font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.1
+                        }
+                    }
+
+                    Kirigami.Heading {
+                        text: i18n("Headset status")
+                        level: 1
+                        type: Kirigami.Heading.Type.Primary
                         enabled: root.server_started
                     }
 
-                    Controls.Label {
-                        Layout.row: 1
-                        Layout.column: 1
-                        text: WivrnServer.pairingEnabled ? i18n("PIN: %1", WivrnServer.pin) : ""
-                        wrapMode: Text.WordWrap
-                        Layout.fillWidth: true
-                    }
+                    RowLayout {
+                        Kirigami.FormData.label: i18nc("label for headset name/status under server running switch", "Headset")
+                        enabled: root.server_started
+                        Controls.Label {
+                            text: WivrnServer.headsetConnected ? WivrnServer.systemName : i18n("Not connected")
+                        }
 
-                    Controls.Button {
-                        Layout.row: 2
-                        Layout.column: 0
-                        text: i18n("Connect by USB")
-                        onClicked: select_usb_device.connect()
-                        enabled: root.server_started && Adb.adbInstalled && select_usb_device.connected_headset_count > 0
-                        visible: !WivrnServer.headsetConnected
-
-                        Controls.ToolTip.visible: root.server_started && hovered
-                        Controls.ToolTip.delay: Kirigami.Units.toolTipDelay
-                        Controls.ToolTip.text: {
-                            if (!Adb.adbInstalled)
-                                return i18n("ADB is not installed");
-                            if (select_usb_device.connected_headset_count == 0)
-                                return i18n("No headset is connected or your headset is not in developer mode");
-                            return "";
+                        Controls.Button {
+                            text: i18n("Disconnect")
+                            icon.name: "network-disconnect-symbolic"
+                            onClicked: WivrnServer.disconnect_headset()
+                            visible: root.server_started && WivrnServer.headsetConnected
                         }
                     }
 
+                    // USB mode
                     Controls.Button {
-                        Layout.row: 2
-                        Layout.column: 0
-                        text: i18n("Disconnect")
-                        icon.name: "network-disconnect-symbolic"
-                        onClicked: WivrnServer.disconnect_headset()
-                        visible: root.server_started && WivrnServer.headsetConnected
+                        Kirigami.FormData.label: i18nc("label for USB status or connect button", "USB")
+                        text: i18nc("usb connect button", "Connect (wired)")
+                        onClicked: select_usb_device.connect()
+                        enabled: root.server_started && !WivrnServer.headsetConnected
+                        visible: Adb.adbInstalled && select_usb_device.connected_headset_count > 0
+                    }
+
+                    Controls.Label {
+                        Kirigami.FormData.label: i18nc("label for USB status or connect button", "USB")
+                        visible: !Adb.adbInstalled
+                        enabled: root.server_started
+                        text: i18n("ADB is not installed")
+                    }
+
+                    Controls.Label {
+                        Kirigami.FormData.label: i18nc("label for USB status or connect button", "USB")
+                        visible: Adb.adbInstalled && select_usb_device.connected_headset_count == 0
+                        enabled: root.server_started
+                        text: i18n("No headset is connected or your headset is not in developer mode");
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
                     }
                 }
-
-                Kirigami.Separator {
-                    Layout.columnSpan: 2
-                    Layout.fillWidth: true
-                    opacity: steam_info.opacity
-                    visible: steam_info.visible
-                    Layout.maximumHeight: root.server_started ? -1 : 0
-                }
-
-                Kirigami.Heading {
-                    level: 1
-                    wrapMode: Text.WordWrap
-                    text: i18n("Steam information")
-                    opacity: steam_info.opacity
-                    visible: steam_info.visible
-                    Layout.maximumHeight: root.server_started ? -1 : 0
-                }
-                SteamLaunchOptions {
-                    id: steam_info
-                    visible: WivrnServer.steamCommand != ""
-                    opacity: root.server_started
-                    Layout.maximumHeight: root.server_started ? -1 : 0
-                }
-
                 Item {
                     // spacer item
-                    Layout.fillHeight: true
+                    Layout.fillWidth: true
+                    Layout.horizontalStretchFactor: 1
                 }
+            }
+
+            Kirigami.Separator {
+                Layout.fillWidth: true
+                visible: steam_info.visible
+            }
+
+            Kirigami.Heading {
+                level: 1
+                type: Kirigami.Heading.Type.Primary
+                wrapMode: Text.WordWrap
+                text: i18n("Steam information")
+                visible: steam_info.visible
+            }
+            SteamLaunchOptions {
+                id: steam_info
+                visible: root.server_started && WivrnServer.steamCommand != ""
+            }
+
+            Item {
+                // spacer item
+                Layout.fillHeight: true
             }
         }
 
@@ -370,14 +394,12 @@ Kirigami.ApplicationWindow {
                 text: i18n("Wizard")
                 icon.name: "tools-wizard-symbolic"
                 onTriggered: root.pageStack.push(Qt.createComponent("WizardPage.qml").createObject())
-                visible: root.pageStack.depth == 1
                 enabled: root.server_started
             },
             Kirigami.Action {
                 text: i18n("Install the app")
                 icon.name: "install-symbolic"
                 onTriggered: root.pageStack.push(Qt.createComponent("ApkInstallPage.qml").createObject())
-                visible: root.pageStack.depth == 1
                 enabled: root.server_started && Adb.adbInstalled
                 tooltip: {
                     if (!root.server_started)
@@ -391,22 +413,31 @@ Kirigami.ApplicationWindow {
                 text: i18n("Headsets")
                 icon.name: "item-symbolic"
                 onTriggered: root.pageStack.push(Qt.createComponent("HeadsetsPage.qml").createObject())
-                visible: root.pageStack.depth == 1
                 enabled: root.server_started
             },
             Kirigami.Action {
                 text: i18n("Settings")
                 icon.name: "settings-configure-symbolic"
                 onTriggered: root.pageStack.push(Qt.createComponent("SettingsPage.qml").createObject())
-                visible: root.pageStack.depth == 1
                 enabled: root.server_started
+            },
+            Kirigami.Action {
+                text: i18n("About")
+                icon.name: "help-about"
+                onTriggered: root.pageStack.push(Qt.createComponent("About.qml").createObject())
             },
             Kirigami.Action {
                 text: i18n("Troubleshoot")
                 icon.name: "help-contents-symbolic"
                 onTriggered: root.pageStack.push(Qt.createComponent("TroubleshootPage.qml").createObject())
-                enabled: root.pageStack.depth == 1
             }
         ]
+
+        footer: Controls.Label {
+            text: i18n("Version %1", ApkInstaller.currentVersion)
+            horizontalAlignment: Text.AlignHCenter
+            opacity: 0.6
+            padding: Kirigami.Units.smallSpacing
+        }
     }
 }

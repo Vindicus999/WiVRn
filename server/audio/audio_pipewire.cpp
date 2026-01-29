@@ -104,6 +104,14 @@ struct pipewire_device : public audio_device
 			        .sample_rate = info.speaker->sample_rate,
 			};
 
+			// Calculate quantum size: 5ms buffer for low latency while maintaining stability
+			// Smaller buffers (<5ms) risk underruns, larger ones (>10ms) add perceptible latency
+			uint32_t quantum_size = (desc.speaker->sample_rate * 5) / 1000;
+			uint32_t frame_size = desc.speaker->num_channels * sizeof(int16_t);
+
+			std::string rate_str = std::format("1/{}", desc.speaker->sample_rate);
+			std::string latency_str = std::format("{}/{}", quantum_size, desc.speaker->sample_rate);
+
 			speaker.reset(pw_stream_new_simple(
 			        pw_main_loop_get_loop(pw_loop.get()),
 			        sink_name.c_str(),
@@ -120,6 +128,15 @@ struct pipewire_device : public audio_device
 			                "Audio/Sink",
 			                PW_KEY_MEDIA_ROLE,
 			                "Game",
+			                PW_KEY_NODE_VIRTUAL,
+			                "true",
+			                // Set stream rate to match client, preventing PipeWire from doing
+			                // unnecessary resampling which degrades audio quality
+			                PW_KEY_NODE_RATE,
+			                rate_str.c_str(),
+			                // Declare target latency to help PipeWire optimize buffering
+			                PW_KEY_NODE_LATENCY,
+			                latency_str.c_str(),
 			                NULL),
 			        &speaker_events,
 			        this));
@@ -127,22 +144,39 @@ struct pipewire_device : public audio_device
 			std::vector<uint8_t> buffer(1024);
 			spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer.data(), uint32_t(buffer.size()));
 
-			spa_audio_info_raw info{
+			spa_audio_info_raw audio_info{
 			        .format = SPA_AUDIO_FORMAT_S16,
 			        .rate = desc.speaker->sample_rate,
 			        .channels = desc.speaker->num_channels,
 			};
-			const spa_pod * param = spa_format_audio_raw_build(&b, SPA_PARAM_EnumFormat, &info);
 
+			switch (audio_info.channels)
+			{
+				case 1:
+					audio_info.position[0] = SPA_AUDIO_CHANNEL_MONO;
+					break;
+				case 2:
+					audio_info.position[0] = SPA_AUDIO_CHANNEL_FL;
+					audio_info.position[1] = SPA_AUDIO_CHANNEL_FR;
+					break;
+				default:
+					U_LOG_W("No known audio mapping for %d channels speaker", audio_info.channels);
+			}
+
+			const spa_pod * params[1];
+			params[0] = spa_format_audio_raw_build(&b, SPA_PARAM_EnumFormat, &audio_info);
+
+			// Stream flags:
+			// - DRIVER: makes this node the graph clock master, preventing sync drift in the audio chain
 			if (pw_stream_connect(
 			            speaker.get(),
 			            PW_DIRECTION_INPUT,
 			            PW_ID_ANY,
-			            pw_stream_flags(PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS),
-			            &param,
+			            pw_stream_flags(PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS),
+			            params,
 			            1) < 0)
 				throw std::runtime_error("failed to connect speaker stream");
-			U_LOG_I("pipewire speaker stream created");
+			U_LOG_I("pipewire speaker stream created (quantum: %u frames, %.2f ms)", quantum_size, (quantum_size * 1000.0) / desc.speaker->sample_rate);
 		}
 
 		if (info.microphone)
@@ -151,6 +185,14 @@ struct pipewire_device : public audio_device
 			        .num_channels = info.microphone->num_channels,
 			        .sample_rate = info.microphone->sample_rate,
 			};
+
+			// Calculate quantum size: 5ms buffer for low latency while maintaining stability
+			// Smaller buffers (<5ms) risk underruns, larger ones (>10ms) add perceptible latency
+			uint32_t quantum_size = (desc.microphone->sample_rate * 5) / 1000;
+			uint32_t frame_size = desc.microphone->num_channels * sizeof(int16_t);
+
+			std::string rate_str = std::format("1/{}", desc.microphone->sample_rate);
+			std::string latency_str = std::format("{}/{}", quantum_size, desc.microphone->sample_rate);
 
 			microphone.reset(pw_stream_new_simple(
 			        pw_main_loop_get_loop(pw_loop.get()),
@@ -168,28 +210,52 @@ struct pipewire_device : public audio_device
 			                "Audio/Source",
 			                PW_KEY_MEDIA_ROLE,
 			                "Game",
+			                PW_KEY_NODE_VIRTUAL,
+			                "true",
+			                // Set stream rate to match client, preventing PipeWire from doing
+			                // unnecessary resampling which degrades audio quality
+			                PW_KEY_NODE_RATE,
+			                rate_str.c_str(),
+			                // Declare target latency to help PipeWire optimize buffering
+			                PW_KEY_NODE_LATENCY,
+			                latency_str.c_str(),
 			                NULL),
 			        &mic_events,
 			        this));
 			std::vector<uint8_t> buffer(1024);
 			spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer.data(), uint32_t(buffer.size()));
 
-			spa_audio_info_raw info{
+			spa_audio_info_raw audio_info{
 			        .format = SPA_AUDIO_FORMAT_S16,
 			        .rate = desc.microphone->sample_rate,
 			        .channels = desc.microphone->num_channels,
 			};
-			const spa_pod * param = spa_format_audio_raw_build(&b, SPA_PARAM_EnumFormat, &info);
+
+			switch (audio_info.channels)
+			{
+				case 1:
+					audio_info.position[0] = SPA_AUDIO_CHANNEL_MONO;
+					break;
+				case 2:
+					audio_info.position[0] = SPA_AUDIO_CHANNEL_FL;
+					audio_info.position[1] = SPA_AUDIO_CHANNEL_FR;
+					break;
+				default:
+					U_LOG_W("No known audio mapping for %d channels microphone", audio_info.channels);
+			}
+
+			const spa_pod * params[1];
+			params[0] = spa_format_audio_raw_build(&b, SPA_PARAM_EnumFormat, &audio_info);
 
 			if (pw_stream_connect(
 			            microphone.get(),
 			            PW_DIRECTION_OUTPUT,
 			            PW_ID_ANY,
 			            pw_stream_flags(PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS),
-			            &param,
+			            params,
 			            1) < 0)
 				throw std::runtime_error("failed to connect microphone stream");
-			U_LOG_I("pipewire microphone stream created");
+			U_LOG_I("pipewire microphone stream created (quantum: %u frames, %.2f ms)", quantum_size, (quantum_size * 1000.0) / desc.microphone->sample_rate);
 		}
 
 		if (desc.speaker or desc.microphone)
@@ -217,10 +283,14 @@ void pipewire_device::mic_process(void * self_v)
 	const auto & data = buffer->buffer->datas[0];
 	uint8_t * data_ptr = (uint8_t *)data.data;
 	if (not data.data)
+	{
+		pw_stream_queue_buffer(self->microphone.get(), buffer);
 		return;
+	}
 
 	const size_t frame_size = self->desc.microphone->num_channels * sizeof(int16_t);
 
+	// Use consistent buffer size based on stream quantum
 #if PW_CHECK_VERSION(0, 3, 49)
 	size_t num_frames = buffer->requested;
 #else
@@ -228,7 +298,8 @@ void pipewire_device::mic_process(void * self_v)
 #endif
 	if (num_frames == 0)
 	{
-		num_frames = data.maxsize / frame_size;
+		uint32_t quantum_size = (self->desc.microphone->sample_rate * 5) / 1000;
+		num_frames = std::min<size_t>(quantum_size, data.maxsize / frame_size);
 	}
 	data.chunk->offset = 0;
 	data.chunk->size = 0;
@@ -283,10 +354,24 @@ void pipewire_device::mic_state_changed(void * self_v, pw_stream_state old, pw_s
 		case PW_STREAM_STATE_UNCONNECTED:
 		case PW_STREAM_STATE_CONNECTING:
 		case PW_STREAM_STATE_PAUSED:
-			self->session.set_enabled(to_headset::tracking_control::id::microphone, false);
+			try
+			{
+				self->session.send_control(to_headset::feature_control{to_headset::feature_control::microphone, false});
+			}
+			catch (std::exception & e)
+			{
+				U_LOG_W("failed to update microphone state: %s", e.what());
+			}
 			return;
 		case PW_STREAM_STATE_STREAMING:
-			self->session.set_enabled(to_headset::tracking_control::id::microphone, true);
+			try
+			{
+				self->session.send_control(to_headset::feature_control{to_headset::feature_control::microphone, true});
+			}
+			catch (std::exception & e)
+			{
+				U_LOG_W("failed to update microphone state: %s", e.what());
+			}
 			return;
 	}
 }
@@ -328,7 +413,7 @@ void pipewire_device::process_mic_data(wivrn::audio_data && sample)
 		mic_buffer_size_bytes += size;
 }
 
-std::shared_ptr<audio_device> create_pipewire_handle(
+std::unique_ptr<audio_device> create_pipewire_handle(
         const std::string & source_name,
         const std::string & source_description,
         const std::string & sink_name,
@@ -338,7 +423,7 @@ std::shared_ptr<audio_device> create_pipewire_handle(
 {
 	try
 	{
-		return std::make_shared<pipewire_device>(
+		return std::make_unique<pipewire_device>(
 		        source_name, source_description, sink_name, sink_description, info, session);
 	}
 	catch (std::exception & e)
