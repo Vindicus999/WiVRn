@@ -81,13 +81,6 @@ static inline struct vk_bundle * get_vk(struct wivrn_comp_target * cn)
 	return &cn->c->base.vk;
 }
 
-static float get_default_rate(const from_headset::headset_info_packet & info, const from_headset::settings_changed & settings)
-{
-	if (settings.preferred_refresh_rate)
-		return settings.preferred_refresh_rate;
-	return info.available_refresh_rates.back();
-}
-
 #ifdef XRT_FEATURE_RENDERDOC
 static auto renderdoc()
 {
@@ -180,8 +173,8 @@ static VkResult create_images(struct wivrn_comp_target * cn, vk::ImageUsageFlags
 	bool is_10bit = format == vk::Format::eG10X6B10X6R10X62Plane420Unorm3Pack16;
 
 	std::array formats = {
-	        is_10bit ? vk::Format::eR10X6UnormPack16 : vk::Format::eR8Unorm,
-	        is_10bit ? vk::Format::eR10X6G10X6Unorm2Pack16 : vk::Format::eR8G8Unorm,
+	        is_10bit ? vk::Format::eR16Unorm : vk::Format::eR8Unorm,
+	        is_10bit ? vk::Format::eR16G16Unorm : vk::Format::eR8G8Unorm,
 	        format};
 
 	cn->images = U_TYPED_ARRAY_CALLOC(struct comp_target_image, cn->image_count);
@@ -569,7 +562,11 @@ static VkResult comp_wivrn_present(struct comp_target * ct,
 	{
 		if (encoder->stream_idx == 2 and not do_alpha)
 			continue;
-		auto [transfer, sem] = encoder->present_image(psc_image.image, command_buffer, info.frame_id);
+		auto [transfer, sem] = encoder->present_image(
+		        psc_image.image,
+		        need_queue_transfer,
+		        command_buffer,
+		        info.frame_id);
 		need_queue_transfer |= transfer;
 		if (sem)
 			present_done_sem.push_back(sem);
@@ -578,9 +575,10 @@ static VkResult comp_wivrn_present(struct comp_target * ct,
 #if WIVRN_USE_VULKAN_ENCODE
 	if (need_queue_transfer)
 	{
-		vk::ImageMemoryBarrier barrier{
-		        .srcAccessMask = vk::AccessFlagBits::eMemoryRead,
-		        .dstAccessMask = vk::AccessFlagBits::eMemoryWrite,
+		vk::ImageMemoryBarrier2 video_barrier{
+		        .srcStageMask = vk::PipelineStageFlagBits2KHR::eTransfer,
+		        .srcAccessMask = vk::AccessFlagBits2::eMemoryRead,
+		        .dstStageMask = vk::PipelineStageFlagBits2KHR::eVideoEncodeKHR,
 		        .oldLayout = vk::ImageLayout::eTransferSrcOptimal,
 		        .newLayout = vk::ImageLayout::eVideoEncodeSrcKHR,
 		        .srcQueueFamilyIndex = vk->main_queue->family_index,
@@ -592,13 +590,10 @@ static VkResult comp_wivrn_present(struct comp_target * ct,
 		                             .baseArrayLayer = 0,
 		                             .layerCount = vk::RemainingArrayLayers},
 		};
-		command_buffer.pipelineBarrier(
-		        vk::PipelineStageFlagBits::eTransfer,
-		        vk::PipelineStageFlagBits::eNone,
-		        {},
-		        {},
-		        {},
-		        barrier);
+		command_buffer.pipelineBarrier2({
+		        .imageMemoryBarrierCount = 1,
+		        .pImageMemoryBarriers = &video_barrier,
+		});
 	}
 	submit_info.setSignalSemaphores(present_done_sem);
 #endif
