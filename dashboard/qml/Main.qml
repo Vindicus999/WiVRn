@@ -36,7 +36,25 @@ Kirigami.ApplicationWindow {
         }
     }
 
-    onClosing: Qt.quit()
+    onClosing: (close) => {
+        if (WivrnServer.ownServer && WivrnServer.sessionRunning)
+        {
+            close.accepted = false;
+            confirm_close.open();
+        } else {
+            Qt.quit();
+        }
+    }
+
+    Kirigami.PromptDialog {
+        id: confirm_close
+        title: i18n("Quit WiVRn")
+        subtitle: i18n("The WiVRn server is active.\nClosing the window will terminate it.")
+        iconName: "dialog-warning"
+        popupType: Controls.Popup.Native
+        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
+        onAccepted: Qt.quit()
+    }
 
     width: 900
     height: 800
@@ -345,14 +363,14 @@ Kirigami.ApplicationWindow {
 
                     Controls.Label {
                         Kirigami.FormData.label: i18nc("label for USB status or connect button", "USB")
-                        visible: !Adb.adbInstalled
+                        visible: !Adb.adbInstalled && !WivrnServer.headsetConnected
                         enabled: root.server_started
                         text: i18n("ADB is not installed")
                     }
 
                     Controls.Label {
                         Kirigami.FormData.label: i18nc("label for USB status or connect button", "USB")
-                        visible: Adb.adbInstalled && select_usb_device.connected_headset_count == 0
+                        visible: Adb.adbInstalled && select_usb_device.connected_headset_count == 0 && !WivrnServer.headsetConnected
                         enabled: root.server_started
                         text: i18n("No headset is connected or your headset is not in developer mode");
                         Layout.fillWidth: true
