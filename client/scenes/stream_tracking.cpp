@@ -463,9 +463,10 @@ void scenes::stream::tracking()
 			tracking.production_timestamp = t0;
 			tracking.timestamp = t0 + pattern[pattern_position].prediction_ns;
 			tracking.view_flags = {};
-			tracking.views = {};
 			tracking.state_flags = {};
+			tracking.views = {};
 			tracking.device_poses.clear();
+			tracking.face = {};
 
 			if (recenter_requested.exchange(false))
 				tracking.state_flags = wivrn::from_headset::tracking::recentered;
@@ -508,6 +509,17 @@ void scenes::stream::tracking()
 								goto subpattern_end;
 							locate_spaces.add_space(item.device, spaces[item.device], tracking.timestamp, tracking.device_poses);
 							break;
+						case wivrn::device_id::FACE:
+							if (std::abs(tracking.timestamp - at_time) > 1'000'000)
+								goto subpattern_end;
+							std::visit(utils::overloaded{
+							                   [](std::monostate &) {},
+							                   [&](auto & ft) {
+								                   ft.get_weights(at_time, tracking.face.emplace<typename std::remove_reference_t<decltype(ft)>::packet_type>());
+							                   },
+							           },
+							           face_tracker);
+							break;
 						case wivrn::device_id::LEFT_HAND:
 							if (left_hand)
 							{
@@ -541,14 +553,6 @@ void scenes::stream::tracking()
 							           },
 							           body_tracker);
 							break;
-						case wivrn::device_id::FACE:
-							std::visit(utils::overloaded{
-							                   [](std::monostate &) {},
-							                   [&](auto & ft) {
-								                   ft.get_weights(at_time, tracking.face.emplace<typename std::remove_reference_t<decltype(ft)>::packet_type>());
-							                   },
-							           },
-							           face_tracker);
 						default:
 							break;
 					}
@@ -581,7 +585,7 @@ void scenes::stream::tracking()
 			packets.resize(std::max(packets.size(), 1 + hands.size() + body.size()));
 			size_t packet_count = 0;
 
-			if (not tracking.device_poses.empty())
+			if (not(tracking.device_poses.empty() and std::holds_alternative<std::monostate>(tracking.face)))
 			{
 				auto & packet = packets[packet_count++];
 				packet.clear();
