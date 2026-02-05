@@ -673,7 +673,7 @@ void scenes::lobby::gui_settings()
 
 	// foveation
 	{
-		const int step = 10;
+		const int step = 5;
 		const auto current = config.get_stream_scale();
 		int intval = round((1 - current) * 100 / step);
 		const auto slider = ImGui::SliderInt(
@@ -761,18 +761,19 @@ void scenes::lobby::gui_settings()
 
 	// Bitrate
 	{
+		const int step = 5;
 		const int mb = 1'000'000;
 		const auto current = config.bitrate_bps;
-		auto val = int(current / mb);
+		auto val = int(current / mb / step);
 		const auto slider = ImGui::SliderInt(
 		        _("Bitrate").append("##bitrate").c_str(),
 		        &val,
 		        1,
-		        config.max_bitrate() / mb,
-		        fmt::format(_F("{}Mbit/s"), val).c_str());
+		        config.max_bitrate() / mb / step,
+		        fmt::format(_F("{}Mbit/s"), val * step).c_str());
 		if (slider)
 		{
-			config.bitrate_bps = val * mb;
+			config.bitrate_bps = val * mb * step;
 			config.save();
 		}
 		imgui_ctx->vibrate_on_hover();
