@@ -172,6 +172,7 @@ public:
 
 	// Server information
 	Q_PROPERTY(Status serverStatus READ serverStatus NOTIFY serverStatusChanged)
+	Q_PROPERTY(bool ownServer READ ownServer NOTIFY ownServerChanged)
 	Q_PROPERTY(bool headsetConnected READ isHeadsetConnected NOTIFY headsetConnectedChanged)
 	Q_PROPERTY(bool sessionRunning READ isSessionRunning NOTIFY sessionRunningChanged)
 	Q_PROPERTY(QString jsonConfiguration READ jsonConfiguration WRITE setJsonConfiguration NOTIFY jsonConfigurationChanged)
@@ -204,6 +205,7 @@ public:
 	Q_PROPERTY(int speakerChannels READ speakerChannels NOTIFY speakerChannelsChanged)
 	Q_PROPERTY(int speakerSampleRate READ speakerSampleRate NOTIFY speakerSampleRateChanged)
 	Q_PROPERTY(QStringList supportedCodecs READ supportedCodecs NOTIFY supportedCodecsChanged)
+	Q_PROPERTY(QString systemName READ systemName NOTIFY systemNameChanged)
 	Q_PROPERTY(QString steamCommand READ steamCommand NOTIFY steamCommandChanged)
 
 	// hostnamed
@@ -218,6 +220,11 @@ public:
 	Status serverStatus() const
 	{
 		return m_serverStatus;
+	}
+
+	bool ownServer() const
+	{
+		return server_process;
 	}
 
 	bool isHeadsetConnected() const
@@ -317,6 +324,11 @@ public:
 		return m_supportedCodecs;
 	}
 
+	QString systemName() const
+	{
+		return m_systemName;
+	}
+
 	QString steamCommand() const
 	{
 		return m_steamCommand;
@@ -368,10 +380,12 @@ private:
 	int m_speakerChannels{};
 	int m_speakerSampleRate{};
 	QStringList m_supportedCodecs{};
+	QString m_systemName{};
 	QString m_steamCommand{};
 
 Q_SIGNALS:
 	void serverStatusChanged(Status);
+	void ownServerChanged();
 	void headsetConnectedChanged(bool);
 	void sessionRunningChanged(bool);
 	void jsonConfigurationChanged(QString);
@@ -394,6 +408,7 @@ Q_SIGNALS:
 	void speakerSampleRateChanged(int);
 	void supportedCodecsChanged(QStringList);
 	void steamCommandChanged(QString);
+	void systemNameChanged(QString);
 	void serverLogsChanged(QString);
 	void serverError(serverErrorData);
 };

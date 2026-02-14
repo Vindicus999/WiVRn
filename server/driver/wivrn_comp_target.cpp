@@ -81,13 +81,6 @@ static inline struct vk_bundle * get_vk(struct wivrn_comp_target * cn)
 	return &cn->c->base.vk;
 }
 
-static float get_default_rate(const from_headset::headset_info_packet & info, const from_headset::settings_changed & settings)
-{
-	if (settings.preferred_refresh_rate)
-		return settings.preferred_refresh_rate;
-	return info.available_refresh_rates.back();
-}
-
 #ifdef XRT_FEATURE_RENDERDOC
 static auto renderdoc()
 {
@@ -180,8 +173,8 @@ static VkResult create_images(struct wivrn_comp_target * cn, vk::ImageUsageFlags
 	bool is_10bit = format == vk::Format::eG10X6B10X6R10X62Plane420Unorm3Pack16;
 
 	std::array formats = {
-	        is_10bit ? vk::Format::eR10X6UnormPack16 : vk::Format::eR8Unorm,
-	        is_10bit ? vk::Format::eR10X6G10X6Unorm2Pack16 : vk::Format::eR8G8Unorm,
+	        is_10bit ? vk::Format::eR16Unorm : vk::Format::eR8Unorm,
+	        is_10bit ? vk::Format::eR16G16Unorm : vk::Format::eR8G8Unorm,
 	        format};
 
 	cn->images = U_TYPED_ARRAY_CALLOC(struct comp_target_image, cn->image_count);
@@ -340,20 +333,6 @@ static bool comp_wivrn_check_ready(struct comp_target * ct)
 	if (not cn->cnx.connected())
 		return false;
 
-	// This function is called before on each frame before reprojection
-	// hijack it so that we can dynamically change ATW
-	cn->c->debug.atw_off = true;
-	for (int eye = 0; eye < 2; ++eye)
-	{
-		const auto & layer_accum = cn->c->base.layer_accum;
-		if (layer_accum.layer_count > 1 or
-		    layer_accum.layers[0].data.type != XRT_LAYER_PROJECTION)
-		{
-			// We are not in the trivial single stereo projection layer
-			// reprojection must be done
-			cn->c->debug.atw_off = false;
-		}
-	}
 	return true;
 }
 
@@ -399,8 +378,11 @@ static void target_init_semaphores(struct wivrn_comp_target * cn)
 	}
 }
 
-static void comp_wivrn_create_images(struct comp_target * ct, const struct comp_target_create_images_info * create_info)
+static void comp_wivrn_create_images(struct comp_target * ct, const struct comp_target_create_images_info * create_info, struct vk_bundle_queue * present_queue)
 {
+	assert(present_queue != NULL);
+	(void)present_queue;
+
 	struct wivrn_comp_target * cn = (struct wivrn_comp_target *)ct;
 
 	// Free old images.
@@ -516,12 +498,15 @@ static void comp_wivrn_present_thread(std::stop_token stop_token, wivrn_comp_tar
 }
 
 static VkResult comp_wivrn_present(struct comp_target * ct,
-                                   VkQueue queue_,
+                                   struct vk_bundle_queue * present_queue,
                                    uint32_t index,
                                    uint64_t timeline_semaphore_value,
                                    int64_t desired_present_time_ns,
                                    int64_t present_slop_ns)
 {
+	assert(present_queue != NULL);
+	(void)present_queue;
+
 	struct wivrn_comp_target * cn = (struct wivrn_comp_target *)ct;
 
 	assert(index < cn->image_count);
@@ -569,7 +554,11 @@ static VkResult comp_wivrn_present(struct comp_target * ct,
 	{
 		if (encoder->stream_idx == 2 and not do_alpha)
 			continue;
-		auto [transfer, sem] = encoder->present_image(psc_image.image, command_buffer, info.frame_id);
+		auto [transfer, sem] = encoder->present_image(
+		        psc_image.image,
+		        need_queue_transfer,
+		        command_buffer,
+		        info.frame_id);
 		need_queue_transfer |= transfer;
 		if (sem)
 			present_done_sem.push_back(sem);
@@ -578,9 +567,10 @@ static VkResult comp_wivrn_present(struct comp_target * ct,
 #if WIVRN_USE_VULKAN_ENCODE
 	if (need_queue_transfer)
 	{
-		vk::ImageMemoryBarrier barrier{
-		        .srcAccessMask = vk::AccessFlagBits::eMemoryRead,
-		        .dstAccessMask = vk::AccessFlagBits::eMemoryWrite,
+		vk::ImageMemoryBarrier2 video_barrier{
+		        .srcStageMask = vk::PipelineStageFlagBits2KHR::eTransfer,
+		        .srcAccessMask = vk::AccessFlagBits2::eMemoryRead,
+		        .dstStageMask = vk::PipelineStageFlagBits2KHR::eVideoEncodeKHR,
 		        .oldLayout = vk::ImageLayout::eTransferSrcOptimal,
 		        .newLayout = vk::ImageLayout::eVideoEncodeSrcKHR,
 		        .srcQueueFamilyIndex = vk->main_queue->family_index,
@@ -592,13 +582,10 @@ static VkResult comp_wivrn_present(struct comp_target * ct,
 		                             .baseArrayLayer = 0,
 		                             .layerCount = vk::RemainingArrayLayers},
 		};
-		command_buffer.pipelineBarrier(
-		        vk::PipelineStageFlagBits::eTransfer,
-		        vk::PipelineStageFlagBits::eNone,
-		        {},
-		        {},
-		        {},
-		        barrier);
+		command_buffer.pipelineBarrier2({
+		        .imageMemoryBarrierCount = 1,
+		        .pImageMemoryBarriers = &video_barrier,
+		});
 	}
 	submit_info.setSignalSemaphores(present_done_sem);
 #endif
@@ -632,7 +619,7 @@ static VkResult comp_wivrn_present(struct comp_target * ct,
 		const auto & frame_params = cn->c->base.frame_params;
 		view_info.fov[eye] = xrt_cast(frame_params.fovs[eye]);
 		view_info.pose[eye] = xrt_cast(frame_params.poses[eye]);
-		if (cn->c->debug.atw_off)
+		if (cn->c->base.frame_params.one_projection_layer_fast_path)
 		{
 			const auto & proj = cn->c->base.layer_accum.layers[0].data.proj;
 			view_info.pose[eye] = xrt_cast(proj.v[eye].pose);
@@ -663,6 +650,13 @@ static void comp_wivrn_flush(struct comp_target * ct)
 	if (auto r = renderdoc())
 		r->StartFrameCapture(NULL, NULL);
 #endif
+
+	if (cn->cnx.get_info().eye_gaze)
+	{
+		// FIXME: actually get the gaze data here
+		auto now = os_monotonic_get_ns();
+		cn->cnx.add_tracking_request(device_id::EYE_GAZE, cn->c->base.layer_accum.data.display_time_ns, now, now);
+	}
 
 	vk::CommandBuffer cmd;
 	// apply foveation for current frame

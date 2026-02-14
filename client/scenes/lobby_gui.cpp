@@ -257,7 +257,7 @@ void scenes::lobby::gui_connected(XrTime predicted_display_time)
 
 	if (next_scene->apps.draw_gui(*imgui_ctx, _("Disconnect")) == app_launcher::Cancel)
 	{
-		next_scene.reset();
+		next_scene->exit();
 		current_tab = tab::server_list;
 	}
 }
@@ -655,7 +655,7 @@ void scenes::lobby::gui_settings()
 		        _("Render resolution").append("##resolution_scale").c_str(),
 		        &intScale,
 		        5,
-		        35,
+		        config.extended_config ? 35 : 15,
 		        fmt::format(_F("{}%% - {}x{} per eye"), intScale * 10, int(width * current), int(height * current)).c_str());
 		if (slider)
 		{
@@ -671,13 +671,13 @@ void scenes::lobby::gui_settings()
 		}
 	}
 
-	// Stream resolution
+	// foveation
 	{
-		const int step = 10;
+		const int step = 5;
 		const auto current = config.get_stream_scale();
-		auto intval = int(current * 100 / step);
+		int intval = round((1 - current) * 100 / step);
 		const auto slider = ImGui::SliderInt(
-		        _("Stream resolution").append("##stream_scale").c_str(),
+		        _("Foveated encoding").append("##stream_scale").c_str(),
 		        &intval,
 		        0,
 		        100 / step,
@@ -685,9 +685,20 @@ void scenes::lobby::gui_settings()
 		if (slider)
 		{
 			// clamp out of the slider to have the 50% value centered
-			intval = std::clamp(intval, 20 / step, 100 / step);
-			config.set_stream_scale(intval * step * 0.01);
+			intval = std::clamp(intval,
+			                    config.extended_config ? 0 : 30 / step,
+			                    80 / step);
+			config.set_stream_scale(1 - intval * step * 0.01);
 			config.save();
+		}
+		if (ImGui::IsItemHovered())
+		{
+			if (config.check_feature(feature::eye_gaze))
+				imgui_ctx->tooltip(_("Higher values focus image quality where you look at,\n"
+				                     "improving latency, power efficiency and quality."));
+			else
+				imgui_ctx->tooltip(_("Higher values focus image quality at the center,\n"
+				                     "improving latency, power efficiency and quality."));
 		}
 		imgui_ctx->vibrate_on_hover();
 	}
@@ -750,18 +761,19 @@ void scenes::lobby::gui_settings()
 
 	// Bitrate
 	{
+		const int step = 5;
 		const int mb = 1'000'000;
 		const auto current = config.bitrate_bps;
-		auto val = int(current / mb);
+		auto val = int(current / mb / step);
 		const auto slider = ImGui::SliderInt(
 		        _("Bitrate").append("##bitrate").c_str(),
 		        &val,
 		        1,
-		        200,
-		        fmt::format(_F("{}Mbit/s"), val).c_str());
+		        config.max_bitrate() / mb / step,
+		        fmt::format(_F("{}Mbit/s"), val * step).c_str());
 		if (slider)
 		{
-			config.bitrate_bps = val * mb;
+			config.bitrate_bps = val * mb * step;
 			config.save();
 		}
 		imgui_ctx->vibrate_on_hover();
@@ -797,8 +809,8 @@ void scenes::lobby::gui_settings()
 		ImGui::Unindent();
 		ImGui::EndDisabled();
 	}
+	if (system.hand_tracking_supported())
 	{
-		ImGui::BeginDisabled(not system.hand_tracking_supported());
 		bool enabled = config.check_feature(feature::hand_tracking);
 		if (ImGui::Checkbox(_S("Enable hand tracking"), &enabled))
 		{
@@ -807,10 +819,9 @@ void scenes::lobby::gui_settings()
 		imgui_ctx->vibrate_on_hover();
 		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) and (ImGui::GetItemFlags() & ImGuiItemFlags_Disabled))
 			imgui_ctx->tooltip(_("This feature is not supported by your headset"));
-		ImGui::EndDisabled();
 	}
+	if (application::get_eye_gaze_supported())
 	{
-		ImGui::BeginDisabled(not application::get_eye_gaze_supported());
 		bool enabled = config.check_feature(feature::eye_gaze);
 		if (ImGui::Checkbox(_S("Enable eye tracking"), &enabled))
 		{
@@ -819,30 +830,26 @@ void scenes::lobby::gui_settings()
 		imgui_ctx->vibrate_on_hover();
 		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) and (ImGui::GetItemFlags() & ImGuiItemFlags_Disabled))
 			imgui_ctx->tooltip(_("This feature is not supported by your headset"));
-		ImGui::EndDisabled();
 	}
+	if (system.face_tracker_supported() != xr::face_tracker_type::none)
 	{
-		ImGui::BeginDisabled(system.face_tracker_supported() == xr::face_tracker_type::none);
 		bool enabled = config.check_feature(feature::face_tracking);
 		if (ImGui::Checkbox(_S("Enable face tracking"), &enabled))
 		{
 			config.set_feature(feature::face_tracking, enabled);
 		}
-		ImGui::EndDisabled();
 		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) and (ImGui::GetItemFlags() & ImGuiItemFlags_Disabled))
 			imgui_ctx->tooltip(_("This feature is not supported by your headset"));
 		imgui_ctx->vibrate_on_hover();
 	}
 
-	auto body_tracker = system.body_tracker_supported();
+	if (auto body_tracker = system.body_tracker_supported(); body_tracker != xr::body_tracker_type::none)
 	{
-		ImGui::BeginDisabled(body_tracker == xr::body_tracker_type::none);
 		bool enabled = config.check_feature(feature::body_tracking);
 		if (ImGui::Checkbox(_S("Enable body tracking"), &enabled))
 		{
 			config.set_feature(feature::body_tracking, enabled);
 		}
-		ImGui::EndDisabled();
 		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
 		{
 			if (ImGui::GetItemFlags() & ImGuiItemFlags_Disabled)
@@ -857,31 +864,32 @@ void scenes::lobby::gui_settings()
 		}
 
 		imgui_ctx->vibrate_on_hover();
-	}
-	if (body_tracker == xr::body_tracker_type::fb)
-	{
-		ImGui::BeginDisabled(not config.check_feature(feature::body_tracking));
-		ImGui::Indent();
-		if (ImGui::Checkbox(_S("Enable lower body tracking"), &config.fb_lower_body))
-		{
-			config.save();
-		}
-		imgui_ctx->vibrate_on_hover();
-		if (ImGui::IsItemHovered())
-			imgui_ctx->tooltip(_("Estimate lower body joint positions using Generative Legs\nRequires 'Hand and body tracking' to be enabled in the Quest movement tracking settings"));
 
-		ImGui::BeginDisabled(not config.fb_lower_body);
-		if (ImGui::Checkbox(_S("Enable hip tracking"), &config.fb_hip))
+		if (body_tracker == xr::body_tracker_type::fb)
 		{
-			config.save();
-		}
-		imgui_ctx->vibrate_on_hover();
-		if (ImGui::IsItemHovered())
-			imgui_ctx->tooltip(_("Only takes affect with lower body tracking enabled\nMay be desired when using another source of hip tracking"));
-		ImGui::EndDisabled();
+			ImGui::BeginDisabled(not config.check_feature(feature::body_tracking));
+			ImGui::Indent();
+			if (ImGui::Checkbox(_S("Enable lower body tracking"), &config.fb_lower_body))
+			{
+				config.save();
+			}
+			imgui_ctx->vibrate_on_hover();
+			if (ImGui::IsItemHovered())
+				imgui_ctx->tooltip(_("Estimate lower body joint positions using Generative Legs\nRequires 'Hand and body tracking' to be enabled in the Quest movement tracking settings"));
 
-		ImGui::Unindent();
-		ImGui::EndDisabled();
+			ImGui::BeginDisabled(not config.fb_lower_body);
+			if (ImGui::Checkbox(_S("Enable hip tracking"), &config.fb_hip))
+			{
+				config.save();
+			}
+			imgui_ctx->vibrate_on_hover();
+			if (ImGui::IsItemHovered())
+				imgui_ctx->tooltip(_("Only takes affect with lower body tracking enabled\nMay be desired when using another source of hip tracking"));
+			ImGui::EndDisabled();
+
+			ImGui::Unindent();
+			ImGui::EndDisabled();
+		}
 	}
 
 	{
@@ -889,6 +897,13 @@ void scenes::lobby::gui_settings()
 		imgui_ctx->vibrate_on_hover();
 		if (ImGui::IsItemHovered())
 			imgui_ctx->tooltip(_("Enables the configuration window to be shown while the game is streaming.\nIf enabled, the window is activated by pressing both thumbsticks."));
+	}
+
+	{
+		ImGui::Checkbox(_S("Extended configuration values"), &config.extended_config);
+		imgui_ctx->vibrate_on_hover();
+		if (ImGui::IsItemHovered())
+			imgui_ctx->tooltip(_("Allows unsafe configuration values, use at your own risk."));
 	}
 
 	ImGui::PopStyleVar(); // ImGuiStyleVar_ItemSpacing
@@ -1019,7 +1034,7 @@ void scenes::lobby::gui_debug_node_hierarchy(entt::entity root)
 							        primitive.vertex_count,
 							        primitive.material_->name,
 							        primitive.vertex_shader,
-							        primitive.material_->fragment_shader_name);
+							        primitive.material_->fragment_shader);
 
 							imgui_ctx->tooltip(tooltip);
 						}

@@ -292,10 +292,12 @@ void wivrn::video_encoder_vulkan::init(const vk::VideoCapabilitiesKHR & video_ca
 		output_buffer_size = align(output_buffer_size, video_caps.minBitstreamBufferSizeAlignment);
 		item.output_buffer = buffer_allocation(
 		        vk.device,
-		        {.pNext = &video_profile_list,
-		         .size = output_buffer_size,
-		         .usage = vk::BufferUsageFlagBits::eVideoEncodeDstKHR | vk::BufferUsageFlagBits::eTransferSrc,
-		         .sharingMode = vk::SharingMode::eExclusive},
+		        {
+		                .pNext = &video_profile_list,
+		                .size = output_buffer_size,
+		                .usage = vk::BufferUsageFlagBits::eVideoEncodeDstKHR | vk::BufferUsageFlagBits::eTransferSrc,
+		                .sharingMode = vk::SharingMode::eExclusive,
+		        },
 		        {
 		                .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT,
 		                .usage = VMA_MEMORY_USAGE_AUTO,
@@ -304,14 +306,17 @@ void wivrn::video_encoder_vulkan::init(const vk::VideoCapabilitiesKHR & video_ca
 
 		if (not(item.output_buffer.properties() & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
 		{
+			U_LOG_D("Using staging buffer for vulkan encode output");
 			item.host_buffer = buffer_allocation(
 			        vk.device,
-			        {.size = output_buffer_size,
-			         .usage = vk::BufferUsageFlagBits::eTransferDst,
-			         .sharingMode = vk::SharingMode::eExclusive},
+			        {
+			                .size = output_buffer_size,
+			                .usage = vk::BufferUsageFlagBits::eTransferDst,
+			                .sharingMode = vk::SharingMode::eExclusive,
+			        },
 			        {
 			                .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
-			                .usage = VMA_MEMORY_USAGE_AUTO,
+			                .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
 			        },
 			        "vulkan encode host buffer");
 		}
@@ -570,7 +575,7 @@ std::optional<wivrn::video_encoder::data> wivrn::video_encoder_vulkan::encode(ui
 	};
 }
 
-std::pair<bool, vk::Semaphore> wivrn::video_encoder_vulkan::present_image(vk::Image y_cbcr, vk::raii::CommandBuffer & cmd_buf, uint8_t encode_slot, uint64_t frame_index)
+std::pair<bool, vk::Semaphore> wivrn::video_encoder_vulkan::present_image(vk::Image y_cbcr, bool transferred, vk::raii::CommandBuffer & cmd_buf, uint8_t encode_slot, uint64_t frame_index)
 {
 	auto & slot_item = slot_data[encode_slot];
 	auto & video_cmd_buf = slot_item.video_cmd_buf;
@@ -584,26 +589,28 @@ std::pair<bool, vk::Semaphore> wivrn::video_encoder_vulkan::present_image(vk::Im
 
 	if (encode_direct)
 	{
-		vk::ImageMemoryBarrier2 video_barrier{
-		        .srcStageMask = vk::PipelineStageFlagBits2KHR::eTransfer,
-		        .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
-		        .dstStageMask = vk::PipelineStageFlagBits2KHR::eVideoEncodeKHR,
-		        .dstAccessMask = vk::AccessFlagBits2::eVideoEncodeReadKHR,
-		        .oldLayout = vk::ImageLayout::eTransferSrcOptimal,
-		        .newLayout = vk::ImageLayout::eVideoEncodeSrcKHR,
-		        .srcQueueFamilyIndex = vk.queue_family_index,
-		        .dstQueueFamilyIndex = vk.encode_queue_family_index,
-		        .image = y_cbcr,
-		        .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-		                             .baseMipLevel = 0,
-		                             .levelCount = 1,
-		                             .baseArrayLayer = 0,
-		                             .layerCount = 2},
-		};
-		video_cmd_buf.pipelineBarrier2({
-		        .imageMemoryBarrierCount = 1,
-		        .pImageMemoryBarriers = &video_barrier,
-		});
+		if (not transferred)
+		{
+			vk::ImageMemoryBarrier2 video_barrier{
+			        .srcStageMask = vk::PipelineStageFlagBits2KHR::eTransfer,
+			        .dstStageMask = vk::PipelineStageFlagBits2KHR::eVideoEncodeKHR,
+			        .dstAccessMask = vk::AccessFlagBits2::eVideoEncodeReadKHR,
+			        .oldLayout = vk::ImageLayout::eTransferSrcOptimal,
+			        .newLayout = vk::ImageLayout::eVideoEncodeSrcKHR,
+			        .srcQueueFamilyIndex = vk.queue_family_index,
+			        .dstQueueFamilyIndex = vk.encode_queue_family_index,
+			        .image = y_cbcr,
+			        .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+			                             .baseMipLevel = 0,
+			                             .levelCount = 1,
+			                             .baseArrayLayer = 0,
+			                             .layerCount = vk::RemainingArrayLayers},
+			};
+			video_cmd_buf.pipelineBarrier2({
+			        .imageMemoryBarrierCount = 1,
+			        .pImageMemoryBarriers = &video_barrier,
+			});
+		}
 
 		auto it = image_views.find(VkImage(y_cbcr));
 		if (it != image_views.end())

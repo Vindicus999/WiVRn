@@ -158,16 +158,10 @@ void scene::render_world(
         const std::optional<xr::foveation_profile> & foveation,
         bool render_debug_draws)
 {
-	std::vector<scene_renderer::frame_info> frames;
-	frames.reserve(views.size());
-
-	// TODO inplace vector
-	std::vector<XrCompositionLayerProjectionView> composition_layer_color;
-	std::vector<XrCompositionLayerDepthInfoKHR> composition_layer_depth;
-
-	composition_layer_color.reserve(views.size());
-	if (keep_depth_buffer)
-		composition_layer_depth.reserve(views.size());
+	assert(views.size() <= layer::max_views);
+	beman::inplace_vector::inplace_vector<scene_renderer::frame_info, layer::max_views> frames;
+	beman::inplace_vector::inplace_vector<XrCompositionLayerProjectionView, layer::max_views> composition_layer_color;
+	beman::inplace_vector::inplace_vector<XrCompositionLayerDepthInfoKHR, layer::max_views> composition_layer_depth;
 
 	auto [color_swapchain, color_image, foveation_image] = [&]() -> std::tuple<XrSwapchain, vk::Image, vk::Image> {
 		xr::swapchain & color_swapchain = get_swapchain(swapchain_format, width, height, 1, views.size(), foveation);
@@ -228,9 +222,10 @@ void scene::render_world(
 			        },
 			        .minDepth = 0,
 			        .maxDepth = 1,
-			        .nearZ = std::numeric_limits<float>::infinity(),
+			        .nearZ = std::bit_cast<float>(0x7f800000), // infinity
 			        .farZ = constants::lobby::near_plane,
 			});
+			static_assert(std::numeric_limits<float>::is_iec559);
 		}
 	}
 
@@ -252,8 +247,8 @@ void scene::render_world(
 	add_projection_layer(
 	        XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT,
 	        space,
-	        std::move(composition_layer_color),
-	        std::move(composition_layer_depth));
+	        composition_layer_color,
+	        composition_layer_depth);
 }
 
 xr::swapchain & scene::get_swapchain(vk::Format format, int32_t width, int32_t height, int sample_count, uint32_t array_size, const std::optional<xr::foveation_profile> & foveation)
@@ -376,8 +371,8 @@ void scene::render_start(bool passthrough, XrTime predicted_display_time_)
 void scene::add_projection_layer(
         XrCompositionLayerFlags flags,
         XrSpace space,
-        std::vector<XrCompositionLayerProjectionView> && color_views,
-        std::vector<XrCompositionLayerDepthInfoKHR> && depth_views)
+        std::span<XrCompositionLayerProjectionView> color_views,
+        std::span<XrCompositionLayerDepthInfoKHR> depth_views)
 {
 	layers.push_back(layer{
 	        .composition_layer = XrCompositionLayerProjection{
@@ -388,8 +383,8 @@ void scene::add_projection_layer(
 	                .viewCount = (uint32_t)color_views.size(),
 	                .views = nullptr,
 	        },
-	        .color_views = std::move(color_views),
-	        .depth_views = std::move(depth_views),
+	        .color_views{color_views.begin(), color_views.end()},
+	        .depth_views{depth_views.begin(), depth_views.end()},
 	});
 }
 

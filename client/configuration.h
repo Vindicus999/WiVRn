@@ -76,10 +76,13 @@ public:
 	std::string environment_model = "assets://ground.glb";
 
 	bool override_foveation_enable = false;
-	float override_foveation_pitch = 10 * M_PI / 180;
+	float override_foveation_pitch = -10 * M_PI / 180;
 	float override_foveation_distance = 3;
 
 	bool high_power_mode;
+
+	// Allow unsafe config values
+	bool extended_config = false;
 
 	bool first_run = true;
 
@@ -103,4 +106,9 @@ public:
 
 	void set_stream_scale(float);
 	float get_stream_scale() const;
+
+	uint32_t max_bitrate() const
+	{
+		return extended_config ? 800'000'000u : 200'000'000u;
+	}
 };

@@ -137,10 +137,12 @@ void wivrn_server::start_server()
 						qDebug() << "Server finished before registering on dbus";
 						serverStatusChanged(m_serverStatus = Status::FailedToStart);
 					}
+					ownServerChanged();
 				}
 			});
 
 			server_process->start(server_path(), QApplication::arguments().mid(1));
+			ownServerChanged();
 		}
 
 		break;
@@ -437,6 +439,11 @@ void wivrn_server::on_server_properties_changed(const QString & interface_name, 
 	if (changed_properties.contains("SupportedCodecs"))
 	{
 		supportedCodecsChanged(m_supportedCodecs = changed_properties["SupportedCodecs"].toStringList());
+	}
+
+	if (changed_properties.contains("SystemName"))
+	{
+		systemNameChanged(m_systemName = changed_properties["SystemName"].toString());
 	}
 
 	if (changed_properties.contains("SteamCommand"))

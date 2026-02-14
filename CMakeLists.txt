@@ -39,7 +39,12 @@ option(WIVRN_BUILD_WIVRNCTL "Build wivrnctl" ON)
 option(WIVRN_BUILD_DISSECTOR "Build Wireshark dissector" OFF)
 option(WIVRN_BUILD_TEST "Build test binaries" OFF)
 option(WIVRN_WERROR "Treat warnings as errors" OFF)
-option(WIVRN_OPTIMIZE_SHADERS "Run siprv-opt on compiled shaders" ON)
+option(WIVRN_OPTIMIZE_SHADERS "Run spirv-opt on compiled shaders" ON)
+option(WIVRN_DEBUG_SHADERS "Compile shaders with debug information" OFF)
+
+if(WIVRN_OPTIMIZE_SHADERS AND WIVRN_DEBUG_SHADERS)
+    message(FATAL_ERROR "WIVRN_OPTIMIZE_SHADERS and WIVRN_DEBUG_SHADERS are incompatible")
+endif()
 
 option(WIVRN_USE_NVENC "Enable nvenc (Nvidia) hardware encoder" ON)
 option(WIVRN_USE_VAAPI "Enable vaapi (AMD/Intel) hardware encoder" ON)
@@ -97,9 +102,9 @@ include(VulkanVersion)
 
 if (WIVRN_USE_SYSTEM_BOOST AND NEED_COMMON)
     if (WIVRN_BUILD_DISSECTOR)
-        find_package(Boost 1.84.0 REQUIRED COMPONENTS locale url)
+        find_package(Boost 1.84.0 REQUIRED COMPONENTS locale url iostreams)
     else()
-        find_package(Boost 1.75.0 REQUIRED COMPONENTS locale url)
+        find_package(Boost 1.75.0 REQUIRED COMPONENTS locale url iostreams)
     endif()
 endif()
 
@@ -228,8 +233,6 @@ if (WIVRN_BUILD_WIVRNCTL)
 endif()
 
 # Common dependencies
-FetchContent_Declare(boostpfr      EXCLUDE_FROM_ALL SYSTEM URL https://github.com/boostorg/pfr/archive/refs/tags/2.2.0.tar.gz
-                                   URL_HASH SHA256=6f490ec1383de5855dcf801c23f0a967f888eb6e1440b6ca0bf36c12d4ae7ac7)
 FetchContent_Declare(boost         EXCLUDE_FROM_ALL SYSTEM URL https://github.com/boostorg/boost/releases/download/boost-1.89.0/boost-1.89.0-cmake.tar.xz
                                    URL_HASH SHA256=67acec02d0d118b5de9eb441f5fb707b3a1cdd884be00ca24b9a73c995511f74)
 
@@ -239,7 +242,7 @@ FetchContent_Declare(simdjson      EXCLUDE_FROM_ALL SYSTEM URL https://github.co
 FetchContent_Declare(fastgltf      EXCLUDE_FROM_ALL SYSTEM URL https://github.com/spnda/fastgltf/archive/refs/tags/v0.9.0.tar.gz
                                    URL_HASH SHA256=0bb564e127b14c22f062db50f89381dd2e0a20dbaf4987ca138a4ae8728712f9)
 FetchContent_Declare(glm           EXCLUDE_FROM_ALL SYSTEM URL https://github.com/g-truc/glm/releases/download/1.0.2/glm-1.0.2.zip
-                                   URL_HASH SHA256=a41adf423315e35489c1e67689c7bb74c7edd4d207a477b7b19c45cd440c2f67)
+                                   URL_HASH SHA256=77fff075c5ab0caf076fade41558c5458d9a242aba2b2076bb72008bdb51a35e)
 FetchContent_Declare(openxr_loader EXCLUDE_FROM_ALL SYSTEM URL https://github.com/KhronosGroup/OpenXR-SDK/archive/refs/tags/release-1.1.54.tar.gz
                                    URL_HASH SHA256=2055688081066e37238be996534f349420ac52ed34f8514836704232121ee7f3)
 FetchContent_Declare(spdlog        EXCLUDE_FROM_ALL SYSTEM URL https://github.com/gabime/spdlog/archive/refs/tags/v1.16.0.tar.gz
@@ -318,6 +321,7 @@ foreach(TARGET_NAME wivrn wivrn-server wivrn-dashboard wivrn-common wivrn-dissec
     if(TARGET ${TARGET_NAME})
         target_compile_options(${TARGET_NAME} PRIVATE
             -fdiagnostics-color -Wall -Wextra -pedantic
+            -ffast-math
             -Wundef
             -Wno-missing-field-initializers
             -Wno-unused-parameter

@@ -1,26 +1,22 @@
 if (WIVRN_USE_SYSTEM_BOOST)
     add_library(Boost::pfr ALIAS Boost::headers)
-elseif (WIVRN_BUILD_CLIENT)
-    set(BOOST_INCLUDE_LIBRARIES locale url pfr)
-    FetchContent_MakeAvailable(boost)
 else()
-    FetchContent_MakeAvailable(boostpfr)
+    set(BOOST_INCLUDE_LIBRARIES locale url pfr iostreams)
+    FetchContent_MakeAvailable(boost)
 endif()
 
-if (GIT_DESC)
-    configure_file(version.cpp.in version.cpp)
-else ()
-    add_custom_target(wivrn-version ALL
-        COMMAND ${CMAKE_COMMAND}
-            -D GIT_EXECUTABLE=${GIT_EXECUTABLE}
-            -D INPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/version.cpp.in
-            -D OUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/version.cpp
-            -D CMAKE_PROJECT_VERSION=${CMAKE_PROJECT_VERSION}
-            -P ${CMAKE_SOURCE_DIR}/cmake/GitVersion.cmake
-        BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/version.cpp
-        SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/version.cpp.in
-        )
-endif()
+add_custom_target(wivrn-version ALL
+    COMMAND ${CMAKE_COMMAND}
+        -D GIT_EXECUTABLE=${GIT_EXECUTABLE}
+        -D INPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/version.cpp.in
+        -D OUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/version.cpp
+        -D CMAKE_PROJECT_VERSION=${CMAKE_PROJECT_VERSION}
+        -D GIT_DESC="${GIT_DESC}"
+        -D GIT_COMMIT="${GIT_COMMIT}"
+        -P ${CMAKE_SOURCE_DIR}/cmake/GitVersion.cmake
+    BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/version.cpp
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/version.cpp.in
+    )
 
 configure_file(wivrn_config.h.in wivrn_config.h)
 
@@ -44,14 +40,17 @@ add_library(wivrn-common STATIC EXCLUDE_FROM_ALL
 
 if (WIVRN_BUILD_DASHBOARD OR WIVRN_BUILD_SERVER)
     add_library(wivrn-common-server STATIC EXCLUDE_FROM_ALL
+        application.cpp
         utils/flatpak.cpp
-        utils/xdg_icon_lookup.cpp
-        utils/steam_app_info.cpp
         utils/load_icon.cpp
         utils/ini.cpp
-        application.cpp
+        utils/steam_info.cpp
+        utils/vdf.cpp
+        utils/xdg_icon_lookup.cpp
     )
-    target_link_libraries(wivrn-common-server PRIVATE nlohmann_json::nlohmann_json PNG::PNG PkgConfig::librsvg-2.0 LibArchive::LibArchive PUBLIC wivrn-common-base)
+    target_link_libraries(wivrn-common-server
+        PRIVATE nlohmann_json::nlohmann_json PNG::PNG PkgConfig::librsvg-2.0 LibArchive::LibArchive Boost::iostreams
+        PUBLIC wivrn-common-base)
 
     if (WIVRN_BUILD_TEST)
         add_executable(list-apps
@@ -59,6 +58,10 @@ if (WIVRN_BUILD_DASHBOARD OR WIVRN_BUILD_SERVER)
         )
 
         target_link_libraries(list-apps wivrn-common-server)
+
+        add_executable(vdf utils/vdf.cpp)
+        target_compile_definitions(vdf PRIVATE WIVRN_BUILD_TEST)
+        target_link_libraries(vdf Boost::iostreams)
     endif()
 endif()
 

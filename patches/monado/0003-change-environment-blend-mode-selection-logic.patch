@@ -1,7 +1,7 @@
-From 107759c42b200fedba37418a1934f4093eec787d Mon Sep 17 00:00:00 2001
+From dc8c6b0fdd002631827528b0cd831e762cf74c31 Mon Sep 17 00:00:00 2001
 From: galister <85970-galister@users.noreply.gitlab.freedesktop.org>
 Date: Sat, 23 Nov 2024 02:42:12 +0900
-Subject: [PATCH 03/10] change environment blend mode selection logic
+Subject: [PATCH 3/8] change environment blend mode selection logic
 
 ---
  src/xrt/compositor/multi/comp_multi_system.c | 26 +++++++++++++-------
@@ -53,5 +53,5 @@ index 80cbbbc26..4a397d7ec 100644
  }
  
 -- 
-2.52.0
+2.53.0
 

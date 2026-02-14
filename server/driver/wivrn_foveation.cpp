@@ -22,13 +22,11 @@
 #include "wivrn_foveation.h"
 
 #include "driver/xrt_cast.h"
-#include "math/m_api.h"
 #include "utils/wivrn_vk_bundle.h"
 #include "wivrn_packets.h"
 #include "xrt/xrt_defines.h"
 
 #include <array>
-#include <charconv>
 #include <cmath>
 #include <map>
 #include <ranges>
@@ -219,44 +217,6 @@ static void fill_param_2d(
 	out.resize(count * 2 - 1);
 }
 
-static float get_angle_offset()
-{
-	if (const char * cvar = std::getenv("WIVRN_FOVEATION_OFFSET"))
-	{
-		std::string_view var(cvar);
-		float res;
-		auto e = std::from_chars(var.begin(), var.end(), res);
-		if (e.ec == std::errc())
-		{
-			// No clamping, we don’t know the range
-			// of actual values for all headsets for sure.
-			return -res * M_PI / 180;
-		}
-		else
-			U_LOG_W("Malformed WIVRN_FOVEATION_OFFSET, must be a number (angle in °)");
-	}
-	// normal sight line is between 10° and 15° below horizontal
-	// https://apps.dtic.mil/sti/tr/pdf/AD0758339.pdf pages 393-394
-	// testing shows 10° looks better
-	return 10 * M_PI / 180;
-}
-
-static float get_convergence_distance()
-{
-	if (const char * cvar = std::getenv("WIVRN_FOVEATION_DISTANCE"))
-	{
-		std::string_view var(cvar);
-		float res;
-		auto e = std::from_chars(var.begin(), var.end(), res);
-		if (e.ec == std::errc())
-			return std::max(res, 0.05f);
-		else
-			U_LOG_W("Malformed WIVRN_FOVEATION_DISTANCE, must be a number (distance in meters)");
-	}
-	// 1m by default
-	return 1;
-}
-
 namespace wivrn
 {
 
@@ -277,7 +237,7 @@ void wivrn_foveation::compute_params(
 		if (foveated_width < extent_w)
 		{
 			auto distance = manual_foveation.enabled ? manual_foveation.distance : convergence_distance;
-			auto angle_x = convergence_angle(distance, eye_x[i], e.x);
+			auto angle_x = convergence_angle(distance, eye_x[i], -e.x);
 			auto center = angles_to_center(angle_x, fov.angle_left, fov.angle_right);
 			fill_param_2d(center, foveated_width, extent_w, params[i].x);
 		}
@@ -287,7 +247,7 @@ void wivrn_foveation::compute_params(
 		size_t extent_h = std::abs(src[i].extent.h);
 		if (foveated_height < extent_h)
 		{
-			auto angle_y = e.y;
+			auto angle_y = -e.y;
 			if (is_zero_quat(gaze) and not manual_foveation.enabled)
 			{
 				// Natural gaze is not straight forward, adjust the angle
@@ -304,8 +264,11 @@ void wivrn_foveation::compute_params(
 wivrn_foveation::wivrn_foveation(wivrn_vk_bundle & bundle, const xrt_hmd_parts & hmd) :
         foveated_width(hmd.screens[0].w_pixels),
         foveated_height(hmd.screens[0].h_pixels),
-        angle_offset(get_angle_offset()),
-        convergence_distance(get_convergence_distance()),
+        // normal sight line is between 10° and 15° below horizontal
+        // https://apps.dtic.mil/sti/tr/pdf/AD0758339.pdf pages 393-394
+        // testing shows 10° looks better
+        angle_offset(10 * M_PI / 180),
+        convergence_distance(1 /* meter*/),
         command_pool(bundle.device, vk::CommandPoolCreateInfo{.queueFamilyIndex = bundle.queue_family_index}),
         cmd(std::move(bundle.device.allocateCommandBuffers({
                 .commandPool = *command_pool,
@@ -347,25 +310,11 @@ void wivrn_foveation::update_tracking(const from_headset::tracking & tracking, c
 
 	const uint8_t orientation_ok = from_headset::tracking::orientation_valid | from_headset::tracking::orientation_tracked;
 
-	eye_x[0] = tracking.views[0].pose.position.x;
-	eye_x[1] = tracking.views[1].pose.position.x;
-
-	std::optional<xrt_quat> head;
-
-	for (const auto & pose: tracking.device_poses)
+	if (tracking.view_flags & XR_VIEW_STATE_POSITION_VALID_BIT)
 	{
-		if (pose.device != device_id::HEAD)
-			continue;
-
-		if ((pose.flags & orientation_ok) != orientation_ok)
-			return;
-
-		head = xrt_cast(pose.pose.orientation);
-		break;
+		eye_x[0] = tracking.views[0].pose.position.x;
+		eye_x[1] = tracking.views[1].pose.position.x;
 	}
-
-	if (!head.has_value())
-		return;
 
 	for (const auto & pose: tracking.device_poses)
 	{
@@ -375,9 +324,8 @@ void wivrn_foveation::update_tracking(const from_headset::tracking & tracking, c
 		if ((pose.flags & orientation_ok) != orientation_ok)
 			return;
 
-		xrt_quat qgaze = xrt_cast(pose.pose.orientation);
-		math_quat_unrotate(&qgaze, &head.value(), &gaze);
-		break;
+		gaze = xrt_cast(pose.pose.orientation);
+		return;
 	}
 }
 
@@ -399,7 +347,7 @@ static void fill_ubo(
         bool flip,
         size_t offset,
         size_t size,
-        int count)
+        [[maybe_unused]] int count)
 {
 	assert(params.size() % 2 == 1);
 	const int n_ratio = (params.size() - 1) / 2;

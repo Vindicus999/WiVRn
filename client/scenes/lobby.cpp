@@ -626,28 +626,7 @@ std::optional<glm::vec3> scenes::lobby::check_recenter_gui(glm::vec3 head_positi
 	return std::nullopt;
 }
 
-// Return the vector v such that dot(v, x) > 0 iff x is on the side where the composition layer is visible
-static glm::vec4 compute_ray_limits(const XrPosef & pose, float margin = 0)
-{
-	glm::quat q{
-	        pose.orientation.w,
-	        pose.orientation.x,
-	        pose.orientation.y,
-	        pose.orientation.z,
-	};
-
-	glm::vec3 p{
-	        pose.position.x,
-	        pose.position.y,
-	        pose.position.z,
-	};
-
-	glm::vec3 normal = glm::column(glm::mat3_cast(q), 2);
-
-	return glm::vec4(normal, -glm::dot(p, normal) - margin);
-}
-
-static void stick_finger_to_gui(std::array<xr::hand_tracker::joint, XR_HAND_JOINT_COUNT_EXT> & hand, const std::vector<imgui_context::viewport> & layers)
+static void stick_finger_to_gui(std::array<xr::hand_tracker::joint, XR_HAND_JOINT_COUNT_EXT> & hand, const std::vector<imgui_context::window_viewport> & layers)
 {
 	// Move XR_HAND_JOINT_INDEX_{TIP,DISTAL,INTERMEDIATE,PROXIMAL}_EXT so that:
 	// - Only the X rotation changes for distal and intermediate (relative to the parent bone)
@@ -667,7 +646,7 @@ static void stick_finger_to_gui(std::array<xr::hand_tracker::joint, XR_HAND_JOIN
 
 	// Compute the target position of the tip
 	std::vector<std::pair<glm::vec3, float>> intersections; // Target position of the finger tip, distance to the GUI plane
-	for (const imgui_context::viewport & layer: layers)
+	for (const imgui_context::window_viewport & layer: layers)
 	{
 		// Ignore layers that are not absolutely positionned
 		if (layer.space != xr::spaces::world)
@@ -906,10 +885,7 @@ void scenes::lobby::render(const XrFrameState & frame_state)
 		if (!next_scene->alive())
 			next_scene.reset();
 		else if (next_scene->current_state() == scenes::stream::state::streaming)
-		{
-			autoconnect_enabled = true;
 			application::push_scene(next_scene);
-		}
 	}
 
 	update_server_list();
@@ -976,14 +952,14 @@ void scenes::lobby::render(const XrFrameState & frame_state)
 		auto windows = imgui_ctx->windows();
 
 		auto left = left_hand->locate(world_space, frame_state.predictedDisplayTime);
-		if (left and xr::hand_tracker::check_flags(*left, XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT, 0))
+		if (left)
 		{
 			stick_finger_to_gui(*left, windows);
 			hide_left_controller = true;
 		}
 
 		auto right = right_hand->locate(world_space, frame_state.predictedDisplayTime);
-		if (right and xr::hand_tracker::check_flags(*right, XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT, 0))
+		if (right)
 		{
 			stick_finger_to_gui(*right, windows);
 			hide_right_controller = true;
@@ -1057,11 +1033,11 @@ void scenes::lobby::render(const XrFrameState & frame_state)
 #endif
 
 	// Get the planes that limit the ray size from the composition layers
-	std::vector<glm::vec4> ray_limits;
-	for (auto & [z_index, layer]: imgui_layers)
+	std::vector<glm::mat4> world_to_window;
+	for (auto & window: imgui_ctx->windows())
 	{
-		if (z_index != constants::lobby::zindex_recenter_tip)
-			ray_limits.push_back(compute_ray_limits(layer.pose));
+		if (window.space == xr::spaces::world)
+			world_to_window.push_back(glm::inverse(glm::translate(window.position) * glm::mat4(glm::mat3_cast(window.orientation)) * glm::scale(glm::vec3(window.size, 1))));
 	}
 
 	input->apply(world,
@@ -1071,7 +1047,7 @@ void scenes::lobby::render(const XrFrameState & frame_state)
 	             not imgui_ctx->is_aim_interaction()[0],
 	             hide_right_controller,
 	             not imgui_ctx->is_aim_interaction()[1],
-	             ray_limits);
+	             world_to_window);
 
 	renderer::animate(world, frame_state.predictedDisplayPeriod * 1.0e-9);
 
@@ -1171,7 +1147,9 @@ void scenes::lobby::on_focused()
 	        *this,
 	        "assets://controllers/" + profile + "/profile.json",
 	        layer_controllers,
-	        layer_rays);
+	        layer_rays,
+	        get_action("left_trigger").first,
+	        get_action("right_trigger").first);
 
 	spdlog::info("Loaded input profile {}", input->id);
 
@@ -1267,7 +1245,17 @@ void scenes::lobby::on_focused()
 	                .vp_origin = {0, 1000},
 	                .vp_size = {1500, 300},
 	                .z_index = constants::lobby::zindex_recenter_tip,
-	        }};
+	        },
+	        {
+	                // Tooltip
+	                .space = xr::spaces::world,
+	                .size = {0.6, 0.08},
+	                .vp_origin = {0, 1300},
+	                .vp_size = {1500, 200},
+	                .tooltip_viewport = true,
+	                .z_index = constants::lobby::zindex_tooltip,
+	        },
+	};
 
 	xr::swapchain swapchain_imgui(instance, session, device, swapchain_format, 3000, 1500);
 
@@ -1372,6 +1360,8 @@ void scenes::lobby::on_xr_event(const xr::event & event)
 		case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED:
 			if (event.state_changed.state == XR_SESSION_STATE_STOPPING)
 				discover.reset();
+			else if (event.state_changed.state == XR_SESSION_STATE_FOCUSED)
+				autoconnect_enabled = true;
 			recenter_gui = true;
 			break;
 		case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING:

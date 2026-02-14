@@ -19,33 +19,51 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
 #include <unordered_map>
-#include <variant>
 #include <vector>
 
 namespace wivrn
 {
-class steam_app_info
+
+class steam
 {
 public:
-	using info = std::unordered_map<std::string, std::variant<uint32_t, std::string_view>>;
+	struct application
+	{
+		uint64_t appid;
+		// localised names, with empty locale for default
+		std::unordered_map<std::string, std::string> name;
+		std::string url;
+	};
+	struct icon
+	{
+		std::string clienticon;
+		std::string linuxclienticon;
+	};
 
 private:
-	std::vector<char> data;
+	std::filesystem::path root;
+	bool flatpak;
+	std::optional<uint32_t> default_userid;
+	std::optional<std::unordered_map<uint32_t, icon>> icons;
+	std::unordered_map<uint32_t, std::filesystem::path> shortcut_icons;
 
-	std::unordered_map<int, info> app_data;
+	steam(std::filesystem::path root, bool flatpak);
 
 public:
-	steam_app_info(std::filesystem::path path);
-	steam_app_info() = default;
-	steam_app_info(const steam_app_info &) = delete;
-	steam_app_info(steam_app_info &&) = default;
-	steam_app_info & operator=(const steam_app_info &) = delete;
-	steam_app_info & operator=(steam_app_info &&) = default;
+	static std::vector<steam> find_installations();
 
-	const auto & get(int appid) const
-	{
-		return app_data.at(appid);
-	}
+	std::vector<application> list_applications();
+	std::optional<std::filesystem::path> get_icon(uint64_t app_id);
+	std::string get_steam_command() const;
 };
+
+struct steam_shortcut
+{
+	uint32_t appid;
+	std::string name;
+	std::optional<std::filesystem::path> icon;
+};
+
 } // namespace wivrn

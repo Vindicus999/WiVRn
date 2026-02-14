@@ -44,7 +44,6 @@ jobs:
         key: linux-${{matrix.config.preset}}
         job-summary: ""
         restore-keys: linux-
-        append-timestamp: false
 
     - uses: actions/cache@v4
       with:
@@ -54,6 +53,7 @@ jobs:
           ${{github.workspace}}/cmake-fetch/*-subbuild/*-populate-prefix/src/*.zip
           ${{github.workspace}}/cmake-fetch/*.tar.*
           ${{github.workspace}}/cmake-fetch/*.tgz
+          ${{github.workspace}}/cmake-fetch/*-src/.git
         restore-keys: cmake-linux-
 
     - name: Install dependencies
@@ -120,7 +120,7 @@ jobs:
     - name: Prepare
       run: |
         apt-get update
-        apt-get install --yes curl wget sudo jq cmake gcc g++ git pkgconf libboost-all-dev libkirigami-dev gettext libarchive-dev nlohmann-json3-dev qcoro-qt6-dev libkf6i18n-dev libkf6coreaddons-dev libkf6qqc2desktopstyle-dev libkf6iconthemes-dev libvulkan-dev libssl-dev librsvg2-dev extra-cmake-modules
+        apt-get install --yes curl wget sudo jq cmake gcc g++ git pkgconf libboost-all-dev libkirigami-dev gettext libarchive-dev nlohmann-json3-dev qcoro-qt6-dev libkf6i18n-dev libkf6coreaddons-dev libkf6qqc2desktopstyle-dev libkf6iconthemes-dev libvulkan-dev libssl-dev librsvg2-dev extra-cmake-modules qml6-module-org-kde-kirigamiaddons-formcard
 
     - uses: actions/cache@v4
       with:
@@ -278,7 +278,6 @@ jobs:
                 VERSION_CODE=$(( $VERSION_CODE + 1 ))
           fi
 
-          CSS=images/wivrn-release.css
           APPNAME=WiVRn
         else
           VERSION_CODE=1
@@ -286,13 +285,18 @@ jobs:
           if [ ${{ github.ref_type }} = 'tag' ]
           then
                 SUFFIX=".github"
-                CSS=images/wivrn-release.css
                 APPNAME="WiVRn"
           else
                 SUFFIX=".github.testing"
-                CSS=images/wivrn-nightly.css
                 APPNAME="WiVRn Testing"
           fi
+        fi
+
+        if [ ${{ github.ref_type }} = 'tag' ]
+        then
+          CSS=images/wivrn-release.css
+        else
+          CSS=images/wivrn-nightly.css
         fi
 
         echo Setting version $VERSION and version code $VERSION_CODE in manifest
@@ -335,12 +339,10 @@ jobs:
         retention-days: 30
 
     - name: Archive debug symbols
-      if: ${{ matrix.buildtype != 'Release' && matrix.buildtype != 'Oculus' }}
       uses: actions/upload-artifact@v4
       with:
         name: symbols-${{ matrix.buildtype }}
         path: debug/**/*.so
-        retention-days: 30
 
     - name: Push to Oculus store
       if: ${{ matrix.buildtype == 'Oculus' && (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/master') && steps.secret-check.outputs.oculus-token == 'true' }}
@@ -467,9 +469,8 @@ jobs:
     - name: Download artifacts (APK)
       uses: actions/download-artifact@v4
       with:
+        name: apk-Release
         path: apk
-        pattern: '*-Release'
-        merge-multiple: true
 
     - name: Download artifacts (flatpak)
       uses: actions/download-artifact@v4
@@ -512,13 +513,6 @@ jobs:
         git push --set-upstream origin $WIVRN_TAG
 
         git show
-
-    - name: Update release branch
-      run: |
-        cd wivrn
-        if git fetch origin release; then
-          git push origin HEAD:release
-        fi
 
   sync_fork_downstream:
     name: Sync fork downstream
