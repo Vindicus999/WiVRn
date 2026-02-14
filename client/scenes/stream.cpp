@@ -34,6 +34,7 @@
 #include "boost/pfr/core.hpp"
 #include "decoder/shard_accumulator.h"
 #include "hardware.h"
+#include "inplace_vector.hpp"
 #include "spdlog/spdlog.h"
 #include "utils/contains.h"
 #include "utils/named_thread.h"
@@ -51,6 +52,7 @@
 #endif
 
 using namespace wivrn;
+using namespace beman::inplace_vector;
 
 // clang-format off
 static const std::unordered_map<std::string, device_id> device_ids = {
@@ -428,7 +430,9 @@ void scenes::stream::on_focused()
 	        *this,
 	        "assets://controllers/" + profile + "/profile.json",
 	        layer_controllers,
-	        layer_rays);
+	        layer_rays,
+	        get_action("left_trigger").first,
+	        get_action("right_trigger").first);
 
 	spdlog::info("Loaded input profile {}", input->id);
 
@@ -472,14 +476,23 @@ void scenes::stream::on_focused()
 	        device,
 	        swapchain_format,
 	        1800,
-	        1000);
+	        1200);
 
-	imgui_context::viewport vp{
-	        .space = xr::spaces::world,
-	        // Position and orientation are set at each frame
-	        .size = {1.2, 0.6666},
-	        .vp_origin = {0, 0},
-	        .vp_size = {1800, 1000},
+	std::vector<imgui_context::viewport> vps{
+	        {
+	                .space = xr::spaces::world,
+	                // Position and orientation are set at each frame
+	                .size = {1.2, 0.6666},
+	                .vp_origin = {0, 0},
+	                .vp_size = {1800, 1000},
+	        },
+	        {
+	                .space = xr::spaces::world,
+	                .size = {1.2, 0.1333},
+	                .vp_origin = {0, 1000},
+	                .vp_size = {1800, 200},
+	                .tooltip_viewport = true,
+	        },
 	};
 
 	imgui_ctx.emplace(physical_device,
@@ -488,7 +501,7 @@ void scenes::stream::on_focused()
 	                  queue,
 	                  imgui_inputs,
 	                  std::move(swapchain_imgui),
-	                  std::vector{vp},
+	                  std::move(vps),
 	                  image_cache);
 
 	if (application::get_config().enable_stream_gui)
@@ -588,8 +601,7 @@ std::array<std::shared_ptr<shard_accumulator::blit_handle>, 3> scenes::stream::c
 	if (decoders.empty())
 		return {};
 	std::unique_lock lock(frames_mutex);
-	thread_local std::vector<shard_accumulator::blit_handle *> common_frames;
-	common_frames.clear();
+	inplace_vector<shard_accumulator::blit_handle *, decoder_count> common_frames;
 	const bool alpha = decoders[0].latest_frames[0] and decoders[0].latest_frames[0]->view_info.alpha;
 	for (size_t i = 0; i < view_count + alpha; ++i)
 	{
@@ -602,7 +614,7 @@ std::array<std::shared_ptr<shard_accumulator::blit_handle>, 3> scenes::stream::c
 		else
 		{
 			// clang-format off
-			std::erase_if(common_frames,
+			erase_if(common_frames,
 				[this, i](auto & left)
 				{
 					return std::ranges::none_of(
@@ -615,7 +627,7 @@ std::array<std::shared_ptr<shard_accumulator::blit_handle>, 3> scenes::stream::c
 			// clang-format on
 		}
 	}
-	std::array<std::shared_ptr<shard_accumulator::blit_handle>, view_count + 1> result;
+	std::array<std::shared_ptr<shard_accumulator::blit_handle>, decoder_count> result;
 	if (not common_frames.empty())
 	{
 		auto min = std::ranges::min_element(common_frames,
@@ -958,9 +970,9 @@ void scenes::stream::render(const XrFrameState & frame_state)
 	vk::SubmitInfo submit_info;
 	submit_info.setCommandBuffers(*command_buffer);
 
-	std::vector<vk::Semaphore> semaphores;
-	std::vector<uint64_t> semaphore_vals;
-	std::vector<vk::PipelineStageFlags> wait_stages;
+	inplace_vector<vk::Semaphore, decoder_count> semaphores;
+	inplace_vector<uint64_t, decoder_count> semaphore_vals;
+	inplace_vector<vk::PipelineStageFlags, decoder_count> wait_stages;
 	for (auto b: current_blit_handles)
 	{
 		if (b and b->semaphore)
@@ -985,8 +997,6 @@ void scenes::stream::render(const XrFrameState & frame_state)
 #endif
 	swapchain.release();
 
-	std::vector<XrCompositionLayerProjectionView> layer_view(view_count);
-
 	if (use_alpha)
 		session.enable_passthrough(system);
 	else
@@ -995,6 +1005,7 @@ void scenes::stream::render(const XrFrameState & frame_state)
 	render_start(use_alpha, frame_state.predictedDisplayTime);
 
 	// Add the layer with the streamed content
+	std::array<XrCompositionLayerProjectionView, view_count> layer_view;
 	for (uint32_t view = 0; view < view_count; view++)
 	{
 		layer_view[view] =
@@ -1016,7 +1027,7 @@ void scenes::stream::render(const XrFrameState & frame_state)
 	add_projection_layer(
 	        XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT,
 	        application::space(xr::spaces::world),
-	        std::move(layer_view));
+	        layer_view);
 
 	if (composition_layer_color_scale_bias_supported)
 	{
@@ -1069,8 +1080,8 @@ void scenes::stream::render(const XrFrameState & frame_state)
 	// Network operations may be blocking, do them once everything was submitted
 	{
 		// Keep a copy of the feedback packets as they can be modified if they're encrypted
-		std::vector<from_headset::feedback> feedbacks;
-		std::vector<serialization_packet> packets;
+		inplace_vector<from_headset::feedback, decoder_count> feedbacks;
+		inplace_vector<serialization_packet, decoder_count> packets;
 
 		feedbacks.reserve(current_blit_handles.size());
 		packets.reserve(current_blit_handles.size());
