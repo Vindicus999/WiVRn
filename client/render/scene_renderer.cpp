@@ -29,6 +29,7 @@
 #include "vk/pipeline.h"
 #include "vk/shader.h"
 #include "vk/specialization_constants.h"
+#include <algorithm>
 #include <boost/pfr/core.hpp>
 #include <entt/entity/entity.hpp>
 #include <entt/entt.hpp>
@@ -675,8 +676,8 @@ vk::raii::Pipeline scene_renderer::create_pipeline(const pipeline_info & info)
 {
 	spdlog::debug("Creating pipeline");
 
-	auto vertex_shader = shader_loader{device}(info.vertex_shader_name);
-	auto fragment_shader = shader_loader{device}(info.fragment_shader_name);
+	auto vertex_shader = load_shader(device, info.vertex_shader_name);
+	auto fragment_shader = load_shader(device, info.fragment_shader_name);
 
 	auto specialization = make_specialization_constants(
 	        int32_t(info.nb_texcoords),
@@ -732,7 +733,7 @@ vk::raii::Pipeline scene_renderer::create_pipeline(const pipeline_info & info)
 	                .ColorBlendState = {vk::PipelineColorBlendStateCreateInfo{}},
 	                .ColorBlendAttachments = {vk::PipelineColorBlendAttachmentState{
 	                        .blendEnable = info.blend_enable,
-	                        .srcColorBlendFactor = vk::BlendFactor::eSrcAlpha,
+	                        .srcColorBlendFactor = vk::BlendFactor::eOne,
 	                        .dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
 	                        .colorBlendOp = vk::BlendOp::eAdd,
 	                        .srcAlphaBlendFactor = vk::BlendFactor::eOne,
@@ -1106,8 +1107,12 @@ void scene_renderer::render(
 
 		// TODO: reuse the UBO if another primitive of the same mesh has already been drawn
 		vk::DeviceSize instance_ubo_offset = resources.uniform_buffer_offset;
+		vk::DeviceSize instance_ubo_size = sizeof(instance_gpu_data) + node.extra_shader_data.size();
+
 		instance_gpu_data & object_ubo = *reinterpret_cast<instance_gpu_data *>(ubo + resources.uniform_buffer_offset);
-		resources.uniform_buffer_offset += utils::align_up(buffer_alignment, sizeof(instance_gpu_data));
+		std::span<std::byte> extra_shader_data{reinterpret_cast<std::byte *>(ubo + resources.uniform_buffer_offset + sizeof(instance_gpu_data)), node.extra_shader_data.size()};
+
+		resources.uniform_buffer_offset += utils::align_up(buffer_alignment, sizeof(instance_gpu_data) + node.extra_shader_data.size());
 
 		vk::DeviceSize joints_ubo_offset = 0;
 		if (!node.joints.empty())
@@ -1130,7 +1135,7 @@ void scene_renderer::render(
 			object_ubo.modelview[frame_index] = frame.view * transform;
 			object_ubo.modelviewproj[frame_index] = viewproj[frame_index] * transform;
 		}
-		object_ubo.clipping_planes = node.clipping_planes;
+		std::ranges::copy(node.extra_shader_data, extra_shader_data.begin());
 
 		// Get the material
 		std::shared_ptr<renderer::material> material = primitive.material_ ? primitive.material_ : default_material;
@@ -1139,7 +1144,7 @@ void scene_renderer::render(
 		pipeline_info info{
 		        .renderpass = rp_info,
 		        .vertex_shader_name = primitive.vertex_shader,
-		        .fragment_shader_name = material->fragment_shader_name,
+		        .fragment_shader_name = material->fragment_shader,
 		        .vertex_layout = primitive.layout,
 		        .cull_mode = primitive.cull_mode,
 		        .front_face = primitive.front_face,
@@ -1187,7 +1192,7 @@ void scene_renderer::render(
 		vk::DescriptorBufferInfo buffer_info_2{
 		        .buffer = resources.uniform_buffer,
 		        .offset = instance_ubo_offset,
-		        .range = sizeof(instance_gpu_data),
+		        .range = instance_ubo_size,
 		};
 		vk::DescriptorBufferInfo buffer_info_3{
 		        .buffer = resources.uniform_buffer,
