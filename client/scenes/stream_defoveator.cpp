@@ -295,7 +295,7 @@ static size_t required_vertices(const wivrn::to_headset::foveation_parameter & p
 
 void stream_defoveator::defoveate(vk::raii::CommandBuffer & command_buffer,
                                   const std::array<wivrn::to_headset::foveation_parameter, 2> & foveation,
-                                  std::span<wivrn::blitter::output> inputs,
+                                  const std::array<input, 2> & inputs,
                                   int destination)
 {
 	if (destination < 0 || destination >= (int)output_images.size())
@@ -443,7 +443,7 @@ static uint16_t count_pixels(const std::vector<uint16_t> & param)
 	return res;
 }
 
-XrExtent2Di stream_defoveator::defoveated_size(const wivrn::to_headset::foveation_parameter & view) const
+XrExtent2Di stream_defoveator::defoveated_size(const wivrn::to_headset::foveation_parameter & view)
 {
 	return {
 	        count_pixels(view.x),

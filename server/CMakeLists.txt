@@ -1,5 +1,6 @@
 
 set(XRT_BUILD_DRIVER_ARDUINO            OFF)
+set(XRT_BUILD_DRIVER_BLUBUR_S1          OFF)
 set(XRT_BUILD_DRIVER_DAYDREAM           OFF)
 set(XRT_BUILD_DRIVER_EUROC              OFF)
 set(XRT_BUILD_DRIVER_HDK                OFF)
@@ -36,6 +37,7 @@ set(XRT_FEATURE_OPENXR_ACTIVE_ACTION_SET_PRIORITY ON)
 set(XRT_FEATURE_RENDERDOC                         ${WIVRN_FEATURE_RENDERDOC})
 
 set(XRT_FEATURE_OPENXR_BODY_TRACKING_FB          ON)
+set(XRT_FEATURE_OPENXR_FACE_TRACKING_ANDROID     ON)
 set(XRT_FEATURE_OPENXR_FACE_TRACKING2_FB         ON)
 set(XRT_FEATURE_OPENXR_FACIAL_TRACKING_HTC       ON)
 set(XRT_FEATURE_OPENXR_HAND_TRACKING_EXT         ON)
@@ -96,20 +98,21 @@ if (WIVRN_BUILD_SERVER)
 			driver/app_pacer.cpp
 			driver/clock_offset.cpp
 			driver/configuration.cpp
+			driver/hand_joints_list.cpp
+			driver/pose_list.cpp
+			driver/tracking_control.cpp
+			driver/view_list.cpp
 			driver/wivrn_hmd.cpp
 			driver/wivrn_pacer.cpp
 			driver/wivrn_comp_target.cpp
 			driver/wivrn_controller.cpp
-			driver/wivrn_hand_interaction.cpp
 			driver/wivrn_eye_tracker.cpp
+			driver/wivrn_android_face_tracker.cpp
 			driver/wivrn_fb_face2_tracker.cpp
 			driver/wivrn_htc_face_tracker.cpp
 			driver/wivrn_generic_tracker.cpp
 			driver/wivrn_foveation.cpp
 			driver/wivrn_uinput.cpp
-			driver/pose_list.cpp
-			driver/view_list.cpp
-			driver/hand_joints_list.cpp
 			driver/wivrn_session.cpp
 			driver/wivrn_connection.cpp
 			driver/xrt_cast.cpp
@@ -263,12 +266,23 @@ if (WIVRN_BUILD_SERVER_LIBRARY)
 	# Workaround as generate_openxr_runtime_manifest_at_install uses target name as library path
 	add_library(monado_wivrn ALIAS monado)
 
+	if (WIVRN_OPENXR_MANIFEST_ABI)
+		if (CMAKE_C_COMPILER_ARCHITECTURE_ID MATCHES "i.86")
+			set(_filename openxr_wivrn.i686.json)
+		else()
+			set(_filename openxr_wivrn.${CMAKE_C_COMPILER_ARCHITECTURE_ID}.json)
+		endif()
+	else()
+		set(_filename openxr_wivrn.json)
+	endif()
+
 	generate_openxr_runtime_manifest_at_install(
 		${_extra_args}
 		RUNTIME_TARGET ${RUNTIME_TARGET}
 		DESTINATION share/openxr/1
 		RELATIVE_RUNTIME_DIR ${CMAKE_INSTALL_LIBDIR}/wivrn
 		LIBMONADO monado_wivrn
+		OUT_FILENAME ${_filename}
 		)
 
 	install(TARGETS ${RUNTIME_TARGET} monado

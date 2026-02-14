@@ -43,7 +43,8 @@ constexpr float scroll_ratio = 10;
 constexpr float trigger_click_thd = 0.8;
 
 // Thresholds on the distance between the fingertip and GUI layers (positive: in front of the GUI, negative: behind the GUI)
-constexpr float fingertip_distance_hovering_thd = 0.15;     // Max distance to have the cursor hovering
+constexpr float palm_distance_close_thd_lo = 0.18;          // Distance to switch between touch and aim interaction
+constexpr float palm_distance_close_thd_hi = 0.22;          // Distance to switch between touch and aim interaction
 constexpr float fingertip_distance_touching_thd_hi = -0.01; // Distance to register a click
 constexpr float fingertip_distance_touching_thd_lo = -0.15; // Distance to register a click
 constexpr float fingertip_distance_stick_thd = -0.02;       // Max distance where the fingertip is moved to be on the GUI
@@ -118,8 +119,8 @@ constexpr float fade_delay = 3;
 constexpr float fade_duration = 0.25;
 
 // Dimming for the streamed video when the GUI is interactable
-constexpr float dimming_scale = 0.7;
-constexpr float dimming_bias = 0.15;
+constexpr float dimming_scale = 0.4;
+constexpr float dimming_bias = 0.01;
 } // namespace constants::stream
 
 namespace constants::style

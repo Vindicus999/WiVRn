@@ -542,12 +542,11 @@ std::optional<glm::vec3> scenes::lobby::check_recenter_action(XrTime predicted_d
 	{
 		// First frame of recentering
 		imgui_context::controller_state state{
-		        .active = true,
 		        .aim_position = aim->first,
 		        .aim_orientation = aim->second,
 		};
 
-		imgui_ctx->compute_pointer_position(state);
+		state.pointer_position = imgui_ctx->compute_pointer_position(state).first;
 
 		if (state.pointer_position) // TODO: check that the pointer is inside an imgui window
 		{
@@ -907,10 +906,7 @@ void scenes::lobby::render(const XrFrameState & frame_state)
 		if (!next_scene->alive())
 			next_scene.reset();
 		else if (next_scene->current_state() == scenes::stream::state::streaming)
-		{
-			autoconnect_enabled = true;
 			application::push_scene(next_scene);
-		}
 	}
 
 	update_server_list();
@@ -977,14 +973,14 @@ void scenes::lobby::render(const XrFrameState & frame_state)
 		auto windows = imgui_ctx->windows();
 
 		auto left = left_hand->locate(world_space, frame_state.predictedDisplayTime);
-		if (left and xr::hand_tracker::check_flags(*left, XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT, 0))
+		if (left)
 		{
 			stick_finger_to_gui(*left, windows);
 			hide_left_controller = true;
 		}
 
 		auto right = right_hand->locate(world_space, frame_state.predictedDisplayTime);
-		if (right and xr::hand_tracker::check_flags(*right, XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT, 0))
+		if (right)
 		{
 			stick_finger_to_gui(*right, windows);
 			hide_right_controller = true;
@@ -1065,7 +1061,14 @@ void scenes::lobby::render(const XrFrameState & frame_state)
 			ray_limits.push_back(compute_ray_limits(layer.pose));
 	}
 
-	input->apply(world, world_space, frame_state.predictedDisplayTime, hide_left_controller, hide_right_controller, ray_limits);
+	input->apply(world,
+	             world_space,
+	             frame_state.predictedDisplayTime,
+	             hide_left_controller,
+	             not imgui_ctx->is_aim_interaction()[0],
+	             hide_right_controller,
+	             not imgui_ctx->is_aim_interaction()[1],
+	             ray_limits);
 
 	renderer::animate(world, frame_state.predictedDisplayPeriod * 1.0e-9);
 
@@ -1196,6 +1199,14 @@ void scenes::lobby::on_focused()
 	recenter_left_action = get_action("recenter_left").first;
 	recenter_right_action = get_action("recenter_right").first;
 
+	if (system.hand_tracking_supported())
+	{
+		left_hand = session.create_hand_tracker(XR_HAND_LEFT_EXT);
+		right_hand = session.create_hand_tracker(XR_HAND_RIGHT_EXT);
+		hand_model::add_hand(*this, XR_HAND_LEFT_EXT, "assets://left-hand.glb", layer_controllers);
+		hand_model::add_hand(*this, XR_HAND_RIGHT_EXT, "assets://right-hand.glb", layer_controllers);
+	}
+
 	std::vector imgui_inputs{
 	        imgui_context::controller{
 	                .aim = get_action_space("left_aim"),
@@ -1204,6 +1215,7 @@ void scenes::lobby::on_focused()
 	                .squeeze = get_action("left_squeeze").first,
 	                .scroll = get_action("left_scroll").first,
 	                .haptic_output = get_action("left_haptic").first,
+	                .hand = left_hand ? &*left_hand : nullptr,
 	        },
 	        imgui_context::controller{
 	                .aim = get_action_space("right_aim"),
@@ -1212,20 +1224,9 @@ void scenes::lobby::on_focused()
 	                .squeeze = get_action("right_squeeze").first,
 	                .scroll = get_action("right_scroll").first,
 	                .haptic_output = get_action("right_haptic").first,
+	                .hand = right_hand ? &*right_hand : nullptr,
 	        },
 	};
-
-	if (system.hand_tracking_supported())
-	{
-		left_hand = session.create_hand_tracker(XR_HAND_LEFT_EXT);
-		right_hand = session.create_hand_tracker(XR_HAND_RIGHT_EXT);
-		hand_model::add_hand(*this, XR_HAND_LEFT_EXT, "assets://left-hand.glb", layer_controllers);
-		hand_model::add_hand(*this, XR_HAND_RIGHT_EXT, "assets://right-hand.glb", layer_controllers);
-		imgui_inputs.push_back({.hand = &*left_hand});
-		imgui_inputs.push_back({.hand = &*right_hand});
-	}
-
-	face_tracker = xr::make_face_tracker(instance, system, session);
 
 	// 0.4mm / pixel
 	std::vector<imgui_context::viewport> vps{
@@ -1370,6 +1371,8 @@ void scenes::lobby::on_xr_event(const xr::event & event)
 		case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED:
 			if (event.state_changed.state == XR_SESSION_STATE_STOPPING)
 				discover.reset();
+			else if (event.state_changed.state == XR_SESSION_STATE_FOCUSED)
+				autoconnect_enabled = true;
 			recenter_gui = true;
 			break;
 		case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING:
@@ -1441,6 +1444,17 @@ scene::meta & scenes::lobby::get_meta_scene()
 	                                {"right_aim", "/user/hand/right/input/aim/pose"},
 	                                {"right_trigger", "/user/hand/right/input/select/click"},
 	                                {"right_squeeze", "/user/hand/right/input/menu/click"},
+	                        },
+	                },
+	                suggested_binding{
+	                        {
+	                                "/interaction_profiles/ext/hand_interaction_ext",
+	                        },
+	                        {
+	                                {"left_aim", "/user/hand/left/input/aim/pose"},
+	                                {"left_trigger", "/user/hand/left/input/aim_activate_ext"},
+	                                {"right_aim", "/user/hand/right/input/aim/pose"},
+	                                {"right_trigger", "/user/hand/right/input/aim_activate_ext"},
 	                        },
 	                },
 	        }};

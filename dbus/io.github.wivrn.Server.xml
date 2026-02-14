@@ -42,14 +42,12 @@
 		<method name="DisablePairing"/>
 
 		<property name="HeadsetConnected"      type="b" access="read"/>
+		<property name="SessionRunning"        type="b" access="read"/>
 		<property name="SteamCommand"          type="s" access="read"/>
 		<property name="JsonConfiguration"     type="s" access="readwrite"/>
-		<property name="Bitrate"               type="u" access="readwrite"/>
+		<property name="Bitrate"               type="u" access="read"/>
 
 		<!-- Data from the headset info packet -->
-		<property name="RecommendedEyeSize"    type="(uu)" access="read">
-			<annotation name="org.qtproject.QtDBus.QtTypeName" value="QSize"/>
-		</property>
 		<property name="AvailableRefreshRates" type="ad" access="read">
 			<annotation name="org.qtproject.QtDBus.QtTypeName" value="QList&lt;double&gt;"/>
 		</property>
@@ -65,6 +63,7 @@
 		<property name="EyeGaze"               type="b" access="read"/>
 		<property name="FaceTracking"          type="b" access="read"/>
 		<property name="SupportedCodecs"       type="as" access="read"/>
+		<property name="SystemName"            type="s" access="read"/>
 
 		<property name="Pin"                   type="s" access="read"/>
 		<property name="KnownKeys"             type="a(ssx)" access="read">

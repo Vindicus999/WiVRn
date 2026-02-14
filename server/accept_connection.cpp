@@ -19,35 +19,28 @@
 
 #include "accept_connection.h"
 
+#include "util/u_logging.h"
+#include "utils/overloaded.h"
+
+#include "driver/wivrn_session.h"
 #include "wivrn_config.h"
 #include "wivrn_ipc.h"
 #include "wivrn_sockets.h"
 
 #include <sys/poll.h>
 
-static void handle_event_from_main_loop(to_monado::disconnect)
-{
-	// Ignore disconnect request when no headset is connected
-}
-
-static void handle_event_from_main_loop(to_monado::set_bitrate)
-{
-	// Ignore bitrate request when no headset is connected
-}
-
-std::unique_ptr<wivrn::TCP> wivrn::accept_connection(int watch_fd, std::function<bool()> quit)
+std::unique_ptr<wivrn::TCP> wivrn::accept_connection(wivrn_session & cnx, std::stop_token stop, std::function<void(wivrn_session &)> tick)
 {
 	wivrn_ipc_socket_monado->send(from_monado::headset_disconnected{});
 
 	wivrn::TCPListener listener(wivrn::default_port);
 
-	pollfd fds[3]{
-	        {.fd = watch_fd, .events = POLLIN},
+	pollfd fds[2]{
 	        {.fd = listener.get_fd(), .events = POLLIN},
 	        {.fd = wivrn_ipc_socket_monado->get_fd(), .events = POLLIN},
 	};
 
-	while (not(quit and quit()))
+	while (not stop.stop_requested())
 	{
 		if (poll(fds, std::size(fds), 100) < 0)
 		{
@@ -56,20 +49,30 @@ std::unique_ptr<wivrn::TCP> wivrn::accept_connection(int watch_fd, std::function
 		}
 
 		if (fds[0].revents & POLLIN)
-			return {};
-
-		if (fds[1].revents & POLLIN)
 		{
 			wivrn_ipc_socket_monado->send(from_monado::headset_connected{});
 			return std::make_unique<wivrn::TCP>(listener.accept().first);
 		}
 
-		if (fds[2].revents & POLLIN)
+		if (fds[1].revents & POLLIN)
 		{
 			auto packet = receive_from_main();
 			if (packet)
-				std::visit([](auto && x) { handle_event_from_main_loop(x); }, *packet);
+				std::visit(utils::overloaded{
+				                   [&cnx](to_monado::stop) {
+					                   // gets handled in wivrn_session::reconnect since we return nullptr
+					                   U_LOG_I("Received stop packet during reconnect, stopping");
+					                   cnx.request_stop();
+				                   },
+				                   [](auto &&) {
+					                   // Ignore request when no headset is connected
+				                   },
+				           },
+				           *packet);
 		}
+
+		if (tick)
+			tick(cnx);
 	}
 
 	return {};

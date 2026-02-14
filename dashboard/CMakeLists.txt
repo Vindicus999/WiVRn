@@ -5,6 +5,7 @@ include(ECMQmlModule)
 include(I18n)
 
 ecm_find_qmlmodule(org.kde.kirigami REQUIRED)
+ecm_find_qmlmodule(org.kde.kirigamiaddons.formcard REQUIRED)
 
 add_executable(wivrn-dashboard
     avahi.cpp
@@ -15,6 +16,7 @@ add_executable(wivrn-dashboard
     dashboard_utils.cpp
     escape_string.cpp
     settings.cpp
+    steam.cpp
     adb.cpp
     apk_installer.cpp
     firewall.cpp
@@ -26,6 +28,7 @@ qt_add_dbus_interface(DBUS_INTERFACE_SRC ${CMAKE_CURRENT_SOURCE_DIR}/../dbus/io.
 target_sources(wivrn-dashboard PRIVATE ${DBUS_INTERFACE_SRC})
 
 set_source_files_properties(../images/wivrn.svg PROPERTIES QT_RESOURCE_ALIAS qml/wivrn.svg)
+qt_add_resources(wivrn-dashboard PREFIX "/" BASE .. FILES ../images/wivrn.svg)
 
 set_source_files_properties(qml/DashboardSettings.qml PROPERTIES
     QT_QML_SINGLETON_TYPE TRUE
@@ -35,6 +38,7 @@ qt_add_qml_module(wivrn-dashboard
     URI io.github.wivrn.wivrn
     QML_FILES
         qml/Main.qml
+        qml/About.qml
         qml/ApkInstallPage.qml
         qml/DashboardSettings.qml
         qml/SettingsPage.qml
@@ -77,10 +81,6 @@ target_link_libraries(wivrn-dashboard
     wivrn-common-server
     wivrn-external
 )
-
-if (WIVRN_CHECK_CAPSYSNICE)
-    target_link_libraries(wivrn-dashboard PRIVATE PkgConfig::libcap)
-endif()
 
 install(TARGETS wivrn-dashboard ${KDE_INSTALL_TARGETS_DEFAULT_ARGS})
 

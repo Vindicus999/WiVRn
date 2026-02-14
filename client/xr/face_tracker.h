@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include "android_face_tracker.h"
 #include "fb_face_tracker2.h"
 #include "htc_face_tracker.h"
 #include "pico_face_tracker.h"
@@ -31,7 +32,7 @@ namespace xr
 class instance;
 class session;
 
-using face_tracker = std::variant<std::monostate, xr::fb_face_tracker2, xr::htc_face_tracker, xr::pico_face_tracker>;
+using face_tracker = std::variant<std::monostate, xr::android_face_tracker, xr::fb_face_tracker2, xr::htc_face_tracker, xr::pico_face_tracker>;
 
 face_tracker make_face_tracker(xr::instance &, xr::system &, xr::session &);
 

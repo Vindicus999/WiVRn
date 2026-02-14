@@ -36,14 +36,16 @@ layout(location = 7) in vec4 in_weights;
 out gl_PerVertex
 {
     vec4 gl_Position;
-    	float gl_ClipDistance[nb_clipping];
+    float gl_ClipDistance[nb_clipping];
 };
 
 void main()
 {
-    // TODO: use base_color_texcoord et al instead of always using texcoord 0
-    for (int i = 0; i < nb_texcoords; i++)
-        texcoord[i] = in_texcoord[i];
+    texcoord_base_color = compute_texcoord(material.base_color, in_texcoord[material.base_color.texcoord]);
+    texcoord_metallic_roughness = compute_texcoord(material.metallic_roughness, in_texcoord[material.metallic_roughness.texcoord]);
+    texcoord_occlusion = compute_texcoord(material.occlusion, in_texcoord[material.occlusion.texcoord]);
+    texcoord_emissive = compute_texcoord(material.emissive, in_texcoord[material.emissive.texcoord]);
+    texcoord_normal = compute_texcoord(material.normal, in_texcoord[material.normal.texcoord]);
 
     mat4 skinMatrix =
         in_weights.x * joints.joint_matrices[int(in_joints.x)] +
@@ -65,6 +67,7 @@ void main()
 
     frag_pos = mesh.modelview[gl_ViewIndex] * vec4(in_position, 1.0);
     light_pos = scene.view[gl_ViewIndex] * scene.light_position;
+    vertex_color = in_color;
 
     for(int i = 0; i < nb_clipping; i++)
     {

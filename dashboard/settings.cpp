@@ -28,6 +28,7 @@
 #include <fcntl.h>
 #include <nlohmann/json.hpp>
 #include <qqmlintegration.h>
+#include <unistd.h>
 
 namespace
 {
@@ -114,8 +115,6 @@ void Settings::emitAllChanged()
 	encoderChanged();
 	codecChanged();
 	tenbitChanged();
-	bitrateChanged();
-	scaleChanged();
 	tcpOnlyChanged();
 	applicationChanged();
 	openvrChanged();
@@ -131,6 +130,7 @@ void Settings::load(const wivrn_server * server)
 	{
 		auto conf = server->jsonConfiguration();
 		m_jsonSettings = nlohmann::json::parse(conf.toUtf8());
+		m_originalSettings = m_jsonSettings;
 		if (not m_jsonSettings.is_object())
 			m_jsonSettings = nlohmann::json::object();
 		emitAllChanged();
@@ -144,41 +144,49 @@ void Settings::load(const wivrn_server * server)
 	}
 }
 
+static Settings::encoder_name encoder_for_item(const nlohmann::json & item)
+{
+	if (item.is_string())
+		return Settings::encoder_id_from_string(std::string(item));
+	if (item.is_object())
+	{
+		if (auto i = item.find("encoder"); i != item.end())
+			return Settings::encoder_id_from_string(std::string(*i));
+	}
+	return Settings::encoder_name::EncoderAuto;
+}
+
+static Settings::video_codec codec_for_item(const nlohmann::json & item)
+{
+	if (item.is_object())
+	{
+		if (auto i = item.find("codec"); i != item.end())
+			return Settings::codec_id_from_string(std::string(*i));
+	}
+	return Settings::video_codec::CodecAuto;
+}
+
 bool Settings::simpleConfig() const
 {
-	// Simple configuration: either unset, or all encoders + codecs are the same
+	// Simple configuration: either unset, single encoder or all encoders + codecs are the same
 	try
 	{
-		auto it = m_jsonSettings.find("encoders");
-		if (it == m_jsonSettings.end())
+		auto it = m_jsonSettings.find("encoder");
+		if (it == m_jsonSettings.end() or it->is_object() or it->is_string())
 			return true;
 		std::optional<encoder_name> encoder;
 		std::optional<video_codec> codec;
 		for (const auto & item: *it)
 		{
-			if (auto it = item.find("encoder"); it != item.end())
-			{
-				auto e = encoder_id_from_string(std::string(*it));
-				if (encoder and e != encoder)
-					return false;
-				encoder = e;
-			}
-			else
-			{
-				encoder = encoder_name::EncoderAuto;
-			}
+			auto e = encoder_for_item(item);
+			if (encoder and e != encoder)
+				return false;
+			encoder = e;
 
-			if (auto it = item.find("codec"); it != item.end())
-			{
-				auto e = codec_id_from_string(std::string(*it));
-				if (codec and e != codec)
-					return false;
-				codec = e;
-			}
-			else
-			{
-				codec = video_codec::CodecAuto;
-			}
+			auto c = codec_for_item(item);
+			if (codec and c != codec)
+				return false;
+			codec = c;
 		}
 		return true;
 	}
@@ -192,15 +200,12 @@ Settings::encoder_name Settings::encoder() const
 {
 	try
 	{
-		auto it = m_jsonSettings.find("encoders");
+		auto it = m_jsonSettings.find("encoder");
 		if (it == m_jsonSettings.end())
 			return encoder_name::EncoderAuto;
-		for (const auto & item: *it)
-		{
-			if (auto it = item.find("encoder"); it != item.end())
-				return encoder_id_from_string(std::string(*it));
-			return encoder_name::EncoderAuto;
-		}
+		if (it->is_array() and it->size())
+			it = it->begin();
+		return encoder_for_item(*it);
 	}
 	catch (...)
 	{
@@ -210,42 +215,23 @@ Settings::encoder_name Settings::encoder() const
 
 void Settings::set_encoder(const encoder_name & value)
 {
-	auto old = encoder();
+	if (value == encoder())
+		return;
 	auto old_codec = codec();
 	switch (value)
 	{
 		case EncoderAuto:
-			m_jsonSettings.erase("encoders");
+			m_jsonSettings.erase("encoder");
 			break;
 		case Nvenc:
 		case Vaapi:
-		case Vulkan: {
-			auto & enc = m_jsonSettings["encoders"] = nlohmann::json::array();
-			for (float offset: {0.f, 0.5f})
-			{
-				auto obj = nlohmann::json::object({
-				        {"width", 0.5},
-				        {"encoder", encoder_from_id(value)},
-				});
-				if (offset)
-					obj["offset_x"] = offset;
-				if (value == Vulkan)
-					obj["codec"] = "h264";
-				enc.push_back(obj);
-			}
-		}
-		break;
-		case encoder_name::X264:
-			m_jsonSettings["encoders"] =
-			        nlohmann::json::parse(R"([{"encoder": "x264", "codec": "h264"}])");
-			break;
+		case X264:
+		case Vulkan:
+			m_jsonSettings["encoder"] = encoder_from_id(value);
 	}
-	if (value != old)
-	{
-		encoderChanged();
-		if (not can10bit())
-			set_tenbit(false);
-	}
+	encoderChanged();
+	if (not can10bit())
+		set_tenbit(false);
 	if (old_codec != codec())
 		codecChanged();
 	simpleConfigChanged();
@@ -255,15 +241,12 @@ Settings::video_codec Settings::codec() const
 {
 	try
 	{
-		auto it = m_jsonSettings.find("encoders");
+		auto it = m_jsonSettings.find("encoder");
 		if (it == m_jsonSettings.end())
 			return video_codec::CodecAuto;
-		for (const auto & item: *it)
-		{
-			if (auto it = item.find("codec"); it != item.end())
-				return codec_id_from_string(std::string(*it));
-			return video_codec::CodecAuto;
-		}
+		if (it->is_array() and it->size())
+			it = it->begin();
+		return codec_for_item(*it);
 	}
 	catch (...)
 	{
@@ -274,17 +257,49 @@ Settings::video_codec Settings::codec() const
 void Settings::set_codec(const video_codec & value)
 {
 	auto old = codec();
-	auto it = m_jsonSettings.find("encoders");
-	if (it == m_jsonSettings.end() or not it->is_array())
+	auto it = m_jsonSettings.find("encoder");
+	if (it == m_jsonSettings.end())
 		return;
-	for (auto & item: *it)
+
+	if (it->is_string())
 	{
-		if (not item.is_object())
-			continue;
+		m_jsonSettings["encoder"] = nlohmann::json::object({
+		        {"encoder", *it},
+		        {"codec", codec_from_id(value)},
+		});
+	}
+
+	if (it->is_object())
+	{
 		if (value == CodecAuto)
-			item.erase("codec");
+		{
+			if (auto encoder = it->find("encoder"); encoder != it->end())
+				*it = *encoder;
+			else
+				m_jsonSettings.erase("encoder");
+		}
 		else
-			item["codec"] = codec_from_id(value);
+			(*it)["codec"] = codec_from_id(value);
+	}
+	else if (it->is_array())
+	{
+		for (auto & item: *it)
+		{
+			if (it->is_string())
+			{
+				item = nlohmann::json::object({
+				        {"encoder", item},
+				        {"codec", codec_from_id(value)},
+				});
+				continue;
+			}
+			if (not item.is_object())
+				continue;
+			if (value == CodecAuto)
+				item.erase("codec");
+			else
+				item["codec"] = codec_from_id(value);
+		}
 	}
 	if (value != old)
 	{
@@ -308,49 +323,12 @@ bool Settings::tenbit() const
 void Settings::set_tenbit(const bool & value)
 {
 	auto old = tenbit();
-	m_jsonSettings["bit-depth"] = value ? 10 : 8;
+	if (codec() == CodecAuto)
+		m_jsonSettings.erase("bit-depth");
+	else
+		m_jsonSettings["bit-depth"] = value ? 10 : 8;
 	if (value != old)
 		tenbitChanged();
-}
-
-int Settings::bitrate() const
-{
-	try
-	{
-		return m_jsonSettings.value("bitrate", 50'000'000) / 1'000'000;
-	}
-	catch (...)
-	{
-		return 50;
-	}
-}
-
-void Settings::set_bitrate(const int & value)
-{
-	auto old = bitrate();
-	m_jsonSettings["bitrate"] = value * 1'000'000;
-	if (old != value)
-		bitrateChanged();
-}
-
-float Settings::scale() const
-{
-	// Foveation
-	auto it = m_jsonSettings.find("scale");
-	if (it != m_jsonSettings.end() and it->is_number())
-		return *it;
-	return -1;
-}
-
-void Settings::set_scale(const float & value)
-{
-	auto old = scale();
-	if (value == -1)
-		m_jsonSettings.erase("scale");
-	else
-		m_jsonSettings["scale"] = value;
-	if (old != value)
-		scaleChanged();
 }
 
 QString Settings::application() const
@@ -513,14 +491,13 @@ bool Settings::can10bit() const
 void Settings::save(wivrn_server * server)
 {
 	server->setJsonConfiguration(QString::fromStdString(m_jsonSettings.dump(2)));
+	if (m_jsonSettings != m_originalSettings)
+		settingsChanged();
 }
 
 void Settings::restore_defaults()
 {
-	m_jsonSettings.erase("encoders");
-	m_jsonSettings.erase("encoder-passthrough");
-	m_jsonSettings.erase("scale");
-	m_jsonSettings.erase("bitrate");
+	m_jsonSettings.erase("encoder");
 	m_jsonSettings.erase("application");
 	m_jsonSettings.erase("hid-forwarding");
 	m_jsonSettings.erase("debug-gui");

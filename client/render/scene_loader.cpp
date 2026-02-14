@@ -166,6 +166,11 @@ glm::vec3 convert(const fastgltf::math::nvec3 & v)
 	return {v[0], v[1], v[2]};
 }
 
+glm::vec2 convert(const fastgltf::math::nvec2 & v)
+{
+	return {v[0], v[1]};
+}
+
 components::animation_track_base::interpolation_t convert(fastgltf::AnimationInterpolation interpolation)
 {
 	switch (interpolation)
@@ -266,19 +271,45 @@ void write_vertex_attribute_aux(std::byte * output, size_t stride, int component
 	{
 		case 1:
 			for (size_t i = 0, n = input.size(); i < n; i++, output += stride)
-				*reinterpret_cast<glm::vec<1, T> *>(output) = glm::vec<1, T>(input[i].x);
+				*reinterpret_cast<glm::vec<1, T> *>(output) = input[i];
 			break;
 		case 2:
 			for (size_t i = 0, n = input.size(); i < n; i++, output += stride)
-				*reinterpret_cast<glm::vec<2, T> *>(output) = glm::vec<2, T>(input[i].x, input[i].y);
+				*reinterpret_cast<glm::vec<2, T> *>(output) = input[i];
 			break;
 		case 3:
 			for (size_t i = 0, n = input.size(); i < n; i++, output += stride)
-				*reinterpret_cast<glm::vec<3, T> *>(output) = glm::vec<3, T>(input[i].x, input[i].y, input[i].z);
+				*reinterpret_cast<glm::vec<3, T> *>(output) = input[i];
 			break;
 		case 4:
 			for (size_t i = 0, n = input.size(); i < n; i++, output += stride)
-				*reinterpret_cast<glm::vec<3, T> *>(output) = glm::vec<4, T>(input[i].x, input[i].y, input[i].z, input[i].w);
+				*reinterpret_cast<glm::vec<4, T> *>(output) = input[i];
+			break;
+		default:
+			abort();
+	}
+}
+
+template <typename T>
+void write_vertex_attribute_aux(std::byte * output, size_t stride, int components, glm::vec4 value, size_t size)
+{
+	switch (components)
+	{
+		case 1:
+			for (size_t i = 0, n = size; i < n; i++, output += stride)
+				*reinterpret_cast<glm::vec<1, T> *>(output) = value;
+			break;
+		case 2:
+			for (size_t i = 0, n = size; i < n; i++, output += stride)
+				*reinterpret_cast<glm::vec<2, T> *>(output) = value;
+			break;
+		case 3:
+			for (size_t i = 0, n = size; i < n; i++, output += stride)
+				*reinterpret_cast<glm::vec<3, T> *>(output) = value;
+			break;
+		case 4:
+			for (size_t i = 0, n = size; i < n; i++, output += stride)
+				*reinterpret_cast<glm::vec<4, T> *>(output) = value;
 			break;
 		default:
 			abort();
@@ -303,6 +334,24 @@ void write_vertex_attribute(std::vector<std::byte> & output, size_t offset, size
 	}
 }
 
+void write_vertex_attribute(std::vector<std::byte> & output, size_t offset, size_t stride, vk::Format format, glm::vec4 value, size_t size)
+{
+	assert(output.size() >= size * stride);
+
+	switch (format)
+	{
+		case vk::Format::eR32Sfloat:
+		case vk::Format::eR32G32Sfloat:
+		case vk::Format::eR32G32B32Sfloat:
+		case vk::Format::eR32G32B32A32Sfloat:
+			write_vertex_attribute_aux<float>(output.data() + offset, stride, vk::componentCount(format), value, size);
+			return;
+
+		default:
+			return;
+	}
+}
+
 void copy_vertex_attributes(
         const fastgltf::Asset & asset,
         const fastgltf::Accessor & accessor,
@@ -313,6 +362,18 @@ void copy_vertex_attributes(
 	assert(buffer.size() >= accessor.count * binding.stride);
 
 	write_vertex_attribute(buffer, attribute.offset, binding.stride, attribute.format, read_vertex_attribute(asset, accessor));
+}
+
+void fill_vertex_attributes(
+        glm::vec4 value,
+        size_t size,
+        std::vector<std::byte> & buffer,
+        const vk::VertexInputBindingDescription & binding,
+        const vk::VertexInputAttributeDescription & attribute)
+{
+	assert(buffer.size() >= size * binding.stride);
+
+	write_vertex_attribute(buffer, attribute.offset, binding.stride, attribute.format, value, size);
 }
 
 std::pair<size_t, std::vector<std::vector<std::byte>>> create_vertex_buffers(
@@ -363,7 +424,20 @@ std::pair<size_t, std::vector<std::vector<std::byte>>> create_vertex_buffers(
 			gltf_attribute = primitive.findAttribute(name + "_0");
 
 			if (gltf_attribute == primitive.attributes.cend())
+			{
+				// If the attribute is not specified in the glTF, use the default value or 0 if none is found
+				static const std::unordered_map<std::string_view, glm::vec4> default_values = {
+				        std::pair{"COLOR", glm::vec4{1, 1, 1, 1}}};
+
+				if (auto iter = default_values.find(name); iter != default_values.end())
+					fill_vertex_attributes(iter->second, vertex_count, buffer, binding, attribute);
+				else
+				{
+					// The buffer is already initialized at 0
+				}
+
 				continue;
+			}
 		}
 
 		const fastgltf::Accessor & accessor = asset.accessors.at(gltf_attribute->accessorIndex);
@@ -441,7 +515,9 @@ struct : std::error_category
 
 fastgltf::Asset load_gltf_asset(fastgltf::GltfDataBuffer & buffer, const std::filesystem::path & directory)
 {
-	fastgltf::Parser parser(fastgltf::Extensions::KHR_texture_basisu);
+	fastgltf::Parser parser(
+	        fastgltf::Extensions::KHR_texture_basisu |
+	        fastgltf::Extensions::KHR_texture_transform);
 
 	auto gltf_options =
 	        fastgltf::Options::DontRequireValidAssetMember |
@@ -750,37 +826,37 @@ public:
 			material_data.roughness_factor = gltf_material.pbrData.roughnessFactor;
 			material_data.alpha_cutoff = gltf_material.alphaCutoff;
 
-			if (gltf_material.pbrData.baseColorTexture)
-			{
-				material.base_color_texture = textures.at(gltf_material.pbrData.baseColorTexture->textureIndex);
-				material_data.base_color_texcoord = gltf_material.pbrData.baseColorTexture->texCoordIndex;
-			}
+			auto f = [&](const auto & texture_info,
+			             std::shared_ptr<renderer::texture> & texture,
+			             renderer::material::texture_info & info) {
+				if (not texture_info)
+					return;
 
-			if (gltf_material.pbrData.metallicRoughnessTexture)
-			{
-				material.metallic_roughness_texture = textures.at(gltf_material.pbrData.metallicRoughnessTexture->textureIndex);
-				material_data.metallic_roughness_texcoord = gltf_material.pbrData.metallicRoughnessTexture->texCoordIndex;
-			}
+				texture = textures.at(texture_info->textureIndex);
+				info.texcoord = texture_info->texCoordIndex;
+
+				if (auto & xform = texture_info->transform)
+				{
+					if (xform->texCoordIndex)
+						info.texcoord = *xform->texCoordIndex;
+
+					info.rotation = xform->rotation;
+					info.offset = convert(xform->uvOffset);
+					info.scale = convert(xform->uvScale);
+				}
+			};
+
+			f(gltf_material.pbrData.baseColorTexture, material.base_color_texture, material_data.base_color);
+			f(gltf_material.pbrData.metallicRoughnessTexture, material.metallic_roughness_texture, material_data.metallic_roughness);
+			f(gltf_material.occlusionTexture, material.occlusion_texture, material_data.occlusion);
+			f(gltf_material.emissiveTexture, material.emissive_texture, material_data.emissive);
+			f(gltf_material.normalTexture, material.normal_texture, material_data.normal);
 
 			if (gltf_material.occlusionTexture)
-			{
-				material.occlusion_texture = textures.at(gltf_material.occlusionTexture->textureIndex);
-				material_data.occlusion_texcoord = gltf_material.occlusionTexture->texCoordIndex;
 				material_data.occlusion_strength = gltf_material.occlusionTexture->strength;
-			}
-
-			if (gltf_material.emissiveTexture)
-			{
-				material.emissive_texture = textures.at(gltf_material.emissiveTexture->textureIndex);
-				material_data.emissive_texcoord = gltf_material.emissiveTexture->texCoordIndex;
-			}
 
 			if (gltf_material.normalTexture)
-			{
-				material.normal_texture = textures.at(gltf_material.normalTexture->textureIndex);
-				material_data.normal_texcoord = gltf_material.normalTexture->texCoordIndex;
 				material_data.normal_scale = gltf_material.normalTexture->scale;
-			}
 
 			material.offset = staging_buffer.add_uniform(material_data);
 		}
@@ -808,30 +884,8 @@ public:
 					fastgltf::Accessor & indices_accessor = gltf.accessors.at(*gltf_primitive.indicesAccessor);
 
 					primitive_ref.indexed = true;
-					primitive_ref.index_offset = staging_buffer.add_indices(indices_accessor);
+					std::tie(primitive_ref.index_offset, primitive_ref.index_type) = staging_buffer.add_indices(indices_accessor);
 					primitive_ref.index_count = indices_accessor.count;
-
-					switch (indices_accessor.componentType)
-					{
-						case fastgltf::ComponentType::Byte:
-						case fastgltf::ComponentType::UnsignedByte:
-							primitive_ref.index_type = vk::IndexType::eUint8EXT;
-							break;
-
-						case fastgltf::ComponentType::Short:
-						case fastgltf::ComponentType::UnsignedShort:
-							primitive_ref.index_type = vk::IndexType::eUint16;
-							break;
-
-						case fastgltf::ComponentType::Int:
-						case fastgltf::ComponentType::UnsignedInt:
-							primitive_ref.index_type = vk::IndexType::eUint32;
-							break;
-
-						default:
-							throw std::runtime_error("Invalid index type");
-							break;
-					}
 				}
 				else
 					primitive_ref.indexed = false;
@@ -855,6 +909,7 @@ public:
 
 					int binding;
 
+					// Attributes that affect the vertices position go in a different buffer
 					if (semantic == "POSITION" or
 					    semantic == "JOINTS" or
 					    semantic == "WEIGHTS")
@@ -1089,8 +1144,6 @@ std::shared_ptr<entt::registry> scene_loader::operator()(
         const std::filesystem::path & gltf_texture_cache,
         std::function<void(float)> progress_cb)
 {
-	vk::PhysicalDeviceProperties physical_device_properties = physical_device.getProperties();
-
 	auto data_buffer = fastgltf::GltfDataBuffer::FromBytes(data.data(), data.size());
 	if (auto error = data_buffer.error(); error != fastgltf::Error::None)
 		throw std::system_error((int)error, fastgltf_error_category);
@@ -1108,7 +1161,7 @@ std::shared_ptr<entt::registry> scene_loader::operator()(
 	// Load all buffers from URIs
 	ctx.load_all_buffers();
 
-	gpu_buffer staging_buffer(physical_device_properties, asset);
+	gpu_buffer staging_buffer(physical_device, asset);
 
 	// Load all textures
 	auto textures = ctx.load_all_textures(gltf_texture_cache, progress_cb);

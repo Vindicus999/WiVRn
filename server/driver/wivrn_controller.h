@@ -2,6 +2,7 @@
  * WiVRn VR streaming
  * Copyright (C) 2022  Guillaume Meunier <guillaume.meunier@centraliens.net>
  * Copyright (C) 2022  Patrick Nicolas <patricknicolas@laposte.net>
+ * Copyright (C) 2025  Sapphire <imsapphire0@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,9 +24,7 @@
 
 #include "hand_joints_list.h"
 #include "pose_list.h"
-#include "utils/thread_safe.h"
 
-#include <fstream>
 #include <mutex>
 #include <vector>
 
@@ -40,6 +39,8 @@ class wivrn_controller : public xrt_device
 	pose_list grip;
 	pose_list aim;
 	pose_list palm;
+	pose_list pinch_ext;
+	pose_list poke_ext;
 	hand_joints_list joints;
 
 	std::vector<xrt_input> inputs_staging;
@@ -50,7 +51,7 @@ class wivrn_controller : public xrt_device
 
 public:
 	using base = xrt_device;
-	wivrn_controller(int hand_id, xrt_device * hmd, wivrn::wivrn_session * cnx);
+	wivrn_controller(xrt_device_name name, int hand_id, xrt_device * hmd, wivrn::wivrn_session * cnx);
 
 	xrt_result_t update_inputs();
 
@@ -66,10 +67,6 @@ public:
 	void update_hand_tracking(const from_headset::hand_tracking &, const clock_offset &);
 
 	void reset_history();
-
-	static thread_safe<std::ofstream> * tracking_dump();
 };
 
 } // namespace wivrn
-
-std::ostream & operator<<(std::ostream & out, const xrt_space_relation & rel);

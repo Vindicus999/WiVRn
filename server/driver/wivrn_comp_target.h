@@ -93,7 +93,7 @@ struct wivrn_comp_target : public comp_target
 	static std::vector<const char *> wanted_instance_extensions;
 	static std::vector<const char *> wanted_device_extensions;
 
-	std::vector<encoder_settings> settings;
+	std::array<encoder_settings, 3> settings;
 	std::list<std::jthread> encoder_threads;
 	std::vector<std::shared_ptr<video_encoder>> encoders;
 
@@ -107,9 +107,16 @@ struct wivrn_comp_target : public comp_target
 
 	void on_feedback(const from_headset::feedback &, const clock_offset &);
 	void reset_encoders();
-	void set_bitrate(int bitrate_bps);
+	void set_bitrate(uint32_t bitrate_bps);
 
 	void set_refresh_rate(float);
 };
+
+inline float get_default_rate(const from_headset::headset_info_packet & info, const from_headset::settings_changed & settings)
+{
+	if (settings.preferred_refresh_rate)
+		return settings.preferred_refresh_rate;
+	return info.available_refresh_rates.back();
+}
 
 } // namespace wivrn

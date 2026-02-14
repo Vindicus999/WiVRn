@@ -20,6 +20,7 @@
 #include "systemd_manager.h"
 #include "systemd_unit.h"
 #include "utils/strings.h"
+#include <filesystem>
 #include <gio/gio.h>
 #include <glib-object.h>
 #include <iostream>
@@ -194,12 +195,43 @@ struct variant_builder
 	}
 };
 
+// Almost the same as canonical, but don't try to follow symlinks
+std::filesystem::path normalize(std::filesystem::path path)
+{
+	if (path.is_relative())
+		path = std::filesystem::current_path() / path;
+
+	std::vector<std::filesystem::path> items;
+	for (auto && item: path)
+	{
+		if (item.empty() or item == ".")
+			continue;
+		if (item == "..")
+		{
+			if (items.size() < 2)
+				throw std::runtime_error("too many ..");
+			items.pop_back();
+		}
+		else
+			items.push_back(std::move(item));
+	}
+	path.clear();
+	for (const auto & item: items)
+		path /= item;
+	return path;
+}
+
 }; // namespace
 
-void systemd_units_manager::start_application(const std::vector<std::string> & args)
+void systemd_units_manager::start_application(const std::vector<std::string> & args, const std::optional<std::string> & path)
 {
 	if (args.empty())
 		return;
+
+	std::cerr << "Launching";
+	for (const auto & i: args)
+		std::cerr << " " << std::quoted(i);
+	std::cerr << std::endl;
 
 	std::string service_name = std::format("wivrn-application-{}.service", std::chrono::steady_clock::now().time_since_epoch().count());
 
@@ -224,11 +256,29 @@ void systemd_units_manager::start_application(const std::vector<std::string> & a
 	                              &exec_start,
 	                              1));
 
+	if (path)
+		g_variant_builder_add(&b,
+		                      "(sv)",
+		                      "WorkingDirectory",
+		                      g_variant_new("s", path->c_str()));
+
 	if (auto path = std::getenv("PATH"))
 	{
 		variant_builder pathv(G_VARIANT_TYPE("as"));
 		for (auto item: utils::split(path, ":"))
-			g_variant_builder_add(&pathv, "s", item.c_str());
+		{
+			if (item.empty())
+				continue;
+			try
+			{
+				item = normalize(item);
+				g_variant_builder_add(&pathv, "s", item.c_str());
+			}
+			catch (std::exception & e)
+			{
+				std::cerr << "Failed to normalize element " << std::quoted(item) << " from $PATH: " << e.what() << std::endl;
+			}
+		}
 		g_variant_builder_add(&b,
 		                      "(sv)",
 		                      "ExecSearchPath",

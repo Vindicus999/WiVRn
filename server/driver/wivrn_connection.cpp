@@ -34,6 +34,11 @@
 
 using namespace std::chrono_literals;
 
+static void handle_event_from_main_loop(to_monado::stop)
+{
+	// Ignore stop request when no headset is connected
+}
+
 static void handle_event_from_main_loop(to_monado::disconnect)
 {
 	// Ignore disconnect request when no headset is connected
@@ -288,13 +293,13 @@ void wivrn::wivrn_connection::init(std::stop_token stop_token, std::function<voi
 		wivrn::update_last_connection_timestamp(clean_key(headset_key.public_key()));
 }
 
-void wivrn::wivrn_connection::reset(TCP && tcp, std::function<void()> tick)
+void wivrn::wivrn_connection::reset(std::stop_token stop, TCP && tcp, std::function<void()> tick)
 {
 	if (stream)
 		stream = decltype(stream)();
 
 	control = std::move(tcp);
-	init({}, tick);
+	init(stop, tick);
 }
 
 void wivrn::wivrn_connection::shutdown()

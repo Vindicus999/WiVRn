@@ -1,0 +1,38 @@
+From 8d22720c9574146f7115f5ba7ac39f3c4e4f48ae Mon Sep 17 00:00:00 2001
+From: Patrick Nicolas <patricknicolas@laposte.net>
+Date: Tue, 8 Oct 2024 22:13:15 +0200
+Subject: [PATCH 2/8] Use extern socket fd
+
+---
+ src/xrt/ipc/server/ipc_server_mainloop_linux.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/src/xrt/ipc/server/ipc_server_mainloop_linux.c b/src/xrt/ipc/server/ipc_server_mainloop_linux.c
+index 36bf3e31d..e40447bb2 100644
+--- a/src/xrt/ipc/server/ipc_server_mainloop_linux.c
++++ b/src/xrt/ipc/server/ipc_server_mainloop_linux.c
+@@ -48,6 +48,8 @@
+ #endif
+ 
+ 
++extern int listen_socket;
++
+ /*
+  *
+  * Static functions.
+@@ -56,6 +58,12 @@
+ static int
+ get_systemd_socket(struct ipc_server_mainloop *ml, int *out_fd)
+ {
++	if (listen_socket >= 0)
++	{
++		ml->launched_by_socket = true;
++		*out_fd = listen_socket;
++		return 0;
++	}
+ #ifdef XRT_HAVE_SYSTEMD
+ 	// We may have been launched with socket activation
+ 	int num_fds = sd_listen_fds(0);
+-- 
+2.53.0
+

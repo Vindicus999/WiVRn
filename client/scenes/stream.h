@@ -24,7 +24,6 @@
 #include "decoder/shard_accumulator.h"
 #include "render/imgui_impl.h"
 #include "scene.h"
-#include "scenes/blitter.h"
 #include "scenes/input_profile.h"
 #include "stream_defoveator.h"
 #include "utils/thread_safe.h"
@@ -55,8 +54,6 @@ public:
 private:
 	static const size_t view_count = 2;
 
-	using stream_description = wivrn::to_headset::video_stream_description::item;
-
 	struct accumulator_images
 	{
 		std::unique_ptr<wivrn::shard_accumulator> decoder;
@@ -64,7 +61,6 @@ private:
 		std::array<std::shared_ptr<wivrn::shard_accumulator::blit_handle>, image_buffer_size> latest_frames;
 
 		std::shared_ptr<wivrn::shard_accumulator::blit_handle> frame(uint64_t id) const;
-		bool alpha() const;
 		bool empty() const;
 	};
 
@@ -72,7 +68,7 @@ private:
 
 	// for frames inside accumulator images
 	std::mutex frames_mutex;
-	std::vector<std::shared_ptr<wivrn::shard_accumulator::blit_handle>> common_frame(XrTime display_time);
+	std::array<std::shared_ptr<wivrn::shard_accumulator::blit_handle>, view_count + 1> common_frame(XrTime display_time);
 
 	std::unique_ptr<wivrn_session> network_session;
 	std::atomic<bool> exiting = false;
@@ -90,9 +86,7 @@ private:
 
 	std::shared_mutex decoder_mutex;
 	std::optional<to_headset::video_stream_description> video_stream_description;
-	std::vector<accumulator_images> decoders; // Locked by decoder_mutex
-
-	std::array<blitter, view_count> blitters;
+	std::array<accumulator_images, view_count + 1> decoders; // Locked by decoder_mutex
 
 	std::optional<stream_defoveator> defoveator;
 
@@ -132,6 +126,7 @@ private:
 		compact,
 		stats,
 		settings,
+		bitrate_settings,
 		foveation_settings,
 		applications,
 		application_launcher,
@@ -141,7 +136,7 @@ private:
 
 	std::atomic<gui_status> gui_status = gui_status::hidden;
 	enum gui_status last_gui_status = gui_status::hidden;
-	enum gui_status next_gui_status = gui_status::stats;
+	enum gui_status next_gui_status = gui_status::applications;
 	XrTime gui_status_last_change;
 	float dimming = 0;
 
@@ -149,7 +144,7 @@ private:
 	XrAction plots_toggle_2 = XR_NULL_HANDLE;
 	XrAction recenter_left = XR_NULL_HANDLE;
 	XrAction recenter_right = XR_NULL_HANDLE;
-	XrAction foveation_pitch = XR_NULL_HANDLE;
+	XrAction settings_adjust = XR_NULL_HANDLE;
 	XrAction foveation_distance = XR_NULL_HANDLE;
 	XrAction foveation_ok = XR_NULL_HANDLE;
 	XrAction foveation_cancel = XR_NULL_HANDLE;
@@ -167,7 +162,7 @@ private:
 	void update_gui_position(xr::spaces controller);
 
 	// Keep a reference to the resources needed to blit the images until vkWaitForFences
-	std::vector<std::shared_ptr<wivrn::shard_accumulator::blit_handle>> current_blit_handles;
+	std::array<std::shared_ptr<wivrn::shard_accumulator::blit_handle>, view_count + 1> current_blit_handles;
 
 	XrTime running_application_req = 0;
 	thread_safe<to_headset::running_applications> running_applications;
@@ -205,6 +200,7 @@ public:
 	void operator()(to_headset::haptics &&);
 	void operator()(to_headset::timesync_query &&);
 	void operator()(to_headset::tracking_control &&);
+	void operator()(to_headset::feature_control &&);
 	void operator()(to_headset::audio_stream_description &&);
 	void operator()(to_headset::video_stream_description &&);
 	void operator()(to_headset::refresh_rate_change &&);
@@ -222,6 +218,7 @@ public:
 		return state_;
 	}
 
+	void exit();
 	bool alive() const
 	{
 		return !exiting;
@@ -240,7 +237,6 @@ private:
 
 	void setup(const to_headset::video_stream_description &);
 	void setup_reprojection_swapchain(uint32_t width, uint32_t height);
-	void exit();
 
 	vk::raii::QueryPool query_pool = nullptr;
 	bool query_pool_filled = false;
@@ -253,13 +249,11 @@ private:
 
 	struct gpu_timestamps
 	{
-		float gpu_barrier = 0;
 		float gpu_time = 0;
 	};
 
-	struct global_metric //: gpu_timestamps
+	struct global_metric
 	{
-		float gpu_barrier;
 		float gpu_time;
 		float cpu_time = 0;
 		float bandwidth_rx = 0;
@@ -308,10 +302,11 @@ private:
 	float compact_cpu_time = 0;
 	float compact_gpu_time = 0;
 
-	void accumulate_metrics(XrTime predicted_display_time, const std::vector<std::shared_ptr<wivrn::shard_accumulator::blit_handle>> & blit_handles, const gpu_timestamps & timestamps);
+	void accumulate_metrics(XrTime predicted_display_time, const std::array<std::shared_ptr<wivrn::shard_accumulator::blit_handle>, view_count + 1> & blit_handles, const gpu_timestamps & timestamps);
 	void gui_performance_metrics();
 	void gui_compact_view();
 	void gui_settings(float predicted_display_period);
+	void gui_bitrate_settings(float predicted_display_period);
 	void gui_foveation_settings(float predicted_display_period);
 	void gui_applications();
 	void draw_gui(XrTime predicted_display_time, XrDuration predicted_display_period);

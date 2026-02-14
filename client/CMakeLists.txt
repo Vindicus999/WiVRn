@@ -13,15 +13,17 @@ set(SPIRV_REFLECT_INSTALL OFF)
 
 FetchContent_MakeAvailable(simdjson spdlog glm fastgltf imgui stb implot uni-algo entt spirv-reflect)
 if(ANDROID AND WIVRN_USE_ANDROID_BIN_LIBKTX)
-    file(DOWNLOAD
-        https://github.com/KhronosGroup/KTX-Software/releases/download/${KTX_VERSION_FULL}/KTX-Software-${KTX_VERSION}-Android.zip
-        ${CMAKE_BINARY_DIR}/KTX-Software-${KTX_VERSION}-Android.zip
-        EXPECTED_HASH SHA256=9f84a395f37a185e2e21e77cfd3893e67271b616edf5feb39125f09ab4c06b29
-        )
-    file(ARCHIVE_EXTRACT INPUT ${CMAKE_BINARY_DIR}/KTX-Software-${KTX_VERSION}-Android.zip DESTINATION ${CMAKE_BINARY_DIR})
+    if(NOT EXISTS ${FETCHCONTENT_BASE_DIR}/KTX-Software-${KTX_VERSION}-Android.zip)
+        file(DOWNLOAD
+            https://github.com/KhronosGroup/KTX-Software/releases/download/${KTX_VERSION_FULL}/KTX-Software-${KTX_VERSION}-Android.zip
+            ${FETCHCONTENT_BASE_DIR}/KTX-Software-${KTX_VERSION}-Android.zip
+            EXPECTED_HASH SHA256=9f84a395f37a185e2e21e77cfd3893e67271b616edf5feb39125f09ab4c06b29
+            )
+    endif()
+    file(ARCHIVE_EXTRACT INPUT ${FETCHCONTENT_BASE_DIR}/KTX-Software-${KTX_VERSION}-Android.zip DESTINATION ${FETCHCONTENT_BASE_DIR})
     add_library(ktx INTERFACE)
-    target_link_libraries(ktx INTERFACE ${CMAKE_BINARY_DIR}/KTX-Software-${KTX_VERSION}-Android/${ANDROID_ABI}/lib/libktx.so)
-    target_include_directories(ktx INTERFACE ${CMAKE_BINARY_DIR}/KTX-Software-${KTX_VERSION}-Android/${ANDROID_ABI}/include)
+    target_link_libraries(ktx INTERFACE ${FETCHCONTENT_BASE_DIR}/KTX-Software-${KTX_VERSION}-Android/${ANDROID_ABI}/lib/libktx.so)
+    target_include_directories(ktx INTERFACE ${FETCHCONTENT_BASE_DIR}/KTX-Software-${KTX_VERSION}-Android/${ANDROID_ABI}/include)
 elseif(WIVRN_USE_SYSTEM_LIBKTX AND NOT ANDROID)
 else()
     FetchContent_MakeAvailable(libktx)
@@ -63,6 +65,15 @@ if(ANDROID)
     target_compile_definitions(wivrn PRIVATE -DXR_USE_PLATFORM_ANDROID -DVK_USE_PLATFORM_ANDROID_KHR)
     target_link_options(wivrn PRIVATE -Wl,--undefined=ANativeActivity_onCreate)
 
+    target_link_options(wivrn
+        PRIVATE
+        -Wl,--version-script,${CMAKE_CURRENT_SOURCE_DIR}/android/exported_symbols.txt
+        # This causes the linker to emit an error when a version script names a
+        # symbol that is not found, rather than silently ignoring that line.
+        -Wl,--no-undefined-version
+    )
+    set_target_properties(wivrn PROPERTIES LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/android/exported_symbols.txt)
+
     file(GLOB PLATFORM_SOURCE CONFIGURE_DEPENDS
         "android/*.cpp"
         "audio/android/*.cpp"
@@ -79,7 +90,7 @@ else()
         target_link_libraries(wivrn openxr_loader)
     endif()
 
-    target_link_libraries(wivrn PkgConfig::LIBAV Fontconfig::Fontconfig CURL::libcurl)
+    target_link_libraries(wivrn PkgConfig::LIBAV_CLIENT Fontconfig::Fontconfig CURL::libcurl)
 
     file(GLOB PLATFORM_SOURCE CONFIGURE_DEPENDS
         "decoder/ffmpeg/*.cpp")
@@ -164,7 +175,7 @@ target_compile_definitions(wivrn-imgui PUBLIC IMGUI_ENABLE_FREETYPE)
 # target_compile_definitions(wivrn-imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS) # incompatible with implot
 # target_compile_definitions(wivrn-imgui PUBLIC IMGUI_ENABLE_FREETYPE_LUNASVG)
 target_compile_features(wivrn-imgui PRIVATE cxx_std_23)
-target_link_libraries(wivrn-imgui FreetypeHarfbuzz)
+target_link_libraries(wivrn-imgui FreetypeHarfbuzz Vulkan::Vulkan)
 
 target_link_libraries(wivrn wivrn-imgui)
 
@@ -183,28 +194,29 @@ khronos_validation.enables = VK_VALIDATION_FEATURE_ENABLE_THREAD_SAFETY_EXT
 ")
 endif()
 
-if(USE_ANDROID_VALIDATION_LAYER)
+if(WIVRN_USE_ANDROID_VALIDATION_LAYER)
     set(VVL_VERSION "1.4.321.0")
 
-    if(NOT EXISTS ${CMAKE_BINARY_DIR}/Vulkan-ValidationLayers-${VVL_VERSION}.zip)
+    if(NOT EXISTS ${FETCHCONTENT_BASE_DIR}/Vulkan-ValidationLayers-${VVL_VERSION}.zip)
         if (EXISTS ${CMAKE_SOURCE_DIR}/Vulkan-ValidationLayers-${VVL_VERSION}.zip)
-            file(CREATE_LINK ${CMAKE_SOURCE_DIR}/Vulkan-ValidationLayers-${VVL_VERSION}.zip ${CMAKE_BINARY_DIR}/Vulkan-ValidationLayers-${VVL_VERSION}.zip SYMBOLIC)
+            file(CREATE_LINK ${CMAKE_SOURCE_DIR}/Vulkan-ValidationLayers-${VVL_VERSION}.zip ${FETCHCONTENT_BASE_DIR}/Vulkan-ValidationLayers-${VVL_VERSION}.zip SYMBOLIC)
         else()
-            file(DOWNLOAD https://github.com/KhronosGroup/Vulkan-ValidationLayers/releases/download/vulkan-sdk-${VVL_VERSION}/android-binaries-${VVL_VERSION}.zip ${CMAKE_BINARY_DIR}/Vulkan-ValidationLayers-${VVL_VERSION}.zip
-                EXPECTED_HASH SHA256=75f2881ba7af0507c8cec13b4bf6c95556c6333485cdb8be41f608fccf762128)
+            file(DOWNLOAD https://github.com/KhronosGroup/Vulkan-ValidationLayers/releases/download/vulkan-sdk-${VVL_VERSION}/android-binaries-${VVL_VERSION}.zip
+                 ${FETCHCONTENT_BASE_DIR}/Vulkan-ValidationLayers-${VVL_VERSION}.zip
+                 EXPECTED_HASH SHA256=75f2881ba7af0507c8cec13b4bf6c95556c6333485cdb8be41f608fccf762128)
         endif()
     endif()
 
     set(VVL_ZIPFILE ${CMAKE_CURRENT_SOURCE_DIR}/Vulkan-ValidationLayers-${VVL_VERSION}.zip)
 
-    file(ARCHIVE_EXTRACT INPUT ${CMAKE_BINARY_DIR}/Vulkan-ValidationLayers-${VVL_VERSION}.zip DESTINATION ${CMAKE_BINARY_DIR}/Vulkan-ValidationLayer)
+    file(ARCHIVE_EXTRACT INPUT ${FETCHCONTENT_BASE_DIR}/Vulkan-ValidationLayers-${VVL_VERSION}.zip DESTINATION ${FETCHCONTENT_BASE_DIR}/Vulkan-ValidationLayer)
 
     file(COPY
-        ${CMAKE_BINARY_DIR}/Vulkan-ValidationLayer/android-binaries-${VVL_VERSION}/${CMAKE_ANDROID_ARCH_ABI}
-        DESTINATION ${CMAKE_ANDROID_LIB_DIRECTORIES})
+        ${FETCHCONTENT_BASE_DIR}/Vulkan-ValidationLayer/android-binaries-${VVL_VERSION}/${CMAKE_ANDROID_ARCH_ABI}
+        DESTINATION ${ANDROID_LIB_DIRECTORIES})
 else()
     # silence "Manually-specified variables were not used by the project" warning
-    set(_unused ${CMAKE_ANDROID_LIB_DIRECTORIES})
+    set(_unused ${ANDROID_LIB_DIRECTORIES})
 endif()
 
 
@@ -262,14 +274,18 @@ if(WIVRN_COMPRESS_GLB)
 else()
     wivrn_copy_file(       SOURCE ${ASSETS_SRC_DIR}/ground.glb                          DESTINATION ${ASSETS_DIR}/ground.glb                          TARGET wivrn)
 endif()
-wivrn_webxr_controller(    SOURCE ${ASSETS_SRC_DIR}/controllers/generic-trigger-squeeze DESTINATION ${ASSETS_DIR}/controllers/generic-trigger-squeeze TARGET wivrn)
-wivrn_webxr_controller(    SOURCE ${ASSETS_SRC_DIR}/controllers/htc-vive-focus-3        DESTINATION ${ASSETS_DIR}/controllers/htc-vive-focus-3        TARGET wivrn)
-wivrn_webxr_controller(    SOURCE ${ASSETS_SRC_DIR}/controllers/meta-quest-touch-plus   DESTINATION ${ASSETS_DIR}/controllers/meta-quest-touch-plus   TARGET wivrn)
-wivrn_webxr_controller(    SOURCE ${ASSETS_SRC_DIR}/controllers/meta-quest-touch-pro    DESTINATION ${ASSETS_DIR}/controllers/meta-quest-touch-pro    TARGET wivrn)
-wivrn_webxr_controller(    SOURCE ${ASSETS_SRC_DIR}/controllers/oculus-touch-v2         DESTINATION ${ASSETS_DIR}/controllers/oculus-touch-v2         TARGET wivrn)
-wivrn_webxr_controller(    SOURCE ${ASSETS_SRC_DIR}/controllers/oculus-touch-v3         DESTINATION ${ASSETS_DIR}/controllers/oculus-touch-v3         TARGET wivrn)
-wivrn_webxr_controller(    SOURCE ${ASSETS_SRC_DIR}/controllers/pico-4                  DESTINATION ${ASSETS_DIR}/controllers/pico-4                  TARGET wivrn)
-wivrn_webxr_controller(    SOURCE ${ASSETS_SRC_DIR}/controllers/pico-neo3               DESTINATION ${ASSETS_DIR}/controllers/pico-neo3               TARGET wivrn)
+
+wivrn_webxr_download()
+wivrn_webxr_controller(PROFILE generic-trigger-squeeze DESTINATION ${ASSETS_DIR}/controllers TARGET wivrn)
+wivrn_webxr_controller(PROFILE htc-vive-focus-3        DESTINATION ${ASSETS_DIR}/controllers TARGET wivrn)
+wivrn_webxr_controller(PROFILE meta-quest-touch-plus   DESTINATION ${ASSETS_DIR}/controllers TARGET wivrn)
+wivrn_webxr_controller(PROFILE meta-quest-touch-pro    DESTINATION ${ASSETS_DIR}/controllers TARGET wivrn)
+wivrn_webxr_controller(PROFILE oculus-touch-v2         DESTINATION ${ASSETS_DIR}/controllers TARGET wivrn)
+wivrn_webxr_controller(PROFILE oculus-touch-v3         DESTINATION ${ASSETS_DIR}/controllers TARGET wivrn)
+wivrn_webxr_controller(PROFILE pico-4                  DESTINATION ${ASSETS_DIR}/controllers TARGET wivrn)
+wivrn_webxr_controller(PROFILE pico-4u                 DESTINATION ${ASSETS_DIR}/controllers TARGET wivrn)
+wivrn_webxr_controller(PROFILE pico-neo3               DESTINATION ${ASSETS_DIR}/controllers TARGET wivrn)
+wivrn_webxr_controller(PROFILE samsung-galaxyxr        DESTINATION ${ASSETS_DIR}/controllers TARGET wivrn)
 
 
 # Add the VR splash screen (only used on Quest)

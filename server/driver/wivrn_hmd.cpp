@@ -18,6 +18,8 @@
  */
 
 #include "wivrn_hmd.h"
+#include "os/os_time.h"
+#include "wivrn_config.h"
 #include "wivrn_session.h"
 
 #include "xrt/xrt_defines.h"
@@ -92,9 +94,9 @@ wivrn_hmd::wivrn_hmd(wivrn::wivrn_session * cnx,
 
 	const auto config = configuration();
 
-	auto eye_width = info.recommended_eye_width;
+	auto eye_width = info.render_eye_width;
 	eye_width = ((eye_width + 3) / 4) * 4;
-	auto eye_height = info.recommended_eye_height;
+	auto eye_height = info.render_eye_height;
 	eye_height = ((eye_height + 3) / 4) * 4;
 
 	// Setup info.
@@ -105,7 +107,7 @@ wivrn_hmd::wivrn_hmd(wivrn::wivrn_session * cnx,
 
 	hmd->distortion.models = XRT_DISTORTION_MODEL_NONE;
 	hmd->distortion.preferred = XRT_DISTORTION_MODEL_NONE;
-	hmd->screens[0].w_pixels = eye_width * 2;
+	hmd->screens[0].w_pixels = eye_width;
 	hmd->screens[0].h_pixels = eye_height;
 
 	// Left
@@ -131,9 +133,11 @@ xrt_result_t wivrn_hmd::get_tracked_pose(xrt_input_name name, int64_t at_timesta
 		return XRT_ERROR_INPUT_UNSUPPORTED;
 	}
 
-	auto [extrapolation_time, view] = views.get_at(at_timestamp_ns);
+	auto now = os_monotonic_get_ns();
+	auto target_ns = std::min(now + max_extrapolation_ns, at_timestamp_ns);
+	auto [production_timestamp, view] = views.get_at(target_ns);
 	*res = view.relation;
-	cnx->add_predict_offset(extrapolation_time);
+	cnx->add_tracking_request(device_id::HEAD, at_timestamp_ns, production_timestamp, now);
 	return XRT_SUCCESS;
 }
 
@@ -145,7 +149,6 @@ void wivrn_hmd::update_tracking(const from_headset::tracking & tracking, const c
 void wivrn_hmd::update_battery(const from_headset::battery & new_battery)
 {
 	// We will only request a new sample if the current one is consumed
-	cnx->set_enabled(to_headset::tracking_control::id::battery, false);
 	std::lock_guard lock(mutex);
 	battery = new_battery;
 }
@@ -159,13 +162,16 @@ xrt_result_t wivrn_hmd::get_presence(bool * out_presence)
 
 xrt_result_t wivrn_hmd::get_view_poses(const xrt_vec3 * default_eye_relation,
                                        int64_t at_timestamp_ns,
+                                       xrt_view_type view_type,
                                        uint32_t view_count,
                                        xrt_space_relation * out_head_relation,
                                        xrt_fov * out_fovs,
                                        xrt_pose * out_poses)
 {
-	auto [extrapolation_time, view] = views.get_at(at_timestamp_ns);
-	cnx->add_predict_offset(extrapolation_time);
+	auto now = os_monotonic_get_ns();
+	auto target_ns = std::min(now + max_extrapolation_ns, at_timestamp_ns);
+	auto [production_timestamp, view] = views.get_at(target_ns);
+	cnx->add_tracking_request(device_id::HEAD, at_timestamp_ns, production_timestamp, now);
 
 	int flags = view.relation.relation_flags;
 
@@ -197,8 +203,6 @@ xrt_result_t wivrn_hmd::get_battery_status(bool * out_present,
                                            bool * out_charging,
                                            float * out_charge)
 {
-	cnx->set_enabled(to_headset::tracking_control::id::battery, true);
-
 	std::lock_guard lock(mutex);
 	*out_present = battery.present;
 	*out_charging = battery.charging;
@@ -209,19 +213,17 @@ xrt_result_t wivrn_hmd::get_battery_status(bool * out_present,
 
 void wivrn_hmd::set_foveated_size(uint32_t width, uint32_t height)
 {
-	assert(width % 2 == 0);
-	uint32_t eye_width = width / 2;
-
 	hmd->screens[0].w_pixels = width;
 	hmd->screens[0].h_pixels = height;
 
 	for (int i = 0; i < 2; ++i)
 	{
 		auto & view = hmd->views[i];
-		view.viewport.x_pixels = i * eye_width;
+		// offset is only applicable for alpha channel
+		view.viewport.x_pixels = i * width;
 		view.viewport.y_pixels = 0;
 
-		view.viewport.w_pixels = eye_width;
+		view.viewport.w_pixels = width;
 		view.viewport.h_pixels = height;
 	}
 }

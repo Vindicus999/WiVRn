@@ -32,13 +32,14 @@
 #include <vulkan/vulkan_core.h>
 #include <openxr/openxr.h>
 
+#include "packed_quaternion.h"
 #include "smp.h"
 #include "wivrn_serialization_types.h"
 
 namespace wivrn
 {
 
-static constexpr int protocol_revision = 2;
+static constexpr int protocol_revision = 1;
 
 enum class device_id : uint8_t
 {
@@ -128,6 +129,10 @@ enum class device_id : uint8_t
 	RIGHT_GRASP_VALUE,        // /user/hand/right/input/grasp_ext/value
 	RIGHT_GRASP_READY,        // /user/hand/right/input/grasp_ext/ready_ext
 	EYE_GAZE,                 // /user/eyes_ext/input/gaze_ext/pose
+	LEFT_HAND,                // identify hand tracking
+	RIGHT_HAND,               // identify hand tracking
+	BODY,                     // identify body tracking
+	FACE,                     // identify face tracking
 };
 
 enum class interaction_profile : uint8_t
@@ -211,18 +216,31 @@ struct visibility_mask_changed
 enum face_type : uint8_t
 {
 	none,
+	android,
 	fb2,
 	htc,
 };
 
-struct headset_info_packet
+struct settings_changed
 {
-	uint32_t recommended_eye_width;
-	uint32_t recommended_eye_height;
-	std::vector<float> available_refresh_rates;
 	float preferred_refresh_rate;
 	// for automatic
 	float minimum_refresh_rate;
+
+	uint32_t bitrate_bps;
+};
+
+struct headset_info_packet
+{
+	uint16_t render_eye_width;
+	uint16_t render_eye_height;
+	uint16_t stream_eye_width;
+	uint16_t stream_eye_height;
+	std::vector<float> available_refresh_rates;
+
+	// runtime configurable settings
+	settings_changed settings;
+
 	struct audio_description
 	{
 		uint8_t num_channels;
@@ -239,19 +257,13 @@ struct headset_info_packet
 	face_type face_tracking;
 	uint32_t num_generic_trackers;
 	std::vector<video_codec> supported_codecs; // from preferred to least preferred
+	std::optional<uint8_t> bit_depth;
 	std::string system_name;
 
 	// Used for the application list
 	std::string language;
 	std::string country;
 	std::string variant;
-};
-
-struct settings_changed
-{
-	float preferred_refresh_rate;
-	// for automatic
-	float minimum_refresh_rate;
 };
 
 struct handshake
@@ -292,6 +304,9 @@ struct tracking
 		XrFovf fov;
 	};
 
+	// /user/hand/left and /user/hand/right
+	std::array<interaction_profile, 2> interaction_profiles;
+
 	XrTime production_timestamp;
 	XrTime timestamp;
 	XrViewStateFlags view_flags;
@@ -301,8 +316,19 @@ struct tracking
 	std::array<view, 2> views;
 	std::vector<pose> device_poses;
 
+	struct android_face
+	{
+		std::array<float, XR_FACE_PARAMETER_COUNT_ANDROID> parameters;
+		std::array<float, XR_FACE_REGION_CONFIDENCE_COUNT_ANDROID> confidences;
+		XrFaceTrackingStateANDROID state;
+		XrTime sample_time;
+		bool is_calibrated;
+		bool is_valid;
+	};
+
 	struct fb_face2
 	{
+		XrTime time;
 		std::array<float, XR_FACE_EXPRESSION2_COUNT_FB> weights;
 		std::array<float, XR_FACE_CONFIDENCE2_COUNT_FB> confidences;
 		bool is_valid;
@@ -311,20 +337,15 @@ struct tracking
 
 	struct htc_face
 	{
+		XrTime eye_sample_time;
+		XrTime lip_sample_time;
 		std::array<float, XR_FACIAL_EXPRESSION_EYE_COUNT_HTC> eye;
 		std::array<float, XR_FACIAL_EXPRESSION_LIP_COUNT_HTC> lip;
 		bool eye_active;
 		bool lip_active;
 	};
 
-	std::variant<std::monostate, fb_face2, htc_face> face;
-};
-
-struct trackings
-{
-	// /user/hand/left and /user/hand/right
-	std::array<interaction_profile, 2> interaction_profiles;
-	std::vector<tracking> items;
+	std::variant<std::monostate, android_face, fb_face2, htc_face> face;
 };
 
 struct derived_pose
@@ -352,7 +373,8 @@ struct hand_tracking
 	};
 	struct pose
 	{
-		XrPosef pose;
+		XrVector3f position;
+		packed_quaternion orientation;
 		XrVector3f linear_velocity;
 		XrVector3f angular_velocity;
 		// In order to avoid packet fragmentation
@@ -533,7 +555,6 @@ using packets = std::variant<
         audio_data,
         handshake,
         tracking,
-        trackings,
         derived_pose,
         hand_tracking,
         body_tracking,
@@ -616,52 +637,27 @@ struct audio_stream_description
 
 struct video_stream_description
 {
-	enum class channels_t
-	{
-		colour,
-		alpha,
-	};
-	struct item
-	{
-		// useful dimensions of the video stream
-		uint16_t width;
-		uint16_t height;
-		// dimensions of the video, may include padding at the end
-		uint16_t video_width;
-		uint16_t video_height;
-		uint16_t offset_x;
-		uint16_t offset_y;
-		video_codec codec;
-		channels_t channels;
-		uint8_t subsampling; // applies to width/height only, offsets are in full size pixels
-		std::optional<VkSamplerYcbcrRange> range;
-		std::optional<VkSamplerYcbcrModelConversion> color_model;
-	};
+	// dimensions of the video stream per eye
+	// alpha is half resolution
 	uint16_t width;
 	uint16_t height;
+	std::array<video_codec, 3> codec; // left, right, alpha
 	float fps;
-	uint16_t defoveated_width;
-	uint16_t defoveated_height;
-	std::vector<item> items;
 };
 
 class video_stream_data_shard
 {
 public:
 	inline static const size_t max_payload_size = 1400;
-	enum flags : uint8_t
-	{
-		start_of_slice = 1,
-		end_of_slice = 1 << 1,
-		end_of_frame = 1 << 2,
-	};
-	// Identifier of stream in video_stream_description
+	// Identifier of stream:
+	// 0 left
+	// 1 right
+	// 2 alpha
 	uint8_t stream_item_idx;
 	// Counter increased for each frame
 	uint64_t frame_idx;
 	// Identifier of the shard within the frame
 	uint16_t shard_idx;
-	uint8_t flags;
 
 	// Position information, must be present on first video shard
 	struct view_info_t
@@ -708,31 +704,25 @@ struct timesync_query
 
 struct tracking_control
 {
-	enum class id
+	struct sample
 	{
-		left_aim,
-		left_grip,
-		left_palm,
-		left_pinch,
-		left_poke,
-		right_aim,
-		right_grip,
-		right_palm,
-		right_pinch,
-		right_poke,
-		left_hand,
-		right_hand,
-		face,
-		generic_tracker,
-		hid_input,
-		battery,
-		microphone,
-
-		last = microphone,
+		device_id device;
+		XrDuration prediction_ns;
 	};
-	std::chrono::nanoseconds min_offset;
-	std::chrono::nanoseconds max_offset;
-	std::array<bool, size_t(id::last) + 1> enabled;
+
+	std::vector<sample> pattern;
+	XrDuration motions_to_photons;
+};
+
+struct feature_control
+{
+	enum feature
+	{
+		hid_input,
+		microphone,
+	};
+	feature f;
+	bool state;
 };
 
 struct refresh_rate_change
@@ -783,6 +773,7 @@ using packets = std::variant<
         haptics,
         timesync_query,
         tracking_control,
+        feature_control,
         refresh_rate_change,
         application_list,
         application_icon,

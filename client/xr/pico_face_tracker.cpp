@@ -69,6 +69,7 @@ struct xr::pico_face_tracker::impl
 
 		if (face_tracking.time == 0)
 			return;
+		out_expressions.time = face_tracking.time;
 
 #define MAP_EXPRESSION(fb, pico) \
 	out_expressions.weights[fb] = face_tracking.blendShapeWeight[pico];

@@ -29,9 +29,7 @@
 #include "xrt/xrt_device.h"
 #include "xrt/xrt_results.h"
 
-#include <cmath>
 #include <cstdint>
-#include <cstring>
 #include <openxr/openxr.h>
 
 namespace wivrn
@@ -78,34 +76,36 @@ void wivrn_fb_face2_tracker::update_tracking(const from_headset::tracking & trac
 	        .confidences = face->confidences,
 	        .is_valid = face->is_valid,
 	        .is_eye_following_blendshapes_valid = face->is_eye_following_blendshapes_valid,
+	        .time = offset.from_headset(face->time),
 	};
 
-	if (not face_list.update_tracking(tracking.production_timestamp, tracking.timestamp, data, offset))
-		cnx.set_enabled(to_headset::tracking_control::id::face, false);
+	face_list.update_tracking(tracking.production_timestamp, tracking.timestamp, data, offset);
 }
 
 xrt_result_t wivrn_fb_face2_tracker::get_face_tracking(enum xrt_input_name facial_expression_type, int64_t at_timestamp_ns, struct xrt_facial_expression_set * inout_value)
 {
 	if (facial_expression_type == XRT_INPUT_FB_FACE_TRACKING2_VISUAL)
 	{
-		cnx.set_enabled(to_headset::tracking_control::id::face, true);
-		auto [_, data] = face_list.get_at(at_timestamp_ns);
+		auto [production_timestamp, data] = face_list.get_at(at_timestamp_ns);
+		cnx.add_tracking_request(device_id::FACE, at_timestamp_ns, production_timestamp);
 
 		inout_value->face_expression_set2_fb.is_valid = data.is_valid;
+		inout_value->face_expression_set2_fb.sample_time_ns = data.time;
 
 		if (not data.is_valid)
 			return XRT_SUCCESS;
 
 		inout_value->face_expression_set2_fb.is_eye_following_blendshapes_valid = data.is_eye_following_blendshapes_valid;
 
-		memcpy(&inout_value->face_expression_set2_fb.weights, data.weights.data(), sizeof(float) * data.weights.size());
-		memcpy(&inout_value->face_expression_set2_fb.confidences, data.confidences.data(), sizeof(float) * data.confidences.size());
+		std::ranges::copy(data.weights, inout_value->face_expression_set2_fb.weights);
+		std::ranges::copy(data.confidences, inout_value->face_expression_set2_fb.confidences);
 
 		inout_value->face_expression_set2_fb.data_source = XRT_FACE_TRACKING_DATA_SOURCE2_VISUAL_FB;
 
 		return XRT_SUCCESS;
 	}
 
-	return XRT_ERROR_NOT_IMPLEMENTED;
+	U_LOG_XDEV_UNSUPPORTED_INPUT(this, u_log_get_global_level(), facial_expression_type);
+	return XRT_ERROR_INPUT_UNSUPPORTED;
 }
 } // namespace wivrn

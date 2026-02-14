@@ -19,7 +19,6 @@
 #pragma once
 
 #include <QObject>
-#include <QProcess>
 #include <QtQml/qqmlregistration.h>
 
 class firewall : public QObject

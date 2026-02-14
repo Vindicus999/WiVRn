@@ -20,6 +20,7 @@
 #include "configuration.h"
 #include "application.h"
 #include "utils/json_string.h"
+#include "wivrn_packets.h"
 
 #include <fstream>
 #include <magic_enum.hpp>
@@ -98,10 +99,33 @@ configuration::configuration(xr::system & system)
 {
 	passthrough_enabled = system.passthrough_supported() == xr::passthrough_type::color;
 	features[feature::hand_tracking] = system.hand_tracking_supported();
+	switch (guess_model())
+	{
+		case model::oculus_quest:
+		case model::oculus_quest_2:
+		case model::meta_quest_pro:
+		case model::meta_quest_3:
+		case model::meta_quest_3s:
+			high_power_mode = false;
+			break;
+		case model::pico_neo_3:
+		case model::pico_4:
+		case model::pico_4s:
+		case model::pico_4_pro:
+		case model::pico_4_enterprise:
+		case model::htc_vive_focus_3:
+		case model::htc_vive_xr_elite:
+		case model::htc_vive_focus_vision:
+		case model::lynx_r1:
+		case model::samsung_galaxy_xr:
+		case model::unknown:
+			high_power_mode = true;
+			break;
+	}
 	try
 	{
 		simdjson::dom::parser parser;
-		simdjson::dom::element root = parser.load(application::get_config_path() / "client.json");
+		simdjson::dom::element root = parser.load((application::get_config_path() / "client.json").native());
 		for (simdjson::dom::object i: simdjson::dom::array(root["servers"]))
 		{
 			server_data data{
@@ -128,6 +152,27 @@ configuration::configuration(xr::system & system)
 
 		if (auto val = root["resolution_scale"]; val.is_double())
 			resolution_scale = val.get_double();
+
+		if (auto val = root["stream_scale"]; val.is_double())
+			stream_scale = val.get_double();
+
+		if (auto val = root["codec"]; val.is_string())
+		{
+			const auto codec_str = val.get_string().value();
+			for (const auto & [c, name]: magic_enum::enum_entries<wivrn::video_codec>())
+			{
+				if (codec_str == name)
+				{
+					codec = c;
+				}
+			}
+		}
+
+		if (auto val = root["bit_depth"]; val.is_uint64())
+			bit_depth = val.get_uint64();
+
+		if (auto val = root["bitrate_bps"]; val.is_number())
+			bitrate_bps = val.get_uint64();
 
 		if (auto val = root["enable_stream_gui"]; val.is_bool())
 			enable_stream_gui = val.get_bool();
@@ -178,18 +223,13 @@ configuration::configuration(xr::system & system)
 
 		if (auto val = root["high_power_mode"]; val.is_bool())
 			high_power_mode = val.get_bool();
+
+		if (auto val = root["extended_config"]; val.is_bool())
+			extended_config = val.get_bool();
 	}
 	catch (std::exception & e)
 	{
 		spdlog::warn("Cannot read configuration: {}", e.what());
-
-		// Restore default configuration
-		servers.clear();
-		preferred_refresh_rate.reset();
-		minimum_refresh_rate.reset();
-		resolution_scale = 1.4;
-		openxr_post_processing = {};
-		passthrough_enabled = system.passthrough_supported() == xr::passthrough_type::color;
 	}
 }
 
@@ -250,6 +290,12 @@ void configuration::save()
 	if (minimum_refresh_rate)
 		json << ",\"minimum_refresh_rate\":" << *minimum_refresh_rate;
 	json << ",\"resolution_scale\":" << resolution_scale;
+	if (stream_scale)
+		json << ",\"stream_scale\":" << *stream_scale;
+	if (codec)
+		json << ",\"codec\":" << json_string(magic_enum::enum_name(*codec));
+	json << ",\"bit_depth\":" << (uint64_t)bit_depth;
+	json << ",\"bitrate_bps\":" << bitrate_bps;
 	json << ",\"openxr_post_processing\":";
 	write_openxr_post_processing(json, openxr_post_processing);
 	json << ",\"passthrough_enabled\":" << std::boolalpha << passthrough_enabled;
@@ -267,5 +313,20 @@ void configuration::save()
 	json << ",\"locale\":" << json_string(locale);
 	json << ",\"environment_model\":" << json_string(environment_model);
 	json << ",\"high_power_mode\":" << std::boolalpha << high_power_mode;
+	json << ",\"extended_config\":" << std::boolalpha << extended_config;
 	json << "}";
+}
+
+void configuration::set_stream_scale(float val)
+{
+	stream_scale = val;
+}
+
+float configuration::get_stream_scale() const
+{
+	if (stream_scale)
+		return *stream_scale;
+	if (check_feature(feature::eye_gaze))
+		return 0.3;
+	return 0.5;
 }

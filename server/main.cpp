@@ -146,7 +146,7 @@ static void append_delim(std::string & to, std::string_view what, char delim)
 // if it can't be found, return the full path
 static std::filesystem::path find_dir(const std::filesystem::path & d, const std::filesystem::path & needle)
 {
-	for (auto copy = d; not copy.empty(); copy = copy.parent_path())
+	for (auto copy = d; copy != copy.parent_path(); copy = copy.parent_path())
 	{
 		if (copy.filename() == needle)
 			return copy;
@@ -178,12 +178,10 @@ static std::string steam_command()
 
 namespace
 {
-int stdin_pipe_fds[2];
 int control_pipe_fds[2];
 
 GMainLoop * main_loop;
 const AvahiPoll * poll_api;
-bool use_systemd;
 
 guint server_watch;
 guint server_kill_watch;
@@ -238,14 +236,6 @@ void start_server(configuration config)
 	}
 	else if (server_pid == 0)
 	{
-		if (do_fork)
-		{
-			// Redirect stdin
-			dup2(stdin_pipe_fds[0], 0);
-			close(stdin_pipe_fds[0]);
-			close(stdin_pipe_fds[1]);
-		}
-
 		// foveation code does not allow oversampling
 		setenv("XRT_COMPOSITOR_SCALE_PERCENTAGE", "100", true);
 
@@ -264,6 +254,7 @@ void start_server(configuration config)
 		                .open = U_DEBUG_GUI_OPEN_NEVER,
 #endif
 		        },
+		        .no_stdin = true,
 		};
 
 		try
@@ -284,7 +275,9 @@ void start_server(configuration config)
 
 		assert(server_watch == 0);
 		assert(server_kill_watch == 0);
+		wivrn_server_set_session_running(dbus_server, true);
 		server_watch = g_child_watch_add(server_pid, [](pid_t, int status, void *) {
+			wivrn_server_set_session_running(dbus_server, false);
 			display_child_status(status, "Server");
 			g_source_remove(server_watch);
 			if (server_kill_watch)
@@ -302,10 +295,7 @@ void start_server(configuration config)
 
 void kill_server()
 {
-	// Write to the server's stdin to make it quit
-	char buffer[] = "\n";
-	if (write(stdin_pipe_fds[1], &buffer, strlen(buffer)) < 0)
-		std::cerr << "Cannot stop monado properly." << std::endl;
+	wivrn_ipc_socket_main_loop->send(to_monado::stop{});
 
 	// Send SIGTERM after 1s if it is still running
 	server_kill_watch = g_timeout_add(1000, [](void *) {
@@ -518,11 +508,21 @@ gboolean control_received(gint fd, GIOCondition condition, gpointer user_data)
 		                   },
 		                   [&](const wivrn::from_headset::settings_changed & settings) {
 			                   wivrn_server_set_preferred_refresh_rate(dbus_server, settings.preferred_refresh_rate);
+			                   wivrn_server_set_bitrate(dbus_server, settings.bitrate_bps);
 		                   },
 		                   [&](const wivrn::from_headset::start_app & request) {
 			                   const auto & apps = list_applications();
 			                   if (auto it = apps.find(request.app_id); it != apps.end())
-				                   children->start_application(it->second.exec);
+			                   {
+				                   try
+				                   {
+					                   children->start_application(it->second.exec, it->second.path);
+				                   }
+				                   catch (std::exception & e)
+				                   {
+					                   std::cerr << "Failed to launch application " << it->second.name.at("") << ": " << e.what() << std::endl;
+				                   }
+			                   }
 		                   },
 		                   [&](const from_monado::headset_connected &) {
 			                   stop_publishing();
@@ -533,9 +533,6 @@ gboolean control_received(gint fd, GIOCondition condition, gpointer user_data)
 			                   start_publishing();
 			                   inhibitor.reset();
 			                   wivrn_server_set_headset_connected(dbus_server, false);
-		                   },
-		                   [&](const from_monado::bitrate_changed & value) {
-			                   wivrn_server_set_bitrate(dbus_server, value.bitrate_bps);
 		                   },
 		                   [&](const from_monado::server_error & e) {
 			                   wivrn_server_emit_server_error(dbus_server, e.where.c_str(), e.message.c_str());
@@ -733,9 +730,6 @@ void on_headset_info_packet(const wivrn::from_headset::headset_info_packet & inf
 {
 	GVariantBuilder * builder;
 
-	GVariant * value_eye_size = g_variant_new("(uu)", info.recommended_eye_width, info.recommended_eye_height);
-	wivrn_server_set_recommended_eye_size(dbus_server, value_eye_size);
-
 	builder = g_variant_builder_new(G_VARIANT_TYPE("ad"));
 	for (double rate: info.available_refresh_rates)
 	{
@@ -745,7 +739,9 @@ void on_headset_info_packet(const wivrn::from_headset::headset_info_packet & inf
 	g_variant_builder_unref(builder);
 	wivrn_server_set_available_refresh_rates(dbus_server, value_refresh_rates);
 
-	wivrn_server_set_preferred_refresh_rate(dbus_server, info.preferred_refresh_rate);
+	wivrn_server_set_preferred_refresh_rate(dbus_server, info.settings.preferred_refresh_rate);
+
+	wivrn_server_set_bitrate(dbus_server, info.settings.bitrate_bps);
 
 	auto speaker = info.speaker.value_or(wivrn::from_headset::headset_info_packet::audio_description{});
 	wivrn_server_set_speaker_channels(dbus_server, speaker.num_channels);
@@ -781,16 +777,17 @@ void on_headset_info_packet(const wivrn::from_headset::headset_info_packet & inf
 	}
 	codecs.push_back(nullptr);
 	wivrn_server_set_supported_codecs(dbus_server, codecs.data());
+	wivrn_server_set_system_name(dbus_server, info.system_name.c_str());
 }
 
 void on_name_acquired(GDBusConnection * connection, const gchar * name, gpointer user_data)
 {
 #if WIVRN_USE_SYSTEMD
-	if (use_systemd)
+	try
 	{
 		children = std::make_unique<systemd_units_manager>(connection, update_fsm);
 	}
-	else
+	catch (...)
 #endif
 	{
 		children = std::make_unique<forked_children>(update_fsm);
@@ -917,15 +914,6 @@ int inner_main(int argc, char * argv[], bool show_instructions)
 	AvahiGLibPoll * glib_poll = avahi_glib_poll_new(main_context, G_PRIORITY_DEFAULT);
 	poll_api = avahi_glib_poll_get(glib_poll);
 
-	// Create a pipe to quit monado properly
-	if (pipe(stdin_pipe_fds) < 0)
-	{
-		perror("pipe");
-		return wivrn_exit_code::cannot_create_pipe;
-	}
-	fcntl(stdin_pipe_fds[0], F_SETFD, FD_CLOEXEC);
-	fcntl(stdin_pipe_fds[1], F_SETFD, FD_CLOEXEC);
-
 	// Create a socket to report monado status to the main loop
 	if (socketpair(AF_UNIX, SOCK_DGRAM, 0, control_pipe_fds) < 0)
 	{
@@ -997,9 +985,6 @@ int main(int argc, char * argv[])
 	auto no_fork = app.add_flag("--no-fork")->description("disable fork to serve connection")->group("Debug");
 	auto no_publish = app.add_flag("--no-publish-service")->description("disable publishing the service through avahi");
 	auto no_encrypt = app.add_flag("--no-encrypt")->description("disable encryption")->group("Debug");
-#if WIVRN_USE_SYSTEMD
-	app.add_flag("--systemd", use_systemd, "use systemd to launch user-configured application");
-#endif
 
 	CLI11_PARSE(app, argc, argv);
 
