@@ -21,6 +21,7 @@
 
 #include "encoder/encoder_settings.h"
 #include "util/u_logging.h"
+#include "utils/scoped_lock.h"
 #include "utils/wivrn_vk_bundle.h"
 #include <iostream>
 #include <stdexcept>
@@ -482,7 +483,6 @@ void wivrn::video_encoder_vulkan::init(const vk::VideoCapabilitiesKHR & video_ca
 		        vk::QueryPoolVideoEncodeFeedbackCreateInfoKHR{
 		                .pNext = &video_profile,
 		                .encodeFeedbackFlags =
-		                        vk::VideoEncodeFeedbackFlagBitsKHR::eBitstreamBufferOffset |
 		                        vk::VideoEncodeFeedbackFlagBitsKHR::eBitstreamBytesWritten,
 		        },
 		};
@@ -559,18 +559,58 @@ std::optional<wivrn::video_encoder::data> wivrn::video_encoder_vulkan::encode(ui
 		throw std::runtime_error("wait for fences: " + vk::to_string(res));
 	}
 
-	// Feedback = offset / size / has overrides
-	auto [res, feedback] = query_pool.getResults<uint32_t>(encode_slot, 1, 3 * sizeof(uint32_t), 0, vk::QueryResultFlagBits::eWait);
+	auto [res, size] = query_pool.getResult<uint32_t>(encode_slot, 1, 0, vk::QueryResultFlagBits::eWait);
 	if (res != vk::Result::eSuccess)
 	{
 		std::cerr << "device.getQueryPoolResults: " << vk::to_string(res) << std::endl;
+	}
+
+	// We don't copy the whole buffer, but an estimate of how much we'll need
+	// If that wasn't enough, we have to issue a second copy command for the rest
+	if (size > slot_item.copy_size)
+	{
+		U_LOG_D("additional copy needed: %ld", size - slot_item.copy_size);
+		const bool main_queue = *slot_item.transfer_cmd_buf;
+		// The encoded image is larger than expected, we need to copy some more data
+		vk::raii::CommandBuffer & cmd_buf = main_queue ? slot_item.transfer_cmd_buf : slot_item.video_cmd_buf;
+
+		cmd_buf.reset();
+		cmd_buf.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+
+		cmd_buf.copyBuffer(
+		        slot_item.output_buffer,
+		        slot_item.host_buffer,
+		        vk::BufferCopy{
+		                .srcOffset = slot_item.copy_size,
+		                .dstOffset = slot_item.copy_size,
+		                .size = size - slot_item.copy_size,
+		        });
+
+		cmd_buf.end();
+
+		vk.device.resetFences(*slot_item.fence);
+
+		{
+			wivrn::scoped_lock lock(main_queue ? vk.vk.main_queue->mutex : vk.vk.encode_queue->mutex);
+			auto & queue = main_queue ? vk.queue : vk.encode_queue;
+			queue.submit(vk::SubmitInfo{
+			                     .commandBufferCount = 1,
+			                     .pCommandBuffers = &*cmd_buf,
+			             },
+			             *slot_item.fence);
+		}
+		if (auto res = vk.device.waitForFences(*slot_item.fence, true, 1'000'000'000);
+		    res != vk::Result::eSuccess)
+		{
+			throw std::runtime_error("wait for fences: " + vk::to_string(res));
+		}
 	}
 
 	void * mapped = slot_item.host_buffer ? slot_item.host_buffer.map() : slot_item.output_buffer.map();
 
 	return data{
 	        .encoder = this,
-	        .span = std::span(((uint8_t *)mapped) + feedback[0], feedback[1]),
+	        .span = std::span(((uint8_t *)mapped), size),
 	        .prefer_control = slot_item.idr,
 	};
 }
@@ -820,6 +860,11 @@ std::pair<bool, vk::Semaphore> wivrn::video_encoder_vulkan::present_image(vk::Im
 		                .flags = vk::VideoCodingControlFlagBitsKHR::eEncodeRateControl,
 		        });
 
+	if (rate_control)
+		slot_item.copy_size = (rate_control_layer.maxBitrate * rate_control_layer.frameRateDenominator) / rate_control_layer.frameRateNumerator;
+	else
+		slot_item.copy_size = slot_item.output_buffer.info().size;
+
 	vk::VideoEncodeInfoKHR encode_info{
 	        .pNext = encode_info_next(dpb.frame_num, slot_index, ref_slot ? std::make_optional(ref_slot->info.slotIndex) : std::nullopt),
 	        .dstBuffer = slot_item.output_buffer,
@@ -845,66 +890,48 @@ std::pair<bool, vk::Semaphore> wivrn::video_encoder_vulkan::present_image(vk::Im
 	// When output buffer is not visible, we have to issue a transfer operation
 	if (slot_item.host_buffer)
 	{
-		// encode queue may not allow transfer commands
+		vk::BufferMemoryBarrier2 barrier{
+		        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+		        .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
+		        .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+		        .dstAccessMask = vk::AccessFlagBits2::eMemoryRead,
+		        .srcQueueFamilyIndex = vk.encode_queue_family_index,
+		        .dstQueueFamilyIndex = vk.encode_queue_family_index,
+		        .buffer = slot_item.output_buffer,
+		        .size = vk::WholeSize,
+		};
+
+		vk::raii::CommandBuffer * transfer_cmd_buf;
 		if (*slot_item.transfer_cmd_buf)
 		{
-			vk::BufferMemoryBarrier2 barrier{
-			        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-			        .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
-			        .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-			        .dstAccessMask = vk::AccessFlagBits2::eMemoryRead,
-			        .srcQueueFamilyIndex = vk.encode_queue_family_index,
-			        .dstQueueFamilyIndex = vk.queue_family_index,
-			        .buffer = slot_item.output_buffer,
-			        .size = vk::WholeSize,
-			};
-			video_cmd_buf.pipelineBarrier2({
+			// We need to transfer the buffer on the main queue
+			barrier.dstQueueFamilyIndex = vk.queue_family_index;
+			transfer_cmd_buf = &slot_item.transfer_cmd_buf;
+
+			transfer_cmd_buf->reset();
+			transfer_cmd_buf->begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+			transfer_cmd_buf->pipelineBarrier2({
 			        .bufferMemoryBarrierCount = 1,
 			        .pBufferMemoryBarriers = &barrier,
 			});
-
-			auto & cmd_buf = slot_item.transfer_cmd_buf;
-
-			cmd_buf.reset();
-			cmd_buf.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-			cmd_buf.pipelineBarrier2({
-			        .bufferMemoryBarrierCount = 1,
-			        .pBufferMemoryBarriers = &barrier,
-			});
-
-			cmd_buf.copyBuffer(
-			        slot_item.output_buffer,
-			        slot_item.host_buffer,
-			        vk::BufferCopy{
-			                .size = slot_item.output_buffer.info().size,
-			        });
-
-			cmd_buf.end();
 		}
 		else
-		{
-			vk::BufferMemoryBarrier2 barrier{
-			        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-			        .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
-			        .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-			        .dstAccessMask = vk::AccessFlagBits2::eMemoryRead,
-			        .srcQueueFamilyIndex = vk.encode_queue_family_index,
-			        .dstQueueFamilyIndex = vk.encode_queue_family_index,
-			        .buffer = slot_item.output_buffer,
-			        .size = vk::WholeSize,
-			};
-			video_cmd_buf.pipelineBarrier2({
-			        .bufferMemoryBarrierCount = 1,
-			        .pBufferMemoryBarriers = &barrier,
-			});
+			transfer_cmd_buf = &video_cmd_buf;
 
-			video_cmd_buf.copyBuffer(
-			        slot_item.output_buffer,
-			        slot_item.host_buffer,
-			        vk::BufferCopy{
-			                .size = slot_item.output_buffer.info().size,
-			        });
-		}
+		video_cmd_buf.pipelineBarrier2({
+		        .bufferMemoryBarrierCount = 1,
+		        .pBufferMemoryBarriers = &barrier,
+		});
+
+		transfer_cmd_buf->copyBuffer(
+		        slot_item.output_buffer,
+		        slot_item.host_buffer,
+		        vk::BufferCopy{
+		                .size = slot_item.copy_size,
+		        });
+
+		if (*slot_item.transfer_cmd_buf)
+			transfer_cmd_buf->end();
 	}
 
 	video_cmd_buf.end();
@@ -933,17 +960,21 @@ void wivrn::video_encoder_vulkan::post_submit(uint8_t slot)
 	        .commandBuffer = slot_item.video_cmd_buf,
 	};
 
-	vk.encode_queue.submit2(vk::SubmitInfo2{
-	                                .waitSemaphoreInfoCount = 1,
-	                                .pWaitSemaphoreInfos = &wait_sem_info,
-	                                .commandBufferInfoCount = 1,
-	                                .pCommandBufferInfos = &cmd_info,
-	                                .signalSemaphoreInfoCount = need_transfer ? 1u : 0,
-	                                .pSignalSemaphoreInfos = &sem_info,
-	                        },
-	                        need_transfer ? nullptr : *slot_item.fence);
+	{
+		scoped_lock lock(vk.vk.encode_queue->mutex);
+		vk.encode_queue.submit2(vk::SubmitInfo2{
+		                                .waitSemaphoreInfoCount = 1,
+		                                .pWaitSemaphoreInfos = &wait_sem_info,
+		                                .commandBufferInfoCount = 1,
+		                                .pCommandBufferInfos = &cmd_info,
+		                                .signalSemaphoreInfoCount = need_transfer ? 1u : 0,
+		                                .pSignalSemaphoreInfos = &sem_info,
+		                        },
+		                        need_transfer ? nullptr : *slot_item.fence);
+	}
 	if (need_transfer)
 	{
+		// caller already holds the lock
 		vk::CommandBufferSubmitInfo cmd_info{
 		        .commandBuffer = slot_item.transfer_cmd_buf,
 		};
