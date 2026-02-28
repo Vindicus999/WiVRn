@@ -66,6 +66,7 @@ class wivrn_session : public xrt_system_devices
 {
 	friend wivrn_comp_target_factory;
 	std::unique_ptr<wivrn_connection> connection;
+	from_headset::headset_info_packet headset_info;
 	pacing_app_factory app_pacers;
 
 	u_system & xrt_system;
@@ -140,7 +141,7 @@ public:
 	bool connected();
 	const from_headset::headset_info_packet & get_info() const
 	{
-		return connection->info();
+		return headset_info;
 	};
 
 	locked<from_headset::settings_changed> get_settings()
@@ -216,7 +217,14 @@ private:
 	void run_worker(std::stop_token stop);
 	void reconnect(std::stop_token stop);
 
+	void pause_session();
+	void resume_session();
+
+	void update_client_states(bool visible, bool focused);
 	void poll_session_loss();
+
+	// checks if a headset is usable with this session
+	std::pair<bool, std::optional<std::string>> validate_headset_info(const from_headset::headset_info_packet & info);
 
 	// xrt_system implementation
 	xrt_result_t get_roles(xrt_system_roles * out_roles);

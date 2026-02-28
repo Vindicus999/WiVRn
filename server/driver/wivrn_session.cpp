@@ -55,6 +55,7 @@
 #include <magic_enum.hpp>
 #include <stdexcept>
 #include <string.h>
+#include <utility>
 #include <vulkan/vulkan.h>
 
 #if WIVRN_FEATURE_STEAMVR_LIGHTHOUSE
@@ -127,6 +128,7 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
                 .destroy = [](xrt_system_devices * self) { delete ((wivrn_session *)self); },
         },
         connection(std::move(connection)),
+        headset_info(this->connection->info()),
         xrt_system(system),
         control(*this->connection),
         hmd(this, get_info()),
@@ -145,23 +147,12 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 		        "WiVRn",
 		        get_info(),
 		        *this);
-		if (audio_handle)
-		{
-			send_control(audio_handle->description());
-			audio_handle->on_connect();
-		}
 	}
 	catch (const std::exception & e)
 	{
 		U_LOG_E("Failed to register audio device: %s", e.what());
 		throw;
 	}
-
-	(*this)(from_headset::get_application_list{
-	        .language = get_info().language,
-	        .country = get_info().country,
-	        .variant = get_info().variant,
-	});
 
 	static_roles.head = xdevs[xdev_count++] = &hmd;
 
@@ -290,7 +281,6 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 		try
 		{
 			uinput_handler.emplace();
-			send_control(to_headset::feature_control{to_headset::feature_control::hid_input, true});
 		}
 		catch (...)
 		{
@@ -392,7 +382,7 @@ void wivrn_session::start(ipc_server * server)
 	assert(not net_thread.joinable());
 	mnd_ipc_server = server;
 	net_thread = std::jthread([this](auto stop_token) { return run_net(stop_token); });
-	worker_thread = std::jthread([this](std::stop_token stop) { return run_worker(stop); });
+	resume_session();
 }
 
 void wivrn_session::stop()
@@ -408,6 +398,85 @@ bool wivrn_session::request_stop()
 	worker_thread.request_stop();
 	ipc_server_stop(mnd_ipc_server);
 	return b;
+}
+
+void wivrn_session::pause_session()
+{
+	assert(mnd_ipc_server);
+
+	// notify clients about session pause
+
+	update_client_states(false, false);
+
+	if (get_info().user_presence)
+	{
+		(*this)(from_headset::user_presence_changed{
+		        .present = false,
+		});
+	}
+
+	// pause session components
+
+	worker_thread = std::jthread();
+	offset_est.reset();
+
+	if (audio_handle)
+		audio_handle->pause();
+
+	{
+		std::shared_lock lock(comp_target_mutex);
+		if (comp_target)
+			comp_target->pause();
+	}
+}
+
+void wivrn_session::resume_session()
+{
+	assert(mnd_ipc_server);
+
+	// reset session components and send descriptor packets to headset
+
+	if (audio_handle)
+		audio_handle->resume();
+
+	if (uinput_handler)
+		send_control(to_headset::feature_control{to_headset::feature_control::hid_input, true});
+
+	{
+		std::shared_lock lock(comp_target_mutex);
+		if (comp_target)
+		{
+			float target_fps = get_default_rate(get_info(), *get_settings());
+
+			if (target_fps != comp_target->get_refresh_rate())
+			{
+				(*this)(from_headset::refresh_rate_changed{
+				        .from = comp_target->get_refresh_rate(),
+				        .to = target_fps,
+				});
+			}
+
+			comp_target->resume();
+		}
+	}
+
+	if (get_info().user_presence)
+	{
+		(*this)(from_headset::user_presence_changed{
+		        .present = true,
+		});
+	}
+
+	(*this)(from_headset::get_application_list{
+	        .language = get_info().language,
+	        .country = get_info().country,
+	        .variant = get_info().variant,
+	});
+
+	// resume session and notify clients
+
+	worker_thread = std::jthread([this](std::stop_token stop) { return run_worker(stop); });
+	update_client_states(true, true);
 }
 
 clock_offset wivrn_session::get_offset()
@@ -715,7 +784,6 @@ void wivrn_session::operator()(from_headset::visibility_mask_changed && mask)
 
 void wivrn_session::operator()(from_headset::session_state_changed && event)
 {
-	assert(mnd_ipc_server);
 	U_LOG_I("Session state changed: %s", xr::to_string(event.state));
 	bool visible, focused;
 	switch (event.state)
@@ -733,22 +801,8 @@ void wivrn_session::operator()(from_headset::session_state_changed && event)
 			focused = false;
 			break;
 	}
-	scoped_lock lock(mnd_ipc_server->global_state.lock);
-	auto locked = session_loss.lock();
-	for (auto & t: mnd_ipc_server->threads)
-	{
-		auto id = t.ics.client_state.id;
-		if (t.ics.server_thread_index < 0 or t.ics.xc == nullptr or locked->contains(id))
-			continue;
-		bool current = t.ics.client_state.session_overlay or
-		               mnd_ipc_server->global_state.active_client_index == t.ics.server_thread_index;
-		U_LOG_D("Setting session state for app %s: visible=%s focused=%s current=%s",
-		        t.ics.client_state.info.application_name,
-		        visible ? "true" : "false",
-		        focused ? "true" : "false",
-		        current ? "true" : "false");
-		xrt_syscomp_set_state(system_compositor, t.ics.xc, visible and current, focused and current, os_monotonic_get_ns());
-	}
+
+	update_client_states(visible, focused);
 }
 void wivrn_session::operator()(from_headset::user_presence_changed && event)
 {
@@ -984,17 +1038,29 @@ void wivrn_session::run_net(std::stop_token stop)
 		}
 		catch (const std::exception & e)
 		{
-			U_LOG_E("Exception in network thread: %s", e.what());
-			worker_thread = std::jthread();
+			U_LOG_W("Exception in network thread: %s, Session paused.", e.what());
+			pause_session();
+
 			reconnect(stop);
-			worker_thread = std::jthread([this](std::stop_token stop) { return run_worker(stop); });
+			if (stop.stop_requested())
+				break;
+
+			try
+			{
+				resume_session();
+				U_LOG_I("Headset connected, Session resumed.");
+			}
+			catch (const std::exception & e)
+			{
+				U_LOG_E("Exception on session resume: %s", e.what());
+			}
 		}
 	}
 }
 
 void wivrn_session::run_worker(std::stop_token stop)
 {
-	refresh_rate_adjuster refresh(connection->info(), settings, app_pacers);
+	refresh_rate_adjuster refresh(get_info(), settings, app_pacers);
 	while (not stop.stop_requested())
 	{
 		try
@@ -1066,62 +1132,182 @@ void wivrn_session::quit_if_no_client()
 	}
 }
 
+static bool is_audio_changed(const from_headset::headset_info_packet & prev_info, const from_headset::headset_info_packet & info)
+{
+	bool changed = false;
+
+	if (prev_info.speaker and info.speaker)
+	{
+		changed |= prev_info.speaker->num_channels != info.speaker->num_channels;
+		changed |= prev_info.speaker->sample_rate != info.speaker->sample_rate;
+	}
+
+	if (prev_info.microphone and info.microphone)
+	{
+		changed |= prev_info.microphone->num_channels != info.microphone->num_channels;
+		changed |= prev_info.microphone->sample_rate != info.microphone->sample_rate;
+	}
+
+	return changed;
+}
+
+std::pair<bool, std::optional<std::string>> wivrn_session::validate_headset_info(const from_headset::headset_info_packet & info)
+{
+	const auto & prev_info = get_info();
+
+	bool refuse = false; // refuse to connect headset outright
+	bool warn = false;   // allow headset but display a pop-up warning about outdated settings
+
+	// stream settings
+	{
+		warn |= prev_info.render_eye_width != info.render_eye_width;
+		warn |= prev_info.render_eye_height != info.render_eye_height;
+		warn |= prev_info.stream_eye_width != info.stream_eye_width;
+		warn |= prev_info.stream_eye_height != info.stream_eye_height;
+
+		refuse |= prev_info.supported_codecs != info.supported_codecs;
+		refuse |= prev_info.bit_depth != info.bit_depth;
+
+		if (refuse)
+		{
+			return std::make_pair(false, "video codec mismatch.");
+		}
+	}
+
+	// audio settings
+	{
+		refuse |= is_audio_changed(prev_info, info);
+
+		warn |= (bool)prev_info.speaker != (bool)info.speaker;
+		warn |= (bool)prev_info.microphone != (bool)info.microphone;
+
+		if (refuse)
+		{
+			return std::make_pair(false, "audio config changed.");
+		}
+	}
+
+	// headset features
+	{
+		// allow toggling some features but changes won't be visible to applications
+		warn |= prev_info.hand_tracking != info.hand_tracking;
+		warn |= prev_info.face_tracking != info.face_tracking;
+		warn |= prev_info.eye_gaze != info.eye_gaze;
+
+		warn |= prev_info.num_generic_trackers != info.num_generic_trackers;
+
+		// only allow connecting from the "same" headset
+		refuse |= prev_info.system_name != info.system_name;
+
+		for (uint32_t i = 0; i < 2; i++)
+		{
+			refuse |= prev_info.fov[i].angleDown != info.fov[i].angleDown;
+			refuse |= prev_info.fov[i].angleUp != info.fov[i].angleUp;
+			refuse |= prev_info.fov[i].angleRight != info.fov[i].angleRight;
+			refuse |= prev_info.fov[i].angleLeft != info.fov[i].angleLeft;
+		}
+
+		refuse |= prev_info.palm_pose != info.palm_pose;
+		refuse |= prev_info.user_presence != info.user_presence;
+		refuse |= prev_info.passthrough != info.passthrough;
+
+		refuse |= prev_info.available_refresh_rates != info.available_refresh_rates;
+
+		if (refuse)
+		{
+			std::make_pair(false, "headset features changed.");
+		}
+	}
+
+	return std::make_pair(warn, std::nullopt);
+}
+
 void wivrn_session::reconnect(std::stop_token stop)
 {
 	assert(mnd_ipc_server);
-	// Notify clients about disconnected status
-	xrt_session_event event{
-	        .state = {
-	                .type = XRT_SESSION_EVENT_STATE_CHANGE,
-	                .visible = false,
-	                .focused = false,
-	        },
-	};
-	auto result = push_event(event);
-	if (result != XRT_SUCCESS)
-	{
-		U_LOG_W("Failed to notify session state change: %s", xrt_result_to_string(result).c_str());
-	}
-
 	U_LOG_I("Waiting for new connection");
-	auto tcp = accept_connection(*this, stop, &wivrn_session::quit_if_no_client);
-	if (stop.stop_requested())
-		return;
-	if (not tcp)
+
+	while (not stop.stop_requested())
 	{
-		request_stop();
-		return;
+		try
+		{
+			// await a new headset connection
+
+			auto tcp = accept_connection(*this, stop, &wivrn_session::quit_if_no_client);
+			if (stop.stop_requested())
+				return;
+			if (not tcp)
+			{
+				request_stop();
+				return;
+			}
+
+			connection->reset(stop, std::move(*tcp), [this]() { quit_if_no_client(); });
+
+			// validate if headset is compatible with the current session
+
+			const auto & info = connection->info();
+			const auto [warn_conn, refuse_conn] = validate_headset_info(info);
+
+			// TODO: add server-side localization
+
+			if (refuse_conn)
+			{
+				send_control(to_headset::server_message{
+				        .kind = to_headset::server_message::kind::error,
+				        .msg = std::format("Headset incompatible with session: {}", *refuse_conn),
+				});
+
+				connection->shutdown();
+				throw std::runtime_error("headset config incompatible with current session");
+			}
+
+			if (warn_conn)
+			{
+				send_control(to_headset::server_message{
+				        .kind = to_headset::server_message::kind::toast_urgent,
+				        .msg = "Stream resumed with outdated settings. Restart the server for settings to apply.",
+				});
+
+				U_LOG_W("Session resumed with outdated settings. Restart the server for settings to apply.");
+			}
+
+			// update headset info
+
+			headset_info.settings = info.settings;
+			(*this)(headset_info.settings);
+
+			headset_info.language = info.language;
+			headset_info.country = info.country;
+			headset_info.variant = info.variant;
+
+			break;
+		}
+		catch (std::exception & e)
+		{
+			U_LOG_W("Exception while connecting headset: %s", e.what());
+		}
 	}
-	try
+}
+
+void wivrn_session::update_client_states(bool visible, bool focused)
+{
+	assert(mnd_ipc_server);
+	scoped_lock lock(mnd_ipc_server->global_state.lock);
+	auto locked = session_loss.lock();
+	for (auto & t: mnd_ipc_server->threads)
 	{
-		offset_est.reset();
-		connection->reset(stop, std::move(*tcp), [this]() { quit_if_no_client(); });
-
-		const auto & info = connection->info();
-		(*this)(info.settings);
-
-		{
-			std::shared_lock lock(comp_target_mutex);
-			if (comp_target)
-				comp_target->reset_encoders();
-		}
-		if (audio_handle)
-		{
-			send_control(audio_handle->description());
-			audio_handle->on_connect();
-		}
-
-		event.state.visible = true;
-		event.state.focused = true;
-		result = push_event(event);
-		if (result != XRT_SUCCESS)
-		{
-			U_LOG_W("Failed to notify session state change: %s", xrt_result_to_string(result).c_str());
-		}
-	}
-	catch (const std::exception & e)
-	{
-		U_LOG_E("Reconnection failed: %s", e.what());
+		auto id = t.ics.client_state.id;
+		if (t.ics.server_thread_index < 0 or t.ics.xc == nullptr or locked->contains(id))
+			continue;
+		bool current = t.ics.client_state.session_overlay or
+		               mnd_ipc_server->global_state.active_client_index == t.ics.server_thread_index;
+		U_LOG_D("Setting session state for app %s: visible=%s focused=%s current=%s",
+		        t.ics.client_state.info.application_name,
+		        visible ? "true" : "false",
+		        focused ? "true" : "false",
+		        current ? "true" : "false");
+		xrt_syscomp_set_state(system_compositor, t.ics.xc, visible and current, focused and current, os_monotonic_get_ns());
 	}
 }
 
