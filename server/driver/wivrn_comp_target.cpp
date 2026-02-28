@@ -523,7 +523,7 @@ static VkResult comp_wivrn_present(struct comp_target * ct,
 	        .pWaitDstStageMask = &wait_stage,
 	};
 
-	if (cn->c->base.layer_accum.layer_count == 0 or not cn->cnx.get_offset())
+	if (cn->c->base.layer_accum.layer_count == 0 or not cn->cnx.get_offset() or cn->skip_encoding)
 	{
 		scoped_lock lock(vk->main_queue->mutex);
 		cn->wivrn_bundle->queue.submit(submit_info);
@@ -785,7 +785,15 @@ static xrt_result_t comp_wivrn_request_refresh_rate(struct comp_target * ct, flo
 	if (refresh_rate_hz == 0.0f)
 		refresh_rate_hz = get_default_rate(cn->cnx.get_info(), *cn->cnx.get_settings());
 
-	cn->cnx.send_control(to_headset::refresh_rate_change{.fps = refresh_rate_hz});
+	try
+	{
+		cn->cnx.send_control(to_headset::refresh_rate_change{.fps = refresh_rate_hz});
+	}
+	catch (...)
+	{
+		// ignore network errors
+	}
+
 	return XRT_SUCCESS;
 }
 
@@ -827,6 +835,20 @@ void wivrn_comp_target::reset_encoders()
 	cnx.send_control(to_headset::video_stream_description{desc});
 }
 
+void wivrn_comp_target::pause()
+{
+	skip_encoding = true;
+}
+
+void wivrn_comp_target::resume()
+{
+	if (!skip_encoding)
+		return;
+
+	reset_encoders();
+	skip_encoding = false;
+}
+
 void wivrn_comp_target::set_bitrate(uint32_t bitrate_bps)
 {
 	for (auto & encoder: encoders)
@@ -845,6 +867,11 @@ void wivrn_comp_target::set_refresh_rate(float refresh_rate_hz)
 	pacer.set_frame_duration(c->frame_interval_ns);
 	for (auto & encoder: encoders)
 		encoder->set_framerate(refresh_rate_hz);
+}
+
+float wivrn_comp_target::get_refresh_rate()
+{
+	return desc.fps;
 }
 
 wivrn_comp_target::wivrn_comp_target(wivrn::wivrn_session & cnx, struct comp_compositor * c) :

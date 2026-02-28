@@ -608,6 +608,22 @@ struct handshake
 	int stream_port;
 };
 
+struct server_message
+{
+	enum class kind : uint8_t
+	{
+		// in-stream toasts (not buffered)
+		toast,
+		toast_urgent,
+
+		// displayed in lobby after disconnect (buffered)
+		error,
+	};
+
+	kind kind;
+	std::string msg;
+};
+
 struct foveation_parameter
 {
 	// The number of source pixels for each ratio,
@@ -766,6 +782,7 @@ using packets = std::variant<
         pin_check_2,
         pin_check_4,
         handshake,
+        server_message,
         audio_stream_description,
         video_stream_description,
         audio_data,
