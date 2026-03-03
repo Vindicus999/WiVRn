@@ -508,9 +508,6 @@ void scenes::stream::on_focused()
 	foveation_ok = get_action("foveation_ok").first;
 	foveation_cancel = get_action("foveation_cancel").first;
 
-	assert(video_stream_description);
-	std::unique_lock lock(decoder_mutex);
-
 	if (application::get_config().high_power_mode)
 	{
 		session.set_performance_level(XR_PERF_SETTINGS_DOMAIN_CPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT);
@@ -673,17 +670,10 @@ std::array<std::shared_ptr<shard_accumulator::blit_handle>, 3> scenes::stream::c
 
 std::shared_ptr<shard_accumulator::blit_handle> scenes::stream::accumulator_images::frame(uint64_t id) const
 {
-	for (auto it = latest_frames.rbegin(); it != latest_frames.rend(); ++it)
-	{
-		if (not *it)
-			continue;
-
-		if ((*it)->feedback.frame_index != id)
-			continue;
-
-		return *it;
-	}
-	return nullptr;
+	auto & frame = latest_frames[id % latest_frames.size()];
+	if (frame and frame->feedback.frame_index != id)
+		return nullptr;
+	return frame;
 }
 
 void scenes::stream::update_gui_position(xr::spaces controller)
@@ -1178,14 +1168,11 @@ void scenes::stream::setup_reprojection_swapchain(uint32_t swapchain_width, uint
 
 	spdlog::info("Initializing reprojector");
 	vk::Extent2D extent = {(uint32_t)swapchain.width(), (uint32_t)swapchain.height()};
-	std::vector<vk::Image> swapchain_images;
-	for (auto & image: swapchain.images())
-		swapchain_images.push_back(image.image);
 
 	defoveator.emplace(
 	        device,
 	        physical_device,
-	        swapchain_images,
+	        swapchain.images(),
 	        extent,
 	        swapchain.format());
 }
