@@ -157,15 +157,6 @@ scenes::lobby::lobby() :
 	else
 		spdlog::info("Composition layer color scale/bias NOT supported");
 
-	if (instance.has_extension(XR_FB_FOVEATION_VULKAN_EXTENSION_NAME) and
-	    instance.has_extension(XR_FB_FOVEATION_CONFIGURATION_EXTENSION_NAME))
-	{
-		spdlog::info("Foveation image supported");
-		foveation = xr::foveation_profile(instance, session, XR_FOVEATION_LEVEL_NONE_FB, -10, false);
-	}
-	else
-		spdlog::info("Foveation image NOT supported");
-
 	if (std::getenv("WIVRN_AUTOCONNECT"))
 		force_autoconnect = true;
 
@@ -350,12 +341,7 @@ std::unique_ptr<wivrn_session> scenes::lobby::connect_to_session(wivrn_discover:
 
 void scenes::lobby::update_server_list()
 {
-	if (application::is_focused() && !discover)
-		discover.emplace();
-	else if (!application::is_focused() && discover)
-		discover.reset();
-
-	if (!discover)
+	if (not discover)
 		return;
 
 	std::vector<wivrn_discover::service> discovered_services = discover->get_services();
@@ -1074,7 +1060,6 @@ void scenes::lobby::render(const XrFrameState & frame_state)
 	        composition_layer_depth_test_supported,
 	        composition_layer_depth_test_supported ? layer_lobby | layer_controllers : layer_lobby,
 	        clear_color,
-	        foveation,
 	        true);
 
 	if (composition_layer_depth_test_supported)
@@ -1105,8 +1090,7 @@ void scenes::lobby::render(const XrFrameState & frame_state)
 	        height,
 	        composition_layer_depth_test_supported,
 	        composition_layer_depth_test_supported ? layer_rays : layer_rays | layer_controllers,
-	        {0, 0, 0, 0},
-	        foveation);
+	        {0, 0, 0, 0});
 
 	if (composition_layer_depth_test_supported)
 		set_depth_test(true, XR_COMPARE_OP_LESS_OR_EQUAL_FB);
@@ -1328,6 +1312,7 @@ void scenes::lobby::on_focused()
 
 	setup_passthrough();
 	multicast = application::get_wifi_lock().get_multicast_lock();
+	discover.emplace();
 
 	session.set_performance_level(XR_PERF_SETTINGS_DOMAIN_CPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT);
 	session.set_performance_level(XR_PERF_SETTINGS_DOMAIN_GPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT);
@@ -1367,9 +1352,7 @@ void scenes::lobby::on_xr_event(const xr::event & event)
 	switch (event.header.type)
 	{
 		case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED:
-			if (event.state_changed.state == XR_SESSION_STATE_STOPPING)
-				discover.reset();
-			else if (event.state_changed.state == XR_SESSION_STATE_FOCUSED)
+			if (event.state_changed.state == XR_SESSION_STATE_FOCUSED)
 				autoconnect_enabled = true;
 			recenter_gui = true;
 			break;

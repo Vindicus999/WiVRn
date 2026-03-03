@@ -31,7 +31,6 @@
 #include "wivrn_config.h"
 #include "wivrn_discover.h"
 #include "xr/face_tracker.h"
-#include "xr/foveation_profile.h"
 #include <vulkan/vulkan_raii.hpp>
 #include <openxr/openxr.h>
 
@@ -78,8 +77,6 @@ class lobby : public scene_impl<lobby>
 	std::optional<xr::hand_tracker> right_hand;
 
 	xr::face_tracker face_tracker;
-
-	std::optional<xr::foveation_profile> foveation;
 
 	std::string selected_item;
 	std::unique_ptr<utils::mapped_file> license;
@@ -134,8 +131,6 @@ class lobby : public scene_impl<lobby>
 	tab current_tab = tab::server_list;
 	tab last_current_tab = tab::server_list;
 	int optional_feature_index = 0; // Which step of the first run screen are we in
-
-	std::vector<wivrn::video_codec> supported_codecs;
 
 	ImTextureID about_picture;
 
