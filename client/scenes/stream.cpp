@@ -1137,8 +1137,10 @@ void scenes::stream::setup(const to_headset::video_stream_description & descript
 {
 	session.set_refresh_rate(description.fps);
 
-	spdlog::info("Creating decoders, size {}x{}", description.width, description.height);
 	std::unique_lock lock(decoder_mutex);
+	if (video_stream_description == description)
+		return;
+	spdlog::info("Creating decoders, size {}x{}", description.width, description.height);
 	video_stream_description = description;
 
 	for (const auto & [stream_index, item]: utils::enumerate(decoders))
@@ -1147,6 +1149,9 @@ void scenes::stream::setup(const to_headset::video_stream_description & descript
 		        .decoder = std::make_unique<shard_accumulator>(device, physical_device, instance, queue_family_index, description, shared_from_this(), stream_index),
 		};
 	}
+
+	if (defoveator)
+		defoveator->reset_pipelines();
 }
 
 void scenes::stream::setup_reprojection_swapchain(uint32_t swapchain_width, uint32_t swapchain_height)
