@@ -178,6 +178,7 @@ public:
 	void operator()(from_headset::session_state_changed &&);
 	void operator()(from_headset::user_presence_changed &&);
 	void operator()(from_headset::refresh_rate_changed &&);
+	void operator()(from_headset::stream_tab_changed &&);
 	void operator()(from_headset::override_foveation_center &&);
 	void operator()(from_headset::get_application_list &&);
 	void operator()(const from_headset::start_app &);
@@ -189,6 +190,7 @@ public:
 	void operator()(to_monado::stop &&);
 	void operator()(to_monado::disconnect &&);
 	void operator()(to_monado::set_bitrate &&);
+	void operator()(to_headset::stream_tab_change &&);
 
 	bool has_stream()
 	{
