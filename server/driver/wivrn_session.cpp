@@ -32,6 +32,7 @@
 #include "util/u_logging.h"
 #include "util/u_system.h"
 #include "utils/load_icon.h"
+#include "utils/method.h"
 #include "utils/scoped_lock.h"
 
 #include "audio/audio_setup.h"
@@ -65,14 +66,6 @@
 #if WIVRN_FEATURE_SOLARXR
 #include "solarxr_interface.h"
 #endif
-
-static std::string xrt_result_to_string(xrt_result_t xret)
-{
-	struct u_pp_sink_stack_only sink;
-	u_pp_delegate_t dg = u_pp_sink_stack_only_init(&sink);
-	u_pp_xrt_result(dg, xret);
-	return sink.buffer;
-}
 
 namespace wivrn
 {
@@ -122,10 +115,10 @@ bool is_forced_extension(const char * ext_name)
 
 wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection, u_system & system) :
         xrt_system_devices{
-                .get_roles = [](xrt_system_devices * self, xrt_system_roles * out_roles) { return ((wivrn_session *)self)->get_roles(out_roles); },
-                .feature_inc = [](xrt_system_devices * self, xrt_device_feature_type f) { return ((wivrn_session *)self)->feature_inc(f); },
-                .feature_dec = [](xrt_system_devices * self, xrt_device_feature_type f) { return ((wivrn_session *)self)->feature_dec(f); },
-                .destroy = [](xrt_system_devices * self) { delete ((wivrn_session *)self); },
+                .get_roles = method_pointer<&wivrn_session::get_roles>,
+                .feature_inc = method_pointer<&wivrn_session::feature_inc>,
+                .feature_dec = method_pointer<&wivrn_session::feature_dec>,
+                .destroy = method_pointer<&wivrn_session::destroy>,
         },
         connection(std::move(connection)),
         headset_info(this->connection->info()),
@@ -331,7 +324,7 @@ xrt_result_t wivrn::wivrn_session::create_session(std::unique_ptr<wivrn_connecti
 	auto xret = comp_main_create_system_compositor(&self->hmd, &ctf, &self->app_pacers, out_xsysc);
 	if (xret != XRT_SUCCESS)
 	{
-		U_LOG_E("Failed to create system compositor: %s", xrt_result_to_string(xret).c_str());
+		U_LOG_E("Failed to create system compositor: %s", u_str_xrt_result(xret));
 		return xret;
 	}
 	self->system_compositor = *out_xsysc;
@@ -361,7 +354,7 @@ xrt_result_t wivrn::wivrn_session::create_session(std::unique_ptr<wivrn_connecti
 		}
 		if (res != XRT_SUCCESS)
 		{
-			U_LOG_W("failed to initialize eye tracker: %s", xrt_result_to_string(res).c_str());
+			U_LOG_W("failed to initialize eye tracker: %s", u_str_xrt_result(xret));
 			self->static_roles.eyes = nullptr;
 			self->eye_tracker.reset();
 		}
@@ -946,7 +939,7 @@ void wivrn_session::operator()(const from_headset::stop_application & req)
 			xrt_result_t xret = xrt_session_request_exit(t.ics.xs);
 			if (xret != XRT_SUCCESS)
 			{
-				U_LOG_W("Failed to request exit for application %s: %s", t.ics.client_state.info.application_name, xrt_result_to_string(xret).c_str());
+				U_LOG_W("Failed to request exit for application %s: %s", t.ics.client_state.info.application_name, u_str_xrt_result(xret));
 			}
 
 			auto when = os_monotonic_get_ns() + 10l * U_TIME_1S_IN_NS;
@@ -1378,5 +1371,10 @@ xrt_result_t wivrn_session::feature_dec(xrt_device_feature_type type)
 		default:
 			return XRT_ERROR_FEATURE_NOT_SUPPORTED;
 	}
+}
+
+void wivrn_session::destroy()
+{
+	delete this;
 }
 } // namespace wivrn
