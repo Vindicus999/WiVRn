@@ -287,10 +287,6 @@ if(ANDROID)
         COMMAND ${TOKTX} --encode astc --astc_blk_d 12x12 --astc_quality 100 --genmipmap ${ASSETS_DIR}/WoodFloor051_1K-JPG_Color.ktx2 ${AST_SRC_DIR}/WoodFloor051_1K-JPG_Color.jpg
         DEPENDS ${AST_SRC_DIR}/WoodFloor051_1K-JPG_Color.jpg)
 
-    add_custom_command(OUTPUT ${ASSETS_DIR}/vr_splash.png
-        COMMAND ${CMAKE_COMMAND} -E copy ${ASSETS_DIR}/wivrn.png ${ASSETS_DIR}/vr_splash.png
-        DEPENDS ${ASSETS_DIR}/wivrn.png)
-
     add_custom_target(assets-android ALL DEPENDS
         ${ASSETS_DIR}/wivrn.ktx2
         ${ASSETS_DIR}/WoodFloor051_1K-JPG_Color.ktx2
