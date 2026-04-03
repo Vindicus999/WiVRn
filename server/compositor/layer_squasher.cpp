@@ -387,6 +387,7 @@ layer_squasher::do_layers(
 	// get the head/pose to reproject to
 	const pose_data poses{hmd, frame_interval_ns, frame, layers};
 	const auto extent3D = render_target.info().extent;
+	auto fovs = poses.fovs;
 	std::array viewports{
 	        render_viewport_data{
 	                .w = extent3D.width,
@@ -424,8 +425,6 @@ layer_squasher::do_layers(
 		// TODO: staging buffer?
 		auto & ubo = *(render_compute_layer_ubo_data *)this->ubo[view].map();
 
-		ubo.view = viewports[view];
-		render_calc_uv_to_tangent_lengths_rect(&poses.fovs[view], &ubo.pre_transform);
 		// Not the transform of the views, but the inverse: actual view matrices.
 		xrt_matrix_4x4 world_view_mat, eye_view_mat;
 		math_matrix_4x4_view_from_pose(&poses.world_poses[view], &world_view_mat);
@@ -630,7 +629,7 @@ layer_squasher::do_layers(
 	for (auto [v, r]: std::ranges::zip_view(viewports, rect))
 		r = {.extent = {.w = int(v.w), .h = int(v.h)}};
 
-	return {poses.world_poses, poses.fovs, rect};
+	return {poses.world_poses, fovs, rect};
 }
 
 std::array<vk::ImageView, 2> layer_squasher::get_views()
@@ -809,6 +808,8 @@ xrt_fov layer_squasher::do_quad_layer(const comp_layer & layer,
 	                     .angle_right = -M_PI,
 	                     .angle_up = -M_PI,
 	                     .angle_down = M_PI};
+	if (normal_view_space.z < 0)
+		return layer_fov; // back face is not visible
 	for (auto & c: corners)
 	{
 		math_matrix_4x4_transform_vec3(&quad_pose, &c, &c);
@@ -885,7 +886,7 @@ xrt_fov layer_squasher::do_cylinder_layer(const comp_layer & layer,
 	math_matrix_4x4_multiply(&v, &quad_pose, &quad_pose);
 
 	const float w = sin(c.central_angle / 2) * c.radius;
-	const float h = c.radius * c.central_angle / (2 * c.aspect_ratio);
+	const float h = c.radius * c.central_angle / 2 * c.aspect_ratio;
 	const float d = c.radius * cos(c.central_angle / 2);
 	std::array corners{
 	        xrt_vec3{-w, -h, -c.radius},
