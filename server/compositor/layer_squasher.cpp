@@ -387,7 +387,6 @@ layer_squasher::do_layers(
 	// get the head/pose to reproject to
 	const pose_data poses{hmd, frame_interval_ns, frame, layers};
 	const auto extent3D = render_target.info().extent;
-	auto fovs = poses.fovs;
 	std::array viewports{
 	        render_viewport_data{
 	                .w = extent3D.width,
@@ -425,6 +424,8 @@ layer_squasher::do_layers(
 		// TODO: staging buffer?
 		auto & ubo = *(render_compute_layer_ubo_data *)this->ubo[view].map();
 
+		ubo.view = viewports[view];
+		render_calc_uv_to_tangent_lengths_rect(&poses.fovs[view], &ubo.pre_transform);
 		// Not the transform of the views, but the inverse: actual view matrices.
 		xrt_matrix_4x4 world_view_mat, eye_view_mat;
 		math_matrix_4x4_view_from_pose(&poses.world_poses[view], &world_view_mat);
@@ -625,7 +626,11 @@ layer_squasher::do_layers(
 	for (auto [v, r]: std::ranges::zip_view(viewports, rect))
 		r = {.extent = {.w = int(v.w), .h = int(v.h)}};
 
-	return {poses.world_poses, fovs, rect};
+	std::array<xrt_rect, 2> rect;
+	for (auto [v, r]: std::ranges::zip_view(viewports, rect))
+		r = {.extent = {.w = int(v.w), .h = int(v.h)}};
+
+	return {poses.world_poses, poses.fovs, rect};
 }
 
 std::array<vk::ImageView, 2> layer_squasher::get_views()
