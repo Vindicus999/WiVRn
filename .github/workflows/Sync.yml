@@ -46,4 +46,4 @@ jobs:
 
       - name: Push apk build
         run: |
-          git push origin build --force
+          git push origin apk-build --force
