@@ -32,6 +32,8 @@ jobs:
 
       - name: Update sync branch
         run: |
+          git config --global user.email "sneed@feedandse.edu"
+          git config --global user.name "Sneed Chuckinson"
           git checkout -B sync upstream/master
           git push origin sync --force
 
