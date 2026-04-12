@@ -1,0 +1,49 @@
+name: Sync Fork with Upstream
+
+env:
+  UPSTREAM_URL: "https://github.com/wivrn/wivrn.git"
+  WORKFLOW_TOKEN: ${{ secrets.DOWNSTREAM_GITHUB_TOKEN }}
+  UPSTREAM_BRANCH: "master"
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          upstream_repo: vindicus999/wivrn
+          fetch-depth: 0
+          token: ${{ env.WORKFLOW_TOKEN }}
+
+      - name: Add upstream
+        run: |
+          git remote add upstream ${{ env.UPSTREAM_URL }}
+
+      - name: Fetch all
+        run: |
+          git fetch origin
+          git fetch upstream
+
+      - name: Update sync branch
+        run: |
+          git checkout -B master upstream/master
+          git push origin master --force
+
+      - name: Copy master -> apk-build
+        run: |
+          git checkout -B apk-build master
+          git push origin apk-build --force
+
+      - name: Apply sneed changes
+        run: |
+          git merge origin/sneed --no-edit
+
+      - name: Push apk build
+        run: |
+          git push origin build --force
