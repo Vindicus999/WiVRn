@@ -32,12 +32,14 @@ jobs:
 
       - name: Update sync branch
         run: |
-          git checkout -B master upstream/master
-          git push origin master --force
+          git config --global user.email "sneed@feedandse.edu"
+          git config --global user.name "Sneed Chuckinson"
+          git checkout -B sync upstream/master
+          git push origin sync --force
 
       - name: Copy master -> apk-build
         run: |
-          git checkout -B apk-build master
+          git checkout -B apk-build sync
           git push origin apk-build --force
 
       - name: Apply sneed changes
