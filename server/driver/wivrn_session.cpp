@@ -25,9 +25,6 @@
 #include "configuration.h"
 #include "driver/app_pacer.h"
 #include "server/ipc_server.h"
-#include "util/u_builders.h"
-#include "util/u_logging.h"
-#include "util/u_system.h"
 #include "utils/load_icon.h"
 #include "utils/method.h"
 #include "utils/scoped_lock.h"
@@ -40,12 +37,16 @@
 #include "wivrn_generic_tracker.h"
 #include "wivrn_htc_face_tracker.h"
 #include "wivrn_ipc.h"
-
 #include "wivrn_packets.h"
 #include "xr/to_string.h"
+
+#include "b_system.h"
+#include "target_builder_helpers.h"
+#include "util/u_logging.h"
 #include "xrt/xrt_defines.h"
 #include "xrt/xrt_device.h"
 #include "xrt/xrt_session.h"
+
 #include <algorithm>
 #include <chrono>
 #include <magic_enum.hpp>
@@ -74,7 +75,7 @@ bool is_forced_extension(const char * ext_name)
 	return strstr(val, ext_name);
 }
 
-wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection, u_system & system) :
+wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection, b_system & system) :
         xrt_system_devices{
                 .get_roles = method_pointer<&wivrn_session::get_roles>,
                 .feature_inc = method_pointer<&wivrn_session::feature_inc>,
@@ -109,18 +110,18 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 		throw;
 	}
 
-	static_roles.head = xdevs[xdev_count++] = &hmd;
+	static_roles.head = static_xdevs[static_xdev_count++] = &hmd;
 
 	if (hmd.supported.face_tracking)
 		static_roles.face = &hmd;
 
-	roles.left = left_controller_index = xdev_count++;
-	static_roles.hand_tracking.unobstructed.left = xdevs[left_controller_index] = &left_controller;
-	xdevs[left_hand_interaction_index = xdev_count++] = &left_hand_interaction;
+	roles.left = left_controller_index = static_xdev_count++;
+	static_roles.hand_tracking.unobstructed.left = static_xdevs[left_controller_index] = &left_controller;
+	static_xdevs[left_hand_interaction_index = static_xdev_count++] = &left_hand_interaction;
 
-	roles.right = right_controller_index = xdev_count++;
-	static_roles.hand_tracking.unobstructed.right = xdevs[right_controller_index] = &right_controller;
-	xdevs[right_hand_interaction_index = xdev_count++] = &right_hand_interaction;
+	roles.right = right_controller_index = static_xdev_count++;
+	static_roles.hand_tracking.unobstructed.right = static_xdevs[right_controller_index] = &right_controller;
+	static_xdevs[right_hand_interaction_index = static_xdev_count++] = &right_hand_interaction;
 
 #if WIVRN_FEATURE_STEAMVR_LIGHTHOUSE
 	auto use_steamvr_lh = configuration().use_steamvr_lh || std::getenv("WIVRN_USE_STEAMVR_LH");
@@ -134,31 +135,31 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 		U_LOG_W("=====================");
 		if (steamvr_lh_create_devices(nullptr, &lhdevs) == XRT_SUCCESS)
 		{
-			for (int i = 0; i < lhdevs->xdev_count; i++)
+			for (int i = 0; i < lhdevs->static_xdev_count; i++)
 			{
-				auto lhdev = lhdevs->xdevs[i];
+				auto lhdev = lhdevs->static_xdevs[i];
 				switch (lhdev->device_type)
 				{
 					case XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER:
-						roles.left = xdev_count;
+						roles.left = static_xdev_count;
 						static_roles.hand_tracking.unobstructed.left = nullptr;
 						static_roles.hand_tracking.conforming.left = lhdev;
 						break;
 					case XRT_DEVICE_TYPE_RIGHT_HAND_CONTROLLER:
-						roles.right = xdev_count;
+						roles.right = static_xdev_count;
 						static_roles.hand_tracking.unobstructed.right = nullptr;
 						static_roles.hand_tracking.conforming.right = lhdev;
 						break;
 					case XRT_DEVICE_TYPE_ANY_HAND_CONTROLLER:
 						if (roles.left == left_controller_index)
 						{
-							roles.left = xdev_count;
+							roles.left = static_xdev_count;
 							static_roles.hand_tracking.unobstructed.left = nullptr;
 							static_roles.hand_tracking.conforming.left = lhdev;
 						}
 						else if (roles.right == right_controller_index)
 						{
-							roles.right = xdev_count;
+							roles.right = static_xdev_count;
 							static_roles.hand_tracking.unobstructed.right = nullptr;
 							static_roles.hand_tracking.conforming.right = lhdev;
 						}
@@ -166,7 +167,7 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 					default:
 						break;
 				}
-				xdevs[xdev_count++] = lhdev;
+				static_xdevs[static_xdev_count++] = lhdev;
 			}
 		}
 	}
@@ -174,16 +175,16 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 	if (get_info().eye_gaze || is_forced_extension("EXT_eye_gaze_interaction"))
 	{
 		// The tracker space needs to be attached to the head pose once the space overseer is created
-		xdevs[xdev_count++] = static_roles.eyes = &eye_tracker.emplace(*this);
+		static_xdevs[static_xdev_count++] = static_roles.eyes = &eye_tracker.emplace(*this);
 	}
 
 	auto face = get_info().face_tracking;
 	if (face == from_headset::face_type::android || is_forced_extension("ANDROID_face_tracking"))
-		xdevs[xdev_count++] = static_roles.face = &android_face_tracker.emplace(&hmd, *this);
+		static_xdevs[static_xdev_count++] = static_roles.face = &android_face_tracker.emplace(&hmd, *this);
 	else if (face == from_headset::face_type::fb2 || is_forced_extension("FB_face_tracking2"))
-		xdevs[xdev_count++] = static_roles.face = &fb_face2_tracker.emplace(&hmd, *this);
+		static_xdevs[static_xdev_count++] = static_roles.face = &fb_face2_tracker.emplace(&hmd, *this);
 	else if (face == wivrn::from_headset::face_type::htc || is_forced_extension("HTC_facial_tracking"))
-		xdevs[xdev_count++] = static_roles.face = &htc_face_tracker.emplace(&hmd, *this);
+		static_xdevs[static_xdev_count++] = static_roles.face = &htc_face_tracker.emplace(&hmd, *this);
 
 	auto num_generic_trackers = get_info().num_generic_trackers;
 	if (num_generic_trackers > 0)
@@ -195,35 +196,35 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 			        from_headset::body_tracking::max_tracked_poses);
 			num_generic_trackers = from_headset::body_tracking::max_tracked_poses;
 		}
-		if (num_generic_trackers + xdev_count > std::size(xdevs))
+		if (num_generic_trackers + static_xdev_count > std::size(static_xdevs))
 		{
 			U_LOG_W("Too many generic trackers: %d, only %lu will be active",
 			        num_generic_trackers,
-			        std::size(xdevs) - xdev_count);
-			num_generic_trackers = std::size(xdevs) - xdev_count;
+			        std::size(static_xdevs) - static_xdev_count);
+			num_generic_trackers = std::size(static_xdevs) - static_xdev_count;
 		}
 		U_LOG_I("Creating %d generic trackers", num_generic_trackers);
 
 		for (int i = 0; i < num_generic_trackers; ++i)
-			xdevs[xdev_count++] = &generic_trackers.emplace_back(i, &hmd, *this);
+			static_xdevs[static_xdev_count++] = &generic_trackers.emplace_back(i, &hmd, *this);
 	}
 
 #if WIVRN_FEATURE_SOLARXR
-	uint32_t num_devs = solarxr_device_create_xdevs(static_cast<xrt_device>(hmd).tracking_origin, &xdevs[xdev_count], ARRAY_SIZE(xdevs) - xdev_count);
+	uint32_t num_devs = solarxr_device_create_xdevs(static_cast<xrt_device>(hmd).tracking_origin, &static_xdevs[static_xdev_count], ARRAY_SIZE(static_xdevs) - static_xdev_count);
 	if (num_devs != 0)
 	{
-		static_roles.body = xdevs[xdev_count];
-		solarxr_device_set_feeder_devices(static_roles.body, xdevs, xdev_count);
+		static_roles.body = static_xdevs[static_xdev_count];
+		solarxr_device_set_feeder_devices(static_roles.body, static_xdevs, static_xdev_count);
 	}
-	xdev_count += num_devs;
+	static_xdev_count += num_devs;
 #endif
 
 	if (roles.left >= 0)
-		roles.left_profile = xdevs[roles.left]->name;
+		roles.left_profile = static_xdevs[roles.left]->name;
 	if (roles.right >= 0)
-		roles.right_profile = xdevs[roles.right]->name;
+		roles.right_profile = static_xdevs[roles.right]->name;
 	if (roles.gamepad >= 0)
-		roles.gamepad_profile = xdevs[roles.gamepad]->name;
+		roles.gamepad_profile = static_xdevs[roles.gamepad]->name;
 
 	if (auto system_name = get_info().system_name; !system_name.empty())
 	{
@@ -255,16 +256,16 @@ wivrn_session::~wivrn_session()
 	solarxr_device_clear_feeder_devices(static_roles.body);
 #endif
 
-	for (size_t i = 0; i < ARRAY_SIZE(xdevs); i++)
+	for (size_t i = 0; i < ARRAY_SIZE(static_xdevs); i++)
 	{
-		xrt_device_destroy(&xdevs[i]);
+		xrt_device_destroy(&static_xdevs[i]);
 	}
 
 	connection->shutdown();
 }
 
 xrt_result_t wivrn::wivrn_session::create_session(std::unique_ptr<wivrn_connection> connection,
-                                                  u_system & system,
+                                                  b_system & system,
                                                   xrt_system_devices ** out_xsysd,
                                                   xrt_space_overseer ** out_xspovrs,
                                                   xrt_system_compositor ** out_xsysc)
@@ -284,7 +285,7 @@ xrt_result_t wivrn::wivrn_session::create_session(std::unique_ptr<wivrn_connecti
 	send_to_main(info);
 
 	auto sys_info{self->compositor.sys_info()};
-	auto xret = comp_multi_create_system_compositor(&self->compositor.base, &self->app_pacers, &sys_info, false, out_xsysc);
+	auto xret = comp_multi_create_system_compositor(&self->compositor.base, &self->app_pacers, &compositor::get_view_config, &sys_info, false, out_xsysc);
 	if (xret != XRT_SUCCESS)
 	{
 		U_LOG_E("Failed to create system compositor: %s", u_str_xrt_result(xret));
@@ -292,15 +293,15 @@ xrt_result_t wivrn::wivrn_session::create_session(std::unique_ptr<wivrn_connecti
 	}
 	self->system_compositor = *out_xsysc;
 
-	u_builder_create_space_overseer_legacy(
+	t_builder_create_space_overseer_legacy(
 	        &self->xrt_system.broadcast,
 	        &self->hmd,
 	        self->static_roles.eyes,
 	        &self->left_controller,
 	        &self->right_controller,
 	        nullptr,
-	        self->xdevs,
-	        self->xdev_count,
+	        self->static_xdevs,
+	        self->static_xdev_count,
 	        false,
 	        false,
 	        out_xspovrs);
@@ -395,8 +396,8 @@ void wivrn_session::resume_session()
 		send_control(to_headset::feature_control{to_headset::feature_control::hid_input, true});
 
 	{
-		float target_fps = default_rate();
-		auto current_fps = compositor.get_refresh_rate();
+		float target_fps = default_fps();
+		auto current_fps = compositor.get_framerate();
 
 		if (target_fps != current_fps)
 		{
@@ -438,11 +439,11 @@ bool wivrn_session::connected()
 	return connection->is_active();
 }
 
-float wivrn_session::default_rate()
+float wivrn_session::default_fps()
 {
 	auto s = settings.lock();
 	if (s->preferred_refresh_rate)
-		return s->preferred_refresh_rate;
+		return s->preferred_refresh_rate / s->fps_divider;
 	return headset_info.available_refresh_rates.back();
 }
 
@@ -463,10 +464,14 @@ void wivrn_session::operator()(from_headset::headset_info_packet &&)
 
 void wivrn_session::operator()(const from_headset::settings_changed & settings)
 {
-	*this->settings.lock() = settings;
+	auto locked = this->settings.lock();
+	*locked = settings;
 
 	if (settings.bitrate_bps != 0)
 		compositor.set_bitrate(settings.bitrate_bps);
+
+	if (settings.preferred_refresh_rate != 0)
+		compositor.set_framerate(settings.preferred_refresh_rate / settings.fps_divider);
 
 	wivrn_ipc_socket_monado->send(std::move(settings));
 }
@@ -755,7 +760,8 @@ void wivrn_session::operator()(from_headset::user_presence_changed && event)
 
 void wivrn_session::operator()(from_headset::refresh_rate_changed && event)
 {
-	compositor.set_refresh_rate(event.to);
+	auto locked = settings.lock();
+	compositor.set_framerate(event.to / locked->fps_divider);
 	push_event(
 	        {
 	                .display = {

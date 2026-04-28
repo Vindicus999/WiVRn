@@ -228,10 +228,12 @@ if (WIVRN_BUILD_SERVER)
 			aux_os
 			aux_util
 			aux_vk
+			base
 			comp_multi
 			comp_render
 			comp_util
 			ipc_server
+			target_helpers
 			xrt-external-openxr
 			xrt-interfaces
 

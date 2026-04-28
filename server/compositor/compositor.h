@@ -49,9 +49,6 @@ public:
 	struct image
 	{
 		std::atomic<bool> busy = false;
-		vk::raii::Semaphore sem;
-		vk::raii::Fence fence;
-		vk::raii::CommandBuffer cmd;
 		image_allocation image;
 		vk::raii::ImageView view_y;
 		vk::raii::ImageView view_cbcr;
@@ -60,19 +57,41 @@ public:
 	};
 
 private:
+	struct timings
+	{
+		std::array<float, 50> values{};
+		int index = 0;
+		u_var_timing var{
+		        .values = {
+		                .data = values.data(),
+		                .index_ptr = &index,
+		                .length = int(values.size()),
+		        },
+		        .range = 1000,
+		        .dynamic_rescale = true,
+		        .unit = "µs",
+		};
+
+		void add(float us);
+	};
+
 	const u_logging_level log_level;
+	timings squasher_times;
+	timings foveation_times;
 	wivrn_session & session;
 	vk_bundle vk;
 	vk::raii::CommandPool cmd_pool;
+	vk::raii::QueryPool query_pool;
 
 	std::array<encoder_settings, 3> settings;
 
 	std::array<image, 2> images;
 	vk::raii::CommandBuffer cmd;
-	vk::raii::Fence fence;
+	vk::raii::Semaphore sem;
+	uint64_t sem_value = 0;
 
 	std::atomic<float> requested_refresh_rate;
-	std::atomic<float> refresh_rate;
+	std::atomic<float> frame_rate;
 	wivrn::pacer pacer;
 
 	layer_squasher squasher;
@@ -129,6 +148,10 @@ private:
 public:
 	xrt_result_t request_display_refresh_rate(float display_refresh_rate_hz);
 
+	static xrt_result_t get_view_config(xrt_compositor_native *,
+	                                    xrt_view_type view_type,
+	                                    xrt_view_config * out_view_config);
+
 private:
 	void destroy()
 	{
@@ -158,11 +181,11 @@ public:
 		return requested_refresh_rate;
 	}
 
-	float get_refresh_rate() const
+	float get_framerate() const
 	{
-		return refresh_rate;
+		return frame_rate;
 	}
-	void set_refresh_rate(float hz);
+	void set_framerate(float hz);
 
 	void set_bitrate(uint32_t);
 	void update_tracking(const from_headset::tracking &);

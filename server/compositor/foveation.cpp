@@ -42,6 +42,7 @@ struct ubo_data
 	uint32_t x[XRT_MAX_VIEWS * RENDER_FOVEATION_BUFFER_DIMENSIONS];
 	uint32_t y[XRT_MAX_VIEWS * RENDER_FOVEATION_BUFFER_DIMENSIONS];
 	uint32_t alpha_width;
+	VkBool32 alpha;
 };
 
 vk::raii::Sampler make_sampler(wivrn::vk_bundle & vk)
@@ -384,8 +385,8 @@ foveation::foveation(wivrn::vk_bundle & bundle, vk::Extent3D foveated_size) :
                         .usage = vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer,
                 },
                 VmaAllocationCreateInfo{
-                        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT,
-                        .usage = VMA_MEMORY_USAGE_AUTO,
+                        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+                        .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
                 },
                 "foveation storage buffer"),
         sampler(make_sampler(bundle)),
@@ -400,21 +401,6 @@ foveation::foveation(wivrn::vk_bundle & bundle, vk::Extent3D foveated_size) :
         })[0]
                                .release())
 {
-	if (not(gpu_buffer.properties() & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
-	{
-		host_buffer = buffer_allocation(
-		        bundle.device,
-		        {
-		                .size = gpu_buffer.info().size,
-		                .usage = vk::BufferUsageFlagBits::eTransferSrc,
-		        },
-		        {
-		                .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
-		                .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
-		        },
-		        "foveation staging buffer");
-	}
-
 	bundle.name(descriptor_set, "foveation descriptor set");
 }
 
@@ -515,9 +501,6 @@ void foveation::update_ubo(
 	    std::abs(last.manual_foveation.distance - manual_foveation.distance) < 0.0005)
 		return;
 
-	if (host_buffer)
-		cmd.copyBuffer(host_buffer, gpu_buffer, vk::BufferCopy{.size = sizeof(ubo_data)});
-
 	last = {
 	        .gaze = gaze,
 	        .flip_y = flip_y,
@@ -529,8 +512,7 @@ void foveation::update_ubo(
 
 	compute_params();
 
-	auto ubo = host_buffer ? host_buffer.data<ubo_data>() : gpu_buffer.data<ubo_data>();
-	ubo->alpha_width = foveated_size.width / 2;
+	auto ubo = gpu_buffer.data<ubo_data>();
 	for (size_t view = 0; view < 2; ++view)
 	{
 		bool flip = false;
@@ -583,9 +565,13 @@ std::array<to_headset::foveation_parameter, 2> foveation::foveate(
         bool flip_y,
         std::array<vk::ImageView, 2> src,
         std::array<xrt_rect, 2> src_rect,
-        std::array<xrt_fov, 2> src_fov)
+        std::array<xrt_fov, 2> src_fov,
+        bool alpha)
 {
 	update_ubo(cmd, flip_y, src_rect, src_fov);
+	auto ubo = gpu_buffer.data<ubo_data>();
+	ubo->alpha_width = foveated_size.width / 2;
+	ubo->alpha = alpha;
 
 	std::array src_image_info{
 	        vk::DescriptorImageInfo{

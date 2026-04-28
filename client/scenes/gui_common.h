@@ -1,6 +1,7 @@
 /*
  * WiVRn VR streaming
- * Copyright (C) 2025  Patrick Nicolas <patricknicolas@laposte.net>
+ * Copyright (C) 2022-2026  Guillaume Meunier <guillaume.meunier@centraliens.net>
+ * Copyright (C) 2022-2026  Patrick Nicolas <patricknicolas@laposte.net>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,32 +19,26 @@
 
 #pragma once
 
-#include "video_encoder.h"
-#include "vk/allocation.h"
+class configuration;
+class imgui_context;
 
-#include <array>
+namespace xr
+{
+class instance;
+class session;
+} // namespace xr
 
 namespace wivrn
 {
 
-class video_encoder_raw : public video_encoder
+namespace gui
 {
-	vk_bundle & vk;
-	vk::raii::CommandPool cmd_pool;
 
-	struct in_t
-	{
-		vk::raii::Fence fence = nullptr;
-		vk::raii::CommandBuffer cmd = nullptr;
-		buffer_allocation buffer;
-	};
-	std::array<in_t, num_slots> in;
+bool refresh_rate(
+        xr::instance & instance,
+        xr::session & session,
+        imgui_context & imgui_ctx,
+        configuration & config);
 
-public:
-	video_encoder_raw(wivrn::vk_bundle & vk, const encoder_settings & settings, uint8_t stream_idx);
-
-	void present_image(vk::Image y_cbcr, vk::SemaphoreSubmitInfo info, uint8_t slot, uint64_t frame_index) override;
-
-	std::optional<data> encode(uint8_t slot, uint64_t frame_id) override;
-};
+}
 } // namespace wivrn

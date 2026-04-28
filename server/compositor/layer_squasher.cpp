@@ -349,7 +349,9 @@ layer_squasher::layer_squasher(vk_bundle & vk, vk::Extent3D target_size) :
 
                       }
                               .get(),
-                      VmaAllocationCreateInfo{},
+                      VmaAllocationCreateInfo{
+                              .usage = VMA_MEMORY_USAGE_AUTO,
+                      },
                       "layer squasher target"},
         render_view_srgb{make_view(vk, render_target, vk::ImageUsageFlagBits::eSampled, 0), make_view(vk, render_target, vk::ImageUsageFlagBits::eSampled, 1)},
         render_view_unorm{make_view(vk, render_target, vk::ImageUsageFlagBits::eStorage, 0), make_view(vk, render_target, vk::ImageUsageFlagBits::eStorage, 1)},
@@ -405,7 +407,7 @@ layer_squasher::do_layers(
 	        .subresourceRange = {
 	                .aspectMask = vk::ImageAspectFlagBits::eColor,
 	                .levelCount = 1,
-	                .layerCount = vk::RemainingArrayLayers,
+	                .layerCount = view_count,
 	        },
 	};
 
@@ -619,18 +621,6 @@ layer_squasher::do_layers(
 		cmd.dispatch(w, h, 1);
 	}
 
-	im_barrier.oldLayout = im_barrier.newLayout;
-	im_barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-	im_barrier.srcAccessMask = im_barrier.dstAccessMask;
-	im_barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
-	cmd.pipelineBarrier(
-	        vk::PipelineStageFlagBits::eComputeShader,
-	        vk::PipelineStageFlagBits::eComputeShader,
-	        {},
-	        {},
-	        {},
-	        im_barrier);
-
 	std::array<xrt_rect, 2> rect;
 	for (auto [v, r]: std::ranges::zip_view(viewports, rect))
 		r = {.extent = {.w = int(v.w), .h = int(v.h)}};
@@ -688,6 +678,21 @@ xrt_fov layer_squasher::do_projection_layer(
 		        dvd.sub.array_index);
 		ubo.layers[cur_layer].image_info.depth_image_index = cur_image++;
 	}
+
+	// Chroma key - per layer settings
+	const xrt_layer_chroma_key_data & ck = (layer_data.type == XRT_LAYER_PROJECTION_DEPTH)
+	                                               ? layer_data.depth.chroma_key
+	                                               : layer_data.proj.chroma_key;
+	ubo.layers[cur_layer].chroma_key = {
+	        .hsv_min_h = ck.hsv_min.h,
+	        .hsv_min_s = ck.hsv_min.s,
+	        .hsv_min_v = ck.hsv_min.v,
+	        .hsv_max_h = ck.hsv_max.h,
+	        .hsv_max_s = ck.hsv_max.s,
+	        .hsv_max_v = ck.hsv_max.v,
+	        .curve = ck.curve,
+	        .despill = ck.despill,
+	};
 
 	set_post_transform_rect(
 	        &layer_data,
@@ -799,8 +804,6 @@ xrt_fov layer_squasher::do_quad_layer(const comp_layer & layer,
 	                     .angle_right = -M_PI,
 	                     .angle_up = -M_PI,
 	                     .angle_down = M_PI};
-	if (normal_view_space.z < 0)
-		return layer_fov; // back face is not visible
 	for (auto & c: corners)
 	{
 		math_matrix_4x4_transform_vec3(&quad_pose, &c, &c);
@@ -846,9 +849,6 @@ xrt_fov layer_squasher::do_cylinder_layer(const comp_layer & layer,
 	        false,
 	        &ubo.layers[cur_layer].post_transforms);
 
-	ubo.layers[cur_layer].cylinder_data.central_angle = c.central_angle;
-	ubo.layers[cur_layer].cylinder_data.aspect_ratio = c.aspect_ratio;
-
 	xrt_vec3 scale{1.f, 1.f, 1.f};
 
 	xrt_matrix_4x4 model;
@@ -880,7 +880,7 @@ xrt_fov layer_squasher::do_cylinder_layer(const comp_layer & layer,
 	math_matrix_4x4_multiply(&v, &quad_pose, &quad_pose);
 
 	const float w = sin(c.central_angle / 2) * c.radius;
-	const float h = c.radius * c.central_angle / 2 * c.aspect_ratio;
+	const float h = c.radius * c.central_angle / (2 * c.aspect_ratio);
 	const float d = c.radius * cos(c.central_angle / 2);
 	std::array corners{
 	        xrt_vec3{-w, -h, -c.radius},
