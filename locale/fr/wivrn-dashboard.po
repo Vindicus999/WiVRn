@@ -1,21 +1,20 @@
 #
-# SPDX-FileCopyrightText: 2025 Guillaume Meunier <guillaume.meunier@centraliens.net>
-# Guillaume Meunier <guillaume.meunier@centraliens.net>, 2025-2026.
+#  <>, 2025-2026.
 #
 msgid ""
 msgstr ""
 "Project-Id-Version: WiVRn-dashboard\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 08:04+0200\n"
-"PO-Revision-Date: 2026-04-11 08:04+0200\n"
+"POT-Creation-Date: 2026-05-31 21:59+0200\n"
+"PO-Revision-Date: 2026-05-31 22:00+0200\n"
 "Last-Translator: Guillaume Meunier <guillaume.meunier@centraliens.net>\n"
 "Language-Team: French <>\n"
 "Language: French\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"Plural-Forms: nplurals=2; plural=(n > 1);\n"
-"X-Generator: Gtranslator 48.0\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"X-Generator: Gtranslator 50.0\n"
 
 #: dashboard/apk_installer.cpp:137
 #, kde-format
@@ -136,9 +135,9 @@ msgid ""
 "master/docs/building.md#client-headset\">documentation</a> to build your own "
 "client."
 msgstr ""
-"Suivez les instructions dans la <a href=\"https://github.com/WiVRn/WiVRn/"
-"blob/master/docs/building.md#client-headset\">documentation</a> pour "
-"construire votre propre client."
+"Suivez les instructions de la <a href=\"https://github.com/WiVRn/WiVRn/blob/"
+"master/docs/building.md#client-headset\">documentation</a> pour construire "
+"votre propre client."
 
 #: dashboard/qml/ConnectUsbDialog.qml:11
 #, kde-format
@@ -218,7 +217,7 @@ msgstr "Nom du casque…"
 #: dashboard/qml/HeadsetsPage.qml:128
 #, kde-format
 msgid "Remove"
-msgstr "Enlever"
+msgstr "Supprimer"
 
 #: dashboard/qml/HeadsetsPage.qml:143
 #, kde-format
@@ -359,7 +358,7 @@ msgstr ""
 #: dashboard/qml/Main.qml:240
 #, kde-format
 msgid "Restart the server for configuration changes to take effect"
-msgstr "Redémarez le serveur pour appliquer les changements"
+msgstr "Redémarez le serveur pour appliquer les modifications"
 
 #: dashboard/qml/Main.qml:246
 #, kde-format
@@ -480,7 +479,7 @@ msgctxt "choose a custom application to start"
 msgid "Custom"
 msgstr "Personnalisé"
 
-#: dashboard/qml/SelectGame.qml:70
+#: dashboard/qml/SelectGame.qml:61
 #, kde-format
 msgctxt "browse a file to choose the application to start"
 msgid "Browse"
@@ -533,27 +532,32 @@ msgid "\"Auto\" will use hardware acceleration if it is available"
 msgstr ""
 "« Automatique » utilisera l'accélération matérielle si elle est disponible"
 
-#: dashboard/qml/SettingsPage.qml:88
+#: dashboard/qml/SettingsPage.qml:89
 #, kde-format
 msgid "Autostart application:"
 msgstr "Auto démarrage :"
 
-#: dashboard/qml/SettingsPage.qml:96
+#: dashboard/qml/SettingsPage.qml:94
+#, kde-format
+msgid "Auto connect from USB"
+msgstr "Connecter automatiquement par USB"
+
+#: dashboard/qml/SettingsPage.qml:102
 #, kde-format
 msgid "Advanced options"
 msgstr "Paramètres avancés"
 
-#: dashboard/qml/SettingsPage.qml:102
+#: dashboard/qml/SettingsPage.qml:108
 #, kde-format
 msgid "Check system configuration on start"
 msgstr "Vérifier les paramètres système au démarrage"
 
-#: dashboard/qml/SettingsPage.qml:108
+#: dashboard/qml/SettingsPage.qml:114
 #, kde-format
 msgid "Forward keyboard & mouse from headset"
 msgstr "Transmettre le clavier et la souris depuis le casque"
 
-#: dashboard/qml/SettingsPage.qml:111
+#: dashboard/qml/SettingsPage.qml:117
 #, kde-format
 msgid ""
 "Keyboard and mouse connected to the client will act as if connected to the "
@@ -562,19 +566,19 @@ msgid ""
 msgstr ""
 "Le clavier et la souris connectés au casque agiront comme s'ils étaient "
 "connectés au serveur. L'OS du client peut réserver certaines touches et "
-"combinaisons, qui ne peuvent pas être transmises."
+"combinaisons, qui ne peuvent donc pas être transmises."
 
-#: dashboard/qml/SettingsPage.qml:116
+#: dashboard/qml/SettingsPage.qml:122
 #, kde-format
 msgid "Enable debug window"
 msgstr "Activer la fenêtre de débogage"
 
-#: dashboard/qml/SettingsPage.qml:123
+#: dashboard/qml/SettingsPage.qml:129
 #, kde-format
 msgid "Enable SteamVR tracked devices support"
 msgstr "Activer le support des manettes SteamVR"
 
-#: dashboard/qml/SettingsPage.qml:126
+#: dashboard/qml/SettingsPage.qml:132
 #, kde-format
 msgid ""
 "Allows the use of lighthouse-based controllers and trackers.\n"
@@ -588,49 +592,49 @@ msgstr ""
 "WiVRn.\n"
 "Un utilitaire tiers tel que motoc est nécessaire pour la calibration."
 
-#: dashboard/qml/SettingsPage.qml:134
+#: dashboard/qml/SettingsPage.qml:140
 #, kde-format
 msgid "Custom adb location"
 msgstr "Spécifier l'emplacement d'adb"
 
-#: dashboard/qml/SettingsPage.qml:145
+#: dashboard/qml/SettingsPage.qml:151
 #, kde-format
 msgid "Adb location:"
-msgstr "Emplacement d'adb"
+msgstr "Emplacement d'adb :"
 
-#: dashboard/qml/SettingsPage.qml:154
+#: dashboard/qml/SettingsPage.qml:160
 #, kde-format
 msgctxt "browse a file to choose the adb binary"
 msgid "Browse"
 msgstr "Parcourir"
 
-#: dashboard/qml/SettingsPage.qml:164
+#: dashboard/qml/SettingsPage.qml:170
 #, kde-format
 msgid "Default"
 msgstr "Par défaut"
 
-#: dashboard/qml/SettingsPage.qml:178
+#: dashboard/qml/SettingsPage.qml:184
 #, kde-format
 msgctxt "set a custom OpenVR compatibility library"
 msgid "Custom"
 msgstr "Personnalisé"
 
-#: dashboard/qml/SettingsPage.qml:183
+#: dashboard/qml/SettingsPage.qml:189
 #, kde-format
 msgid "Disabled"
 msgstr "Désactivé"
 
-#: dashboard/qml/SettingsPage.qml:199
+#: dashboard/qml/SettingsPage.qml:205
 #, kde-format
 msgid "OpenVR compatibility library:"
 msgstr "Compatibilité OpenVR :"
 
-#: dashboard/qml/SettingsPage.qml:229
+#: dashboard/qml/SettingsPage.qml:235
 #, kde-format
 msgid "Library path, excluding bin/linux64/vrclient.so"
 msgstr "Chemin de la bibliothèque, en enlevant bin/linux64/vrclient.so"
 
-#: dashboard/qml/SettingsPage.qml:234
+#: dashboard/qml/SettingsPage.qml:240
 #, kde-format
 msgctxt "browse to choose the OpenVR compatility to use"
 msgid "Browse"
@@ -649,8 +653,8 @@ msgstr ""
 #, kde-format
 msgid "Paste this in the Steam launch options for the app you want to start"
 msgstr ""
-"Collez ceci dans les options de lancement de Steam de l'appli que vous "
-"voulez démarrer"
+"Collez ceci dans les options de lancement de l'appli Steam que vous voulez "
+"démarrer"
 
 #: dashboard/qml/SteamLaunchOptions.qml:26
 #, kde-format
@@ -671,11 +675,11 @@ msgstr "Je ne trouve pas l'application WiVRn sur mon casque"
 #: dashboard/qml/TroubleshootPage.qml:21 dashboard/qml/WizardPage.qml:353
 #, kde-format
 msgid ""
-"If you installed WiVRn over USB on a Meta headset, the app is in the "
+"If you installed WiVRn over USB on a Meta or Pico headset, the app is in the "
 "\"unknown sources\" section."
 msgstr ""
-"Si vous avez installé WiVRn par USB sur un casque Meta, l'application est "
-"dans la section « sources inconnues »."
+"Si vous avez installé WiVRn par USB sur un casque Meta ou Pico, "
+"l'application est dans la section « sources inconnues »"
 
 #: dashboard/qml/TroubleshootPage.qml:24
 #, kde-format
@@ -890,7 +894,7 @@ msgid ""
 "<ul><li>The ADB udev rules are installed</li><li>The headset is in <a "
 "href=\"#\">developer mode</a></li></ul></p>"
 msgstr ""
-"<p>Aucun casque détecté. Assurez-vous que:\n"
+"<p>Aucun casque détecté. Assurez-vous que :\n"
 "<ul><li>Les règles udev sont installées</li><li>Le casque est en <a "
 "href=\"#\">mode développeur</a></li></ul></p>"
 
@@ -968,7 +972,7 @@ msgid ""
 "before connecting."
 msgstr ""
 "Pour connecter un autre casque, assurez-vous que l'appairage est activé dans "
-"le tableau de bord avant de vous connecter."
+"le tableau de bord avant de le connecter."
 
 #: dashboard/qml/WizardPage.qml:423 dashboard/qml/WizardPage.qml:460
 #, kde-format
@@ -980,15 +984,23 @@ msgstr "Finir"
 msgid "Finished"
 msgstr "Terminé"
 
-#: dashboard/wivrn_server.cpp:540
+#: dashboard/wivrn_server.cpp:565
 #, kde-format
 msgid "xrizer"
 msgstr "xrizer"
 
-#: dashboard/wivrn_server.cpp:541
+#: dashboard/wivrn_server.cpp:566
 #, kde-format
 msgid "Open Composite"
 msgstr "Open Composite"
+
+#, kde-format
+#~ msgid ""
+#~ "If you installed WiVRn over USB on a Meta headset, the app is in the "
+#~ "\"unknown sources\" section."
+#~ msgstr ""
+#~ "Si vous avez installé WiVRn par USB sur un casque Meta, l'application est "
+#~ "dans la section « sources inconnues »."
 
 #, kde-format
 #~ msgid "PIN: %1"

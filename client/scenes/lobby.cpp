@@ -23,7 +23,6 @@
 #include "constants.h"
 #include "glm/geometric.hpp"
 #include "hand_model.h"
-#include "hardware.h"
 #include "imgui.h"
 #include "openxr/openxr.h"
 #include "protocol_version.h"
@@ -1114,7 +1113,7 @@ void scenes::lobby::on_focused()
 
 	auto views = system.view_configuration_views(viewconfig);
 	assert(views.size() == 2); // FIXME
-	stream_view = override_view(views[0], guess_model());
+	stream_view = application::get_hmd_traits().override_view(views[0]);
 	width = views[0].recommendedImageRectWidth;
 	height = views[0].recommendedImageRectHeight;
 
@@ -1135,7 +1134,7 @@ void scenes::lobby::on_focused()
 		config.save();
 	}
 
-	std::string profile = controller_name();
+	const auto & profile = application::get_hmd_traits().controller_profile;
 	input.emplace(
 	        *this,
 	        "assets://controllers/" + profile + "/profile.json",
@@ -1148,7 +1147,7 @@ void scenes::lobby::on_focused()
 
 	for (auto i: {xr::spaces::aim_left, xr::spaces::aim_right, xr::spaces::grip_left, xr::spaces::grip_right})
 	{
-		auto [p, q] = input->offset[i] = controller_offset(controller_name(), i);
+		auto [p, q] = input->offset[i] = application::get_hmd_traits().controller_offset(i);
 
 		auto rot = glm::degrees(glm::eulerAngles(q));
 		spdlog::info("Initializing offset of space {} to ({}, {}, {}) mm, ({}, {}, {})°",
@@ -1177,8 +1176,25 @@ void scenes::lobby::on_focused()
 	{
 		left_hand = session.create_hand_tracker(XR_HAND_LEFT_EXT);
 		right_hand = session.create_hand_tracker(XR_HAND_RIGHT_EXT);
-		hand_model::add_hand(*this, XR_HAND_LEFT_EXT, "assets://left-hand.glb", layer_controllers);
-		hand_model::add_hand(*this, XR_HAND_RIGHT_EXT, "assets://right-hand.glb", layer_controllers);
+
+		bool using_hand_mesh_fb = false;
+		if (system.hand_mesh_fb_supported())
+		{
+			const auto * left_hand_mesh_fb = left_hand->mesh();
+			const auto * right_hand_mesh_fb = right_hand->mesh();
+			if (left_hand_mesh_fb and right_hand_mesh_fb)
+			{
+				hand_model::add_hand(*this, XR_HAND_LEFT_EXT, *left_hand_mesh_fb, layer_controllers);
+				hand_model::add_hand(*this, XR_HAND_RIGHT_EXT, *right_hand_mesh_fb, layer_controllers);
+				using_hand_mesh_fb = true;
+			}
+		}
+
+		if (!using_hand_mesh_fb)
+		{
+			hand_model::add_hand(*this, XR_HAND_LEFT_EXT, "assets://left-hand.glb", layer_controllers);
+			hand_model::add_hand(*this, XR_HAND_RIGHT_EXT, "assets://right-hand.glb", layer_controllers);
+		}
 	}
 
 	std::vector imgui_inputs{
@@ -1402,6 +1418,7 @@ scene::meta & scenes::lobby::get_meta_scene()
 	                                "/interaction_profiles/bytedance/pico_neo3_controller",
 	                                "/interaction_profiles/bytedance/pico4_controller",
 	                                "/interaction_profiles/bytedance/pico4s_controller",
+	                                "/interaction_profiles/yvr/touch_controller_yvr",
 	                                "/interaction_profiles/htc/vive_focus3_controller",
 	                        },
 	                        {

@@ -177,7 +177,7 @@ std::array<wivrn::compositor::image, 2> make_images(wivrn::vk_bundle & vk, vk::C
 		                        .subresourceRange = {
 		                                .aspectMask = vk::ImageAspectFlagBits::ePlane0,
 		                                .levelCount = 1,
-		                                .layerCount = vk::RemainingArrayLayers,
+		                                .layerCount = image_info.get().arrayLayers,
 		                        },
 		                },
 		        },
@@ -191,7 +191,7 @@ std::array<wivrn::compositor::image, 2> make_images(wivrn::vk_bundle & vk, vk::C
 		                        .subresourceRange = {
 		                                .aspectMask = vk::ImageAspectFlagBits::ePlane1,
 		                                .levelCount = 1,
-		                                .layerCount = vk::RemainingArrayLayers,
+		                                .layerCount = image_info.get().arrayLayers,
 		                        },
 		                },
 		        }};
@@ -387,7 +387,7 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 		                .subresourceRange = {
 		                        .aspectMask = vk::ImageAspectFlagBits::eColor,
 		                        .levelCount = 1,
-		                        .layerCount = vk::RemainingArrayLayers,
+		                        .layerCount = 2,
 		                },
 		        });
 	}
@@ -402,7 +402,7 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 	                .subresourceRange = {
 	                        .aspectMask = vk::ImageAspectFlagBits::eColor,
 	                        .levelCount = 1,
-	                        .layerCount = vk::RemainingArrayLayers,
+	                        .layerCount = images[i].image.info().arrayLayers,
 	                },
 	        });
 
@@ -434,7 +434,7 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 	{
 		if (encoder->stream_idx == 2 and not view_info.alpha)
 			continue;
-		else if (encoder->need_transfer or encoder->target_queue == vk.queue_family_index)
+		else if (encoder->need_transfer or encoder->target_queue == vk.queue.family_index)
 		{
 			image_barriers.push_back(
 			        vk::ImageMemoryBarrier2{
@@ -442,7 +442,17 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 			                .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
 			                .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
 			                .dstAccessMask = vk::AccessFlagBits2::eMemoryRead,
-			                .srcQueueFamilyIndex = vk.queue_family_index,
+			                // For a queue-family ownership transfer in EXCLUSIVE
+			                // sharing mode, the release barrier's old/new layout
+			                // must match the encoder-side acquire. newLayout is
+			                // the encoder's target_layout; per the VkImageMemoryBarrier2
+			                // spec the layout transition is executed exactly once
+			                // between the queues, so this single QFOT barrier covers
+			                // both the queue-family transfer and the layout
+			                // transition the encoder needs.
+			                .oldLayout = vk::ImageLayout::eGeneral,
+			                .newLayout = encoder->target_layout,
+			                .srcQueueFamilyIndex = vk.queue.family_index,
 			                .dstQueueFamilyIndex = encoder->target_queue,
 			                .image = images[i].image,
 			                .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
@@ -472,8 +482,8 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 		vk::CommandBufferSubmitInfo cmd_info{
 		        .commandBuffer = cmd,
 		};
-		std::unique_lock lock{vk.queue_mutex};
-		vk.queue.submit2(vk::SubmitInfo2{
+		std::unique_lock lock{vk.queue.mutex};
+		vk.queue.queue.submit2(vk::SubmitInfo2{
 		        .commandBufferInfoCount = 1,
 		        .pCommandBufferInfos = &cmd_info,
 		        .signalSemaphoreInfoCount = 1,
@@ -481,6 +491,7 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 		});
 	}
 
+	pacer.mark_timing_point(COMP_TARGET_TIMING_POINT_SUBMIT_END, frame.rendering.id, os_monotonic_get_ns());
 	auto info = pacer.present_to_info(frame.rendering.desired_present_time_ns);
 
 	for (auto & encoder: encoders)
@@ -541,7 +552,7 @@ xrt_result_t compositor::get_display_refresh_rate(float * hz)
 	auto settings = session.get_settings();
 	// there should not be rounding errors, hz must be one of the available refresh rates
 	*hz = frame_rate * settings->fps_divider;
-	assert(std::ranges::contains(session.headset_info_packet.available_refresh_rates, *hz));
+	assert(std::ranges::contains(session.get_info().available_refresh_rates, *hz));
 	return XRT_SUCCESS;
 }
 
@@ -671,7 +682,7 @@ compositor::compositor(wivrn_session & session) :
         session(session),
         cmd_pool(vk.device, vk::CommandPoolCreateInfo{
                                     .flags = vk::CommandPoolCreateFlagBits::eTransient,
-                                    .queueFamilyIndex = vk.queue_family_index,
+                                    .queueFamilyIndex = vk.queue.family_index,
                             }),
         query_pool(vk.device, vk::QueryPoolCreateInfo{
                                       .queryType = vk::QueryType::eTimestamp,
@@ -695,7 +706,7 @@ compositor::compositor(wivrn_session & session) :
 	        *vk.instance,
 	        *vk.physical_device,
 	        *vk.device,
-	        vk.queue_family_index,
+	        vk.queue.family_index,
 	        0,
 	        vk.has_device_ext(VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME),
 	        vk.has_device_ext(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME),
@@ -709,9 +720,7 @@ compositor::compositor(wivrn_session & session) :
 	c_base->vk.graphics_queue = nullptr;
 
 	if (c_base->vk.main_queue)
-		c_base->vk.main_queue->mutex = copy_mutex(vk.queue_mutex);
-	if (c_base->vk.encode_queue)
-		c_base->vk.encode_queue->mutex = copy_mutex(vk.encode_queue_mutex);
+		c_base->vk.main_queue->mutex = copy_mutex(vk.queue.mutex);
 
 	{
 		comp_vulkan_formats formats{};

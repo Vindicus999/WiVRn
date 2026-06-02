@@ -19,7 +19,6 @@
 
 #pragma once
 
-#include "hardware.h"
 #include "wivrn_discover.h"
 #include "wivrn_packets.h"
 
@@ -28,12 +27,22 @@
 #include <optional>
 #include <simdjson.h>
 #include <string>
+#include <openxr/openxr.h>
 
 namespace xr
 {
 class session;
 class system;
 } // namespace xr
+
+enum class feature
+{
+	microphone,
+	hand_tracking,
+	eye_gaze,
+	face_tracking,
+	body_tracking,
+};
 
 class configuration
 {
@@ -80,7 +89,7 @@ public:
 	float override_foveation_pitch = -10 * M_PI / 180;
 	float override_foveation_distance = 3;
 
-	bool high_power_mode;
+	bool high_power_mode = true;
 	uint32_t fps_divider = 1;
 
 	// Allow unsafe config values
@@ -109,8 +118,13 @@ public:
 	void set_stream_scale(float);
 	float get_stream_scale() const;
 
+	uint32_t max_bitrate(bool extended) const
+	{
+		return extended ? 800'000'000u : 200'000'000u;
+	}
+
 	uint32_t max_bitrate() const
 	{
-		return extended_config ? 800'000'000u : 200'000'000u;
+		return max_bitrate(extended_config);
 	}
 };

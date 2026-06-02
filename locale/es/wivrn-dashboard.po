@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: WiVRn-dashboard\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-11 08:03+0200\n"
+"POT-Creation-Date: 2026-05-31 21:58+0200\n"
 "PO-Revision-Date: 2025-11-19 20:20+0100\n"
 "Last-Translator: Álvaro De Quinta <blackcherry@danwin1210.de>\n"
 "Language-Team: Spanish <>\n"
@@ -481,7 +481,7 @@ msgctxt "choose a custom application to start"
 msgid "Custom"
 msgstr "Personalizado"
 
-#: dashboard/qml/SelectGame.qml:70
+#: dashboard/qml/SelectGame.qml:61
 #, kde-format
 msgctxt "browse a file to choose the application to start"
 msgid "Browse"
@@ -533,27 +533,32 @@ msgstr "x264 (codificación por software)"
 msgid "\"Auto\" will use hardware acceleration if it is available"
 msgstr "\"Auto\" utilizará aceleración por hardware si está disponible"
 
-#: dashboard/qml/SettingsPage.qml:88
+#: dashboard/qml/SettingsPage.qml:89
 #, kde-format
 msgid "Autostart application:"
 msgstr "Aplicación a autoiniciar:"
 
-#: dashboard/qml/SettingsPage.qml:96
+#: dashboard/qml/SettingsPage.qml:94
+#, kde-format
+msgid "Auto connect from USB"
+msgstr "Conectar automáticamente desde el USB"
+
+#: dashboard/qml/SettingsPage.qml:102
 #, kde-format
 msgid "Advanced options"
 msgstr "Opciones avanzadas"
 
-#: dashboard/qml/SettingsPage.qml:102
+#: dashboard/qml/SettingsPage.qml:108
 #, kde-format
 msgid "Check system configuration on start"
 msgstr "Comprobar configuración del sistema al iniciar"
 
-#: dashboard/qml/SettingsPage.qml:108
+#: dashboard/qml/SettingsPage.qml:114
 #, kde-format
 msgid "Forward keyboard & mouse from headset"
 msgstr "Pasar el teclado y raton del visor"
 
-#: dashboard/qml/SettingsPage.qml:111
+#: dashboard/qml/SettingsPage.qml:117
 #, kde-format
 msgid ""
 "Keyboard and mouse connected to the client will act as if connected to the "
@@ -564,17 +569,17 @@ msgstr ""
 "conectado al servidor. El SO del cliente podria reservarse ciertas teclas y "
 "combinaciones, los cuales no podrán ser enviados."
 
-#: dashboard/qml/SettingsPage.qml:116
+#: dashboard/qml/SettingsPage.qml:122
 #, kde-format
 msgid "Enable debug window"
 msgstr "Habilitar ventana de depuración"
 
-#: dashboard/qml/SettingsPage.qml:123
+#: dashboard/qml/SettingsPage.qml:129
 #, kde-format
 msgid "Enable SteamVR tracked devices support"
 msgstr "Habilitar soporte para dispositivos de seguimiento a través de SteamVR"
 
-#: dashboard/qml/SettingsPage.qml:126
+#: dashboard/qml/SettingsPage.qml:132
 #, kde-format
 msgid ""
 "Allows the use of lighthouse-based controllers and trackers.\n"
@@ -588,49 +593,49 @@ msgstr ""
 "Los dispositivos deben de estar encendidos antes de conectarte a WiVRn.\n"
 "Una herramienta externa como motoc será necesaria para la calibración."
 
-#: dashboard/qml/SettingsPage.qml:134
+#: dashboard/qml/SettingsPage.qml:140
 #, kde-format
 msgid "Custom adb location"
 msgstr "Ruta de adb personalizada"
 
-#: dashboard/qml/SettingsPage.qml:145
+#: dashboard/qml/SettingsPage.qml:151
 #, kde-format
 msgid "Adb location:"
 msgstr "Ruta de adb:"
 
-#: dashboard/qml/SettingsPage.qml:154
+#: dashboard/qml/SettingsPage.qml:160
 #, kde-format
 msgctxt "browse a file to choose the adb binary"
 msgid "Browse"
 msgstr "Explorar"
 
-#: dashboard/qml/SettingsPage.qml:164
+#: dashboard/qml/SettingsPage.qml:170
 #, kde-format
 msgid "Default"
 msgstr "Por defecto"
 
-#: dashboard/qml/SettingsPage.qml:178
+#: dashboard/qml/SettingsPage.qml:184
 #, kde-format
 msgctxt "set a custom OpenVR compatibility library"
 msgid "Custom"
 msgstr "Personalizado"
 
-#: dashboard/qml/SettingsPage.qml:183
+#: dashboard/qml/SettingsPage.qml:189
 #, kde-format
 msgid "Disabled"
 msgstr "Deshabilitado"
 
-#: dashboard/qml/SettingsPage.qml:199
+#: dashboard/qml/SettingsPage.qml:205
 #, kde-format
 msgid "OpenVR compatibility library:"
 msgstr "Librería de compatibilidad para OpenVR:"
 
-#: dashboard/qml/SettingsPage.qml:229
+#: dashboard/qml/SettingsPage.qml:235
 #, kde-format
 msgid "Library path, excluding bin/linux64/vrclient.so"
 msgstr "Ruta de librería, excluyendo bin/linux64/vrclient.so"
 
-#: dashboard/qml/SettingsPage.qml:234
+#: dashboard/qml/SettingsPage.qml:240
 #, kde-format
 msgctxt "browse to choose the OpenVR compatility to use"
 msgid "Browse"
@@ -671,11 +676,11 @@ msgstr "No puedo encontrar la aplicación WiVRn en mi visor"
 #: dashboard/qml/TroubleshootPage.qml:21 dashboard/qml/WizardPage.qml:353
 #, kde-format
 msgid ""
-"If you installed WiVRn over USB on a Meta headset, the app is in the "
+"If you installed WiVRn over USB on a Meta or Pico headset, the app is in the "
 "\"unknown sources\" section."
 msgstr ""
-"Si instalaste WiVRn por USB en un visor Meta, la aplicación estará en la "
-"sección de \"fuentes desconocidas\"."
+"Si has instalado WiVRn por USB en un visor de Meta o Pico, la aplicación "
+"estará en \"orígenes desconocidos\"."
 
 #: dashboard/qml/TroubleshootPage.qml:24
 #, kde-format
@@ -978,15 +983,23 @@ msgstr "Finalizar"
 msgid "Finished"
 msgstr "Terminado"
 
-#: dashboard/wivrn_server.cpp:540
+#: dashboard/wivrn_server.cpp:565
 #, kde-format
 msgid "xrizer"
 msgstr "xrizer"
 
-#: dashboard/wivrn_server.cpp:541
+#: dashboard/wivrn_server.cpp:566
 #, kde-format
 msgid "Open Composite"
 msgstr "Open Composite"
+
+#, kde-format
+#~ msgid ""
+#~ "If you installed WiVRn over USB on a Meta headset, the app is in the "
+#~ "\"unknown sources\" section."
+#~ msgstr ""
+#~ "Si instalaste WiVRn por USB en un visor Meta, la aplicación estará en la "
+#~ "sección de \"fuentes desconocidas\"."
 
 #, kde-format
 #~ msgid "PIN: %1"

@@ -338,7 +338,7 @@ void scenes::stream::tracking()
 	decltype(to_headset::tracking_control::pattern) pattern;
 	size_t pattern_position = 0;
 
-	XrDuration frame_duration;
+	XrDuration frame_duration{};
 	XrTime pattern_begin = instance.now();
 
 	while (state_ != state::shutdown)
@@ -493,36 +493,31 @@ void scenes::stream::tracking()
 							break;
 						case wivrn::device_id::EYE_GAZE:
 							// Eye gaze uses view pose as the origin
-							switch (guess_model())
+							if (application::get_hmd_traits().view_locate)
+								tracking.device_poses.push_back(locate_space(item.device, spaces[item.device], spaces[wivrn::device_id::HEAD], tracking.timestamp));
+							else
 							{
-								case model::pico_4_pro:
-								case model::pico_4_enterprise: {
-									// Pico headsets fail to locate gaze relative to view
-									auto gaze = locate_space(item.device, spaces[item.device], world_space, tracking.timestamp);
-									auto view_pose = locate_space(item.device, view_space, world_space, tracking.timestamp);
-									glm::quat gaze_quat(gaze.pose.orientation.w, gaze.pose.orientation.x, gaze.pose.orientation.y, gaze.pose.orientation.z);
-									glm::quat view_quat(view_pose.pose.orientation.w, view_pose.pose.orientation.x, view_pose.pose.orientation.y, view_pose.pose.orientation.z);
-									gaze_quat = glm::conjugate(view_quat) * gaze_quat;
-									using flags = from_headset::tracking::flags;
-									tracking.device_poses.push_back(
-									        from_headset::tracking::pose{
-									                // Zero position and velocities
-									                .pose = {
-									                        .orientation = {
-									                                .x = gaze_quat.x,
-									                                .y = gaze_quat.y,
-									                                .z = gaze_quat.z,
-									                                .w = gaze_quat.w,
-									                        },
-									                },
-									                .device = item.device,
-									                .flags = uint8_t(gaze.flags & view_pose.flags & ~(flags::linear_velocity_valid | flags::angular_velocity_valid)),
-									        });
-								}
-								break;
-								default:
-									tracking.device_poses.push_back(locate_space(item.device, spaces[item.device], spaces[wivrn::device_id::HEAD], tracking.timestamp));
-									break;
+								// Pico headsets fail to locate gaze relative to view
+								auto gaze = locate_space(item.device, spaces[item.device], world_space, tracking.timestamp);
+								auto view_pose = locate_space(item.device, view_space, world_space, tracking.timestamp);
+								glm::quat gaze_quat(gaze.pose.orientation.w, gaze.pose.orientation.x, gaze.pose.orientation.y, gaze.pose.orientation.z);
+								glm::quat view_quat(view_pose.pose.orientation.w, view_pose.pose.orientation.x, view_pose.pose.orientation.y, view_pose.pose.orientation.z);
+								gaze_quat = glm::conjugate(view_quat) * gaze_quat;
+								using flags = from_headset::tracking::flags;
+								tracking.device_poses.push_back(
+								        from_headset::tracking::pose{
+								                // Zero position and velocities
+								                .pose = {
+								                        .orientation = {
+								                                .x = gaze_quat.x,
+								                                .y = gaze_quat.y,
+								                                .z = gaze_quat.z,
+								                                .w = gaze_quat.w,
+								                        },
+								                },
+								                .device = item.device,
+								                .flags = uint8_t(gaze.flags & view_pose.flags & ~(flags::linear_velocity_valid | flags::angular_velocity_valid)),
+								        });
 							}
 							break;
 						case wivrn::device_id::FACE:
@@ -705,6 +700,7 @@ void scenes::stream::on_interaction_profile_changed(const XrEventDataInteraction
 			DO_PROFILE(meta, touch_controller_rift_cv1)
 			DO_PROFILE(meta, touch_controller_quest_1_rift_s)
 			DO_PROFILE(meta, touch_controller_quest_2)
+			DO_PROFILE(yvr, touch_controller_yvr)
 			DO_PROFILE(samsung, odyssey_controller)
 			DO_PROFILE(valve, index_controller)
 
@@ -759,37 +755,30 @@ void scenes::stream::send_derived_pose()
 		{
 			// This may happen if the runtime does not support palm ext
 			// check if we have a device specific offset
-			switch (guess_model())
+			if (not application::get_hmd_traits().hand_interaction_grip_surface)
 			{
-				case model::oculus_quest:
-				case model::oculus_quest_2:
-				case model::meta_quest_pro:
-				case model::meta_quest_3:
-				case model::meta_quest_3s:
-					switch (target)
-					{
-						case device_id::LEFT_PALM:
-						case device_id::RIGHT_PALM: {
-							glm::quat q(glm::vec3(glm::radians(-60.), 0, 0));
-							network_session->send_control(from_headset::derived_pose{
-							        .source = source,
-							        .target = target,
-							        .relation = {
-							                .orientation = {
-							                        .x = q.x,
-							                        .y = q.y,
-							                        .z = q.z,
-							                        .w = q.w,
-							                },
-							        },
-							});
-						}
-						break;
-						default:
-							break;
+				switch (target)
+				{
+					case device_id::LEFT_PALM:
+					case device_id::RIGHT_PALM: {
+						glm::quat q(glm::vec3(glm::radians(-60.), 0, 0));
+						network_session->send_control(from_headset::derived_pose{
+						        .source = source,
+						        .target = target,
+						        .relation = {
+						                .orientation = {
+						                        .x = q.x,
+						                        .y = q.y,
+						                        .z = q.z,
+						                        .w = q.w,
+						                },
+						        },
+						});
 					}
-				default:
 					break;
+					default:
+						break;
+				}
 			}
 		}
 		else

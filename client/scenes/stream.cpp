@@ -33,7 +33,6 @@
 #include "audio/audio.h"
 #include "boost/pfr/core.hpp"
 #include "decoder/shard_accumulator.h"
-#include "hardware.h"
 #include "inplace_vector.hpp"
 #include "spdlog/spdlog.h"
 #include "utils/named_thread.h"
@@ -217,7 +216,7 @@ std::shared_ptr<scenes::stream> scenes::stream::create(std::unique_ptr<wivrn_ses
 
 		{
 			auto view = self->system.view_configuration_views(self->viewconfig)[0];
-			view = override_view(view, guess_model());
+			view = application::get_hmd_traits().override_view(view);
 
 			info.render_eye_width = view.recommendedImageRectWidth * config.resolution_scale;
 			info.render_eye_height = view.recommendedImageRectHeight * config.resolution_scale;
@@ -421,7 +420,7 @@ void scenes::stream::on_focused()
 {
 	gui_status_last_change = instance.now();
 
-	std::string profile = controller_name();
+	const auto & profile = application::get_hmd_traits().controller_profile;
 	input.emplace(
 	        *this,
 	        "assets://controllers/" + profile + "/profile.json",
@@ -434,7 +433,7 @@ void scenes::stream::on_focused()
 
 	for (auto i: {xr::spaces::aim_left, xr::spaces::aim_right, xr::spaces::grip_left, xr::spaces::grip_right})
 	{
-		auto [p, q] = input->offset[i] = controller_offset(controller_name(), i);
+		auto [p, q] = input->offset[i] = application::get_hmd_traits().controller_offset(i);
 
 		auto rot = glm::degrees(glm::eulerAngles(q));
 		spdlog::info("Initializing offset of space {} to ({}, {}, {}) mm, ({}, {}, {})°",
@@ -684,41 +683,34 @@ void scenes::stream::update_gui_position(xr::spaces controller)
 {
 	std::optional<std::pair<glm::vec3, glm::quat>> aim;
 
-	switch (guess_model())
+	if (application::get_hmd_traits().view_locate)
 	{
-		case model::pico_4:
-		case model::pico_4s:
-		case model::pico_4_pro:
-		case model::pico_4_enterprise: {
-			// Pico fails to find its controllers within view space, so use the head position in
-			// world space as a reference
-			aim = application::locate_controller(
-			        application::space(controller),
-			        application::space(xr::spaces::world),
-			        predicted_display_time);
-
-			auto head_position = application::locate_controller(application::space(xr::spaces::view),
-			                                                    application::space(xr::spaces::world),
-			                                                    predicted_display_time);
-			if (not aim || not head_position)
-				return;
-
-			aim->first = glm::conjugate(head_position->second) * (aim->first - head_position->first);
-			aim->second = glm::conjugate(head_position->second) * aim->second;
-
-			break;
-		}
-		default:
-			aim = application::locate_controller(
-			        application::space(controller),
-			        application::space(xr::spaces::view),
-			        predicted_display_time);
-
-			if (not aim)
-				return;
-
-			break;
+		aim = application::locate_controller(
+		        application::space(controller),
+		        application::space(xr::spaces::view),
+		        predicted_display_time);
 	}
+	else
+	{
+		// Pico fails to find its controllers within view space, so use the head position in
+		// world space as a reference
+		aim = application::locate_controller(
+		        application::space(controller),
+		        application::space(xr::spaces::world),
+		        predicted_display_time);
+
+		auto head_position = application::locate_controller(application::space(xr::spaces::view),
+		                                                    application::space(xr::spaces::world),
+		                                                    predicted_display_time);
+		if (not(aim and head_position))
+			return;
+
+		aim->first = glm::conjugate(head_position->second) * (aim->first - head_position->first);
+		aim->second = glm::conjugate(head_position->second) * aim->second;
+	}
+
+	if (not aim)
+		return;
 
 	auto [offset_position, offset_orientation] = input->offset[controller];
 
@@ -941,7 +933,8 @@ void scenes::stream::render(const XrFrameState & frame_state)
 	}
 
 	// Allow the headset to time warp if we are redisplaying a frame
-	if (std::ranges::any_of(current_blit_handles, [](const auto & h) { return h and h->feedback.times_displayed < 2; }) or
+	if ((not application::get_hmd_traits().discard_frame) or
+	    std::ranges::any_of(current_blit_handles, [](const auto & h) { return h and h->feedback.times_displayed < 2; }) or
 	    is_gui_interactable())
 	{
 		XrExtent2Di extents[view_count];
@@ -1254,6 +1247,7 @@ scene::meta & scenes::stream::get_meta_scene()
 	                                "/interaction_profiles/bytedance/pico_neo3_controller",
 	                                "/interaction_profiles/bytedance/pico4_controller",
 	                                "/interaction_profiles/bytedance/pico4s_controller",
+	                                "/interaction_profiles/yvr/touch_controller_yvr",
 	                                "/interaction_profiles/htc/vive_focus3_controller",
 	                        },
 	                        {

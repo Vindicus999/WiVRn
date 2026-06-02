@@ -89,6 +89,11 @@ Kirigami.ScrollablePage {
                 Kirigami.FormData.label: i18n("Autostart application:")
             }
 
+            Controls.CheckBox {
+                id: auto_connect_usb
+                text: i18n("Auto connect from USB")
+            }
+
             Kirigami.Separator {
                 Kirigami.FormData.isSection: true
             }
@@ -278,13 +283,15 @@ Kirigami.ScrollablePage {
         }
         DashboardSettings.adb_custom = adb_custom.checked;
         DashboardSettings.adb_location = adb_location.text;
-        Adb.setPath(DashboardSettings.adb_custom.checked ? adb_location.text : "adb");
+        Adb.setPath(adb_custom.checked ? adb_location.text : "adb");
 
         DashboardSettings.show_system_checks = show_system_checks.checked;
 
         Settings.debugGui = debug_gui.checked;
         Settings.steamVrLh = steamvr_lh.checked;
         Settings.hidForwarding = hid_forwarding.checked;
+
+        DashboardSettings.auto_connect_usb = auto_connect_usb.checked;
     }
 
     function load() {
@@ -292,6 +299,8 @@ Kirigami.ScrollablePage {
         debug_gui.checked = Settings.debugGui;
         steamvr_lh.checked = Settings.steamVrLh;
         hid_forwarding.checked = Settings.hidForwarding;
+
+        auto_connect_usb.checked = DashboardSettings.auto_connect_usb;
 
         openvr_combobox.load()
 
