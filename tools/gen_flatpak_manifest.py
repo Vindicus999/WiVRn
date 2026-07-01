@@ -50,7 +50,7 @@ if __name__ == "__main__":
 
     # Get dependencies for xrizer
     xrizer_repo = "https://github.com/Supreeeme/xrizer"
-    xrizer_commit = re.findall(f"url: {xrizer_repo}.git[ \n]*tag: ([a-f0-9]*)", template)[0]
+    xrizer_commit = re.findall(f"url: {xrizer_repo}.git[ \n]*commit: ([a-f0-9]*)", template)[0]
     lock = urlopen(f"{xrizer_repo}/raw/{xrizer_commit}/Cargo.lock")
     gen_src = asyncio.run(flatpakcargogenerator.generate_sources(
             toml.loads(lock.read().decode())))
@@ -63,20 +63,23 @@ if __name__ == "__main__":
     boost_sha256 = cmake.get("boost", "URL_HASH").split("=")[-1]
 
     try:
-        git_commit = subprocess.check_output(
+        git_tag = subprocess.check_output(
                 ["git", "describe", "--exact-match", "--tags"],
                 cwd=root,
                 stderr=subprocess.DEVNULL
                 ).decode().strip()
+        git_commit = ""
+        git_desc = ""
     except subprocess.CalledProcessError:
+        git_tag = ""
         git_commit = subprocess.check_output(
                 ["git", "rev-parse", "HEAD"],
                 cwd=root
                 ).decode().strip()
-    git_desc = subprocess.check_output(
-                ["git", "describe", "--tags", "--always"],
-                cwd=root
-                ).decode().strip()
+        git_desc = subprocess.check_output(
+                    ["git", "describe", "--tags", "--always"],
+                    cwd=root
+                    ).decode().strip()
 
     if args.git or args.gitlocal:
         template = template.replace("WIVRN_SRC1", "type: git")
@@ -90,6 +93,7 @@ if __name__ == "__main__":
         template = template.replace("WIVRN_SRC2", f"path: {root}")
         template = template.replace("WIVRN_SRC3", "")
 
+    template = template.replace("WIVRN_GIT_TAG", git_tag)
     template = template.replace("WIVRN_GIT_DESC", git_desc)
     template = template.replace("WIVRN_GIT_COMMIT", git_commit)
 

@@ -506,6 +506,8 @@ void scenes::stream::on_focused()
 	}
 	recenter_left = get_action("recenter_left").first;
 	recenter_right = get_action("recenter_right").first;
+	gui_distance_left = get_action("gui_distance_left").first;
+	gui_distance_right = get_action("gui_distance_right").first;
 	settings_adjust = get_action("settings_adjust").first;
 	foveation_distance = get_action("foveation_distance").first;
 	foveation_ok = get_action("foveation_ok").first;
@@ -564,7 +566,7 @@ void scenes::stream::push_blit_handle(shard_accumulator * decoder, std::shared_p
 			std::swap(handle, decoders[stream].latest_frames[handle->feedback.frame_index % decoders[stream].latest_frames.size()]);
 		}
 
-		if (state_ != state::streaming and not(decoders[0].empty() and decoders[1].empty()))
+		if (state_ != state::streaming and not(decoders[0].empty() or decoders[1].empty()))
 		{
 			set_state(state::streaming);
 			spdlog::info("Stream scene ready at t={}", instance.now());
@@ -679,52 +681,29 @@ std::shared_ptr<shard_accumulator::blit_handle> scenes::stream::accumulator_imag
 	return frame;
 }
 
-void scenes::stream::update_gui_position(xr::spaces controller)
+void scenes::stream::update_gui_position(xr::spaces controller, float predicted_display_period)
 {
-	std::optional<std::pair<glm::vec3, glm::quat>> aim;
-
-	if (application::get_hmd_traits().view_locate)
-	{
-		aim = application::locate_controller(
-		        application::space(controller),
-		        application::space(xr::spaces::view),
-		        predicted_display_time);
-	}
-	else
-	{
-		// Pico fails to find its controllers within view space, so use the head position in
-		// world space as a reference
-		aim = application::locate_controller(
-		        application::space(controller),
-		        application::space(xr::spaces::world),
-		        predicted_display_time);
-
-		auto head_position = application::locate_controller(application::space(xr::spaces::view),
-		                                                    application::space(xr::spaces::world),
-		                                                    predicted_display_time);
-		if (not(aim and head_position))
-			return;
-
-		aim->first = glm::conjugate(head_position->second) * (aim->first - head_position->first);
-		aim->second = glm::conjugate(head_position->second) * aim->second;
-	}
+	std::optional<std::pair<glm::vec3, glm::quat>> aim = application::locate_controller(
+	        application::space(controller),
+	        application::space(xr::spaces::world),
+	        predicted_display_time);
 
 	if (not aim)
 		return;
 
 	auto [offset_position, offset_orientation] = input->offset[controller];
 
-	auto head_controller_position = aim->first + glm::mat3_cast(aim->second * offset_orientation) * offset_position;
-	auto head_controller_orientation = aim->second * offset_orientation;
-	auto head_controller_direction = -glm::column(glm::mat3_cast(head_controller_orientation), 2);
+	auto world_controller_position = aim->first + glm::mat3_cast(aim->second * offset_orientation) * offset_position;
+	auto world_controller_orientation = aim->second * offset_orientation;
+	auto world_controller_direction = -glm::column(glm::mat3_cast(world_controller_orientation), 2);
 
 	if (not recentering_context)
 	{
 		// First frame of recentering: get the GUI position relative to the controller
 
 		// Compute the intersection of the ray with the GUI
-		auto gui_controller_direction = glm::conjugate(head_gui_orientation) * head_controller_direction;
-		auto gui_controller_position = glm::conjugate(head_gui_orientation) * (head_controller_position - head_gui_position);
+		auto gui_controller_direction = glm::conjugate(world_gui_orientation) * world_controller_direction;
+		auto gui_controller_position = glm::conjugate(world_gui_orientation) * (world_controller_position - world_gui_position);
 
 		float lambda = -gui_controller_position.z / gui_controller_direction.z;
 		auto gui_intersection = gui_controller_position + lambda * gui_controller_direction;
@@ -739,8 +718,8 @@ void scenes::stream::update_gui_position(xr::spaces controller)
 		}
 		else
 		{
-			glm::vec3 controller_gui_position = glm::conjugate(head_controller_orientation) * (head_gui_position - head_controller_position);
-			glm::quat controller_gui_orientation = glm::conjugate(head_controller_orientation) * head_gui_orientation;
+			glm::vec3 controller_gui_position = glm::conjugate(world_controller_orientation) * (world_gui_position - world_controller_position);
+			glm::quat controller_gui_orientation = glm::conjugate(world_controller_orientation) * world_gui_orientation;
 
 			recentering_context.emplace(controller, controller_gui_position, controller_gui_orientation);
 		}
@@ -748,10 +727,16 @@ void scenes::stream::update_gui_position(xr::spaces controller)
 	else
 	{
 		// Subsequent frames of recentering: keep the GUI locked to the controller
-		auto [_, controller_gui_position, controller_gui_orientation] = *recentering_context;
+		auto & [_, controller_gui_position, controller_gui_orientation] = *recentering_context;
 
-		head_gui_position = head_controller_position + head_controller_orientation * controller_gui_position;
-		head_gui_orientation = head_controller_orientation * controller_gui_orientation;
+		if (auto gui_distance = application::read_action_float(controller == xr::spaces::aim_left ? gui_distance_left : gui_distance_right))
+		{
+			controller_gui_position.z *= std::pow(constants::stream::gui_max_layer_speed, gui_distance->second * predicted_display_period);
+			controller_gui_position.z = -std::clamp<float>(-controller_gui_position.z, constants::stream::gui_min_layer_distance, constants::stream::gui_max_layer_distance);
+		}
+
+		world_gui_position = world_controller_position + world_controller_orientation * controller_gui_position;
+		world_gui_orientation = world_controller_orientation * controller_gui_orientation;
 	}
 }
 
@@ -792,7 +777,7 @@ void scenes::stream::render(const XrFrameState & frame_state)
 	last_display_time = frame_state.predictedDisplayTime;
 
 	std::shared_lock lock(decoder_mutex);
-	if (not frame_state.shouldRender or (decoders[0].empty() and decoders[1].empty()) or state_ == state::shutdown)
+	if (not frame_state.shouldRender or decoders[0].empty() or decoders[1].empty() or state_ == state::shutdown)
 	{
 		// TODO: stop/restart video stream
 		session.begin_frame();
@@ -866,7 +851,11 @@ void scenes::stream::render(const XrFrameState & frame_state)
 	{
 		auto & blit_handle = current_blit_handles[i];
 		if (not blit_handle)
+		{
+			if (i == view_count)
+				use_alpha = false;
 			continue;
+		}
 
 		blit_handle->feedback.blitted = instance.now();
 		if (blit_handle->feedback.blitted - blit_handle->feedback.received_from_decoder > 1'000'000'000)
@@ -1162,6 +1151,7 @@ void scenes::stream::exit()
 
 void scenes::stream::setup(const to_headset::video_stream_description & description)
 {
+	spdlog::info("setup, refresh rate {}", description.refresh_rate);
 	session.set_refresh_rate(description.refresh_rate);
 
 	std::unique_lock lock(decoder_mutex);
@@ -1186,6 +1176,7 @@ void scenes::stream::setup_reprojection_swapchain(uint32_t swapchain_width, uint
 	assert(swapchain_width);
 	assert(swapchain_height);
 	device.waitIdle();
+	spdlog::info("swapchain setup, refresh rate {}", video_stream_description->refresh_rate);
 	session.set_refresh_rate(video_stream_description->refresh_rate);
 
 	auto views = system.view_configuration_views(viewconfig);
@@ -1230,6 +1221,8 @@ scene::meta & scenes::stream::get_meta_scene()
 
 	                {"recenter_left", XR_ACTION_TYPE_BOOLEAN_INPUT},
 	                {"recenter_right", XR_ACTION_TYPE_BOOLEAN_INPUT},
+	                {"gui_distance_left", XR_ACTION_TYPE_FLOAT_INPUT},
+	                {"gui_distance_right", XR_ACTION_TYPE_FLOAT_INPUT},
 
 	                {"settings_adjust", XR_ACTION_TYPE_FLOAT_INPUT},
 	                {"foveation_distance", XR_ACTION_TYPE_FLOAT_INPUT},
@@ -1264,6 +1257,8 @@ scene::meta & scenes::stream::get_meta_scene()
 
 	                                {"recenter_left", "/user/hand/left/input/squeeze/value"},
 	                                {"recenter_right", "/user/hand/right/input/squeeze/value"},
+	                                {"gui_distance_left", "/user/hand/left/input/thumbstick/y"},
+	                                {"gui_distance_right", "/user/hand/right/input/thumbstick/y"},
 	                                {"settings_adjust", "/user/hand/right/input/thumbstick/y"},
 	                                {"foveation_distance", "/user/hand/left/input/thumbstick/y"},
 	                                {"foveation_ok", "/user/hand/right/input/a/click"},

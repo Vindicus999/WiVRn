@@ -293,7 +293,7 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 	U_LOG_IFL_D(log_level, "frame %ld commit %d layers", frame.rendering.id, layer_accum.layer_count);
 
 	if (encode_request >= 0 // encoders have not picked up the previous frame
-	    or layer_accum.layer_count == 0 or not session.connected() or not session.get_offset())
+	    or not session.connected() or not session.get_offset())
 	{
 		comp_frame_clear_locked(&frame.rendering);
 		return XRT_SUCCESS;
@@ -558,14 +558,18 @@ xrt_result_t compositor::get_display_refresh_rate(float * hz)
 
 xrt_result_t compositor::request_display_refresh_rate(float hz)
 {
-	try
+	requested_refresh_rate = hz;
+	U_LOG_I("request refresh rate: %fHz", hz);
+	if (hz > 0)
 	{
-		requested_refresh_rate = hz;
-		session.send_control(to_headset::refresh_rate_change{.hz = hz});
-	}
-	catch (std::exception & e)
-	{
-		U_LOG_W("refresh rate change failed: %s", e.what());
+		try
+		{
+			session.send_control(to_headset::refresh_rate_change{.hz = hz});
+		}
+		catch (std::exception & e)
+		{
+			U_LOG_W("refresh rate change failed: %s", e.what());
+		}
 	}
 	return XRT_SUCCESS;
 }
