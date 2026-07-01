@@ -21,6 +21,7 @@
 
 #include "driver/xrt_cast.h"
 #include "utils/wivrn_vk_bundle.h"
+#include "vk/specialization_constants.h"
 #include "wivrn_packets.h"
 
 #include "xrt/xrt_defines.h"
@@ -41,8 +42,6 @@ struct ubo_data
 {
 	uint32_t x[XRT_MAX_VIEWS * RENDER_FOVEATION_BUFFER_DIMENSIONS];
 	uint32_t y[XRT_MAX_VIEWS * RENDER_FOVEATION_BUFFER_DIMENSIONS];
-	uint32_t alpha_width;
-	VkBool32 alpha;
 };
 
 vk::raii::Sampler make_sampler(wivrn::vk_bundle & vk)
@@ -112,20 +111,39 @@ vk::raii::PipelineLayout make_layout(wivrn::vk_bundle & vk, vk::DescriptorSetLay
 	return res;
 }
 
-vk::raii::Pipeline make_pipeline(wivrn::vk_bundle & vk, vk::PipelineLayout layout)
+std::array<vk::raii::Pipeline, 2> make_pipelines(wivrn::vk_bundle & vk, vk::PipelineLayout layout, int32_t alpha_width)
 {
-	vk::raii::Pipeline res(
-	        vk.device,
-	        nullptr,
-	        vk::ComputePipelineCreateInfo{
-	                .stage = {
-	                        .stage = vk::ShaderStageFlagBits::eCompute,
-	                        .module = *vk.load_shader("foveation"),
-	                        .pName = "main",
+	auto shader = vk.load_shader("foveation");
+	auto spc = make_specialization_constants(alpha_width);
+	std::array res{
+	        vk::raii::Pipeline{
+	                vk.device,
+	                nullptr,
+	                vk::ComputePipelineCreateInfo{
+	                        .stage = {
+	                                .stage = vk::ShaderStageFlagBits::eCompute,
+	                                .module = *shader,
+	                                .pName = "main",
+	                        },
+	                        .layout = layout,
 	                },
-	                .layout = layout,
-	        });
-	vk.name(*res, "foveation pipeline");
+	        },
+	        vk::raii::Pipeline{
+	                vk.device,
+	                nullptr,
+	                vk::ComputePipelineCreateInfo{
+	                        .stage = {
+	                                .stage = vk::ShaderStageFlagBits::eCompute,
+	                                .module = *shader,
+	                                .pName = "main",
+	                                .pSpecializationInfo = spc,
+	                        },
+	                        .layout = layout,
+	                },
+	        },
+	};
+	vk.name(*res[0], "foveation pipeline");
+	vk.name(*res[1], "foveation+alpha pipeline");
 	return res;
 }
 
@@ -390,14 +408,14 @@ foveation::foveation(wivrn::vk_bundle & bundle, vk::Extent3D foveated_size) :
                         .usage = vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer,
                 },
                 VmaAllocationCreateInfo{
-                        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+                        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
                         .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
                 },
                 "foveation storage buffer"),
         sampler(make_sampler(bundle)),
         ds_layout(make_ds_layout(bundle)),
         layout(make_layout(bundle, ds_layout)),
-        pipeline(make_pipeline(bundle, layout)),
+        pipeline(make_pipelines(bundle, layout, foveated_size.width / 2)),
         descriptor_pool(make_ds_pool(bundle)),
         descriptor_set(bundle.device.allocateDescriptorSets(vk::DescriptorSetAllocateInfo{
                 .descriptorPool = descriptor_pool,
@@ -517,7 +535,7 @@ void foveation::update_ubo(
 
 	compute_params();
 
-	auto ubo = gpu_buffer.data<ubo_data>();
+	ubo_data ubo;
 	for (size_t view = 0; view < 2; ++view)
 	{
 		bool flip = false;
@@ -534,7 +552,7 @@ void foveation::update_ubo(
 			offset = src_rect[view].offset.w;
 			extent = src_rect[view].extent.w;
 		}
-		fill_ubo(std::span(ubo->x + view * RENDER_FOVEATION_BUFFER_DIMENSIONS, RENDER_FOVEATION_BUFFER_DIMENSIONS),
+		fill_ubo(std::span(ubo.x + view * RENDER_FOVEATION_BUFFER_DIMENSIONS, RENDER_FOVEATION_BUFFER_DIMENSIONS),
 		         params[view].x,
 		         flip,
 		         offset,
@@ -553,13 +571,15 @@ void foveation::update_ubo(
 			offset = src_rect[view].offset.h;
 			extent = src_rect[view].extent.h;
 		}
-		fill_ubo(std::span(ubo->y + view * RENDER_FOVEATION_BUFFER_DIMENSIONS, RENDER_FOVEATION_BUFFER_DIMENSIONS),
+		fill_ubo(std::span(ubo.y + view * RENDER_FOVEATION_BUFFER_DIMENSIONS, RENDER_FOVEATION_BUFFER_DIMENSIONS),
 		         params[view].y,
 		         flip,
 		         offset,
 		         extent,
 		         foveated_size.height);
 	}
+	vmaCopyMemoryToAllocation(vk_allocator::instance(), &ubo, gpu_buffer, 0, sizeof(ubo));
+	std::memcpy(gpu_buffer.data<ubo_data>(), &ubo, sizeof(ubo));
 }
 
 std::array<to_headset::foveation_parameter, 2> foveation::foveate(
@@ -575,8 +595,6 @@ std::array<to_headset::foveation_parameter, 2> foveation::foveate(
 {
 	update_ubo(cmd, flip_y, src_rect, src_fov);
 	auto ubo = gpu_buffer.data<ubo_data>();
-	ubo->alpha_width = foveated_size.width / 2;
-	ubo->alpha = alpha;
 
 	std::array src_image_info{
 	        vk::DescriptorImageInfo{
@@ -638,7 +656,7 @@ std::array<to_headset::foveation_parameter, 2> foveation::foveate(
 
 	device.updateDescriptorSets(writes, {});
 
-	cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline);
+	cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline[alpha]);
 	cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *layout, 0, descriptor_set, {});
 	cmd.dispatch(divide_and_round_up(foveated_size.width, 8),
 	             divide_and_round_up(foveated_size.height, 8),

@@ -23,6 +23,14 @@ include(FetchContent)
 include(ExternalProject)
 include(GNUInstallDirs)
 
+set(GIT_TAG "" CACHE STRING "Build for a tag (from git if empty)")
+set(GIT_DESC "" CACHE STRING "Version to show in UI (from git if empty, exclusive with GIT_TAG)")
+set(GIT_COMMIT "" CACHE STRING "Git SHA used to fetch client APK (from git if empty, exclusive with GIT_TAG)")
+
+if (GIT_TAG AND (GIT_DESC OR GIT_COMMIT))
+	message(FATAL_ERROR "cannot use GIT_DESC or GIT_COMMIT when using GIT_TAG")
+endif()
+
 option(WIVRN_USE_SYSTEM_FREETYPE "Use system FreeType" ON)
 option(WIVRN_USE_SYSTEM_BOOST "Use system Boost headers" ON)
 option(WIVRN_USE_SYSTEM_OPENXR "Use system OpenXR headers" ON)
@@ -54,7 +62,7 @@ option(WIVRN_USE_X264 "Enable x264 software encoder" ON)
 option(WIVRN_USE_PIPEWIRE "Enable pipewire backend" ON)
 option(WIVRN_USE_PULSEAUDIO "Enable pulseaudio backend" OFF)
 
-set(OVR_COMPAT_SEARCH_PATH "/opt/xrizer:/usr/local/lib/OpenComposite:/usr/lib/OpenComposite:/opt/OpenComposite:/opt/opencomposite"
+set(OVR_COMPAT_SEARCH_PATH "/opt/xrizer:/usr/local/lib/OpenComposite:/usr/lib/OpenComposite:/opt/OpenComposite:/opt/opencomposite:/opt/VapoR:/usr/local/lib/VapoR"
     CACHE STRING "List of places to search for the OpenVR compatibility layer, separated by :")
 
 option(WIVRN_FEATURE_DEBUG_GUI "Enable Monado debug GUI" OFF)
@@ -185,7 +193,7 @@ endif()
 
 if (WIVRN_BUILD_CLIENT)
     find_program(RSVG_CONVERT rsvg-convert REQUIRED)
-    find_program(TOKTX toktx REQUIRED)
+    find_program(KTX ktx REQUIRED)
 
     if (WIVRN_COMPRESS_GLB)
         find_program(GLTF_TRANSFORM gltf-transform REQUIRED)
@@ -285,6 +293,7 @@ add_custom_target(wivrn-version ALL
         -D OUTPUT_FILE=${CMAKE_BINARY_DIR}/version.cpp
         -D INPUT_FILE_1=${CMAKE_CURRENT_SOURCE_DIR}/server/u_git_tag.cpp.in
         -D OUTPUT_FILE_1=${CMAKE_BINARY_DIR}/u_git_tag.cpp
+        -D GIT_TAG="${GIT_TAG}"
         -D GIT_DESC="${GIT_DESC}"
         -D GIT_COMMIT="${GIT_COMMIT}"
         -P ${CMAKE_SOURCE_DIR}/cmake/GitVersion.cmake

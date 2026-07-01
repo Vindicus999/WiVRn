@@ -174,8 +174,11 @@ active_runtime::active_runtime() :
 	try
 	{
 		auto ovr_compat = openvr_compat_path();
-		if (not ovr_compat.empty())
+		if (ovr_compat.empty())
+			std::cerr << "Not setting an OpenVR compatibility library" << std::endl;
+		else
 		{
+			std::cerr << "Setting the OpenVR compatibility library to " << ovr_compat.native() << std::endl;
 			if (not wivrn::is_flatpak())
 			{
 				auto vrclient = ovr_compat / "bin"
@@ -235,4 +238,20 @@ active_runtime::~active_runtime()
 		std::cerr << "Cannot unset active OpenVR runtime: " << e.what() << std::endl;
 	}
 }
+
+void active_runtime::cleanup_openxr()
+{
+	for (const auto & manifest: manifest_path())
+	{
+		auto active_runtime = xdg_config_home() / ("openxr/1/active_runtime" + get_abi(manifest) + ".json");
+		std::error_code ec;
+		if (std::filesystem::equivalent(manifest, active_runtime, ec))
+		{
+			std::cerr << "Removing stale file " << active_runtime << std::endl;
+			std::filesystem::remove(active_runtime, ec);
+		}
+		std::filesystem::rename(backup_name(manifest), manifest, ec);
+	}
+}
+
 } // namespace wivrn

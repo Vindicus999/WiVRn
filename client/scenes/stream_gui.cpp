@@ -17,6 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <glm/ext/quaternion_common.hpp>
 #define IMGUI_DEFINE_MATH_OPERATORS
 
 #include "stream.h"
@@ -507,10 +508,10 @@ void scenes::stream::gui_foveation_settings(float predicted_display_period)
 	float delta_pitch = application::read_action_float(settings_adjust).value_or(std::pair{0, 0}).second * predicted_display_period;
 
 	// Maximum speed 2m/s @ 1m
-	float delta_distance = std::exp(std::log(2) * application::read_action_float(foveation_distance).value_or(std::pair{0, 0}).second * predicted_display_period);
+	float delta_distance = std::pow(constants::stream::gui_max_foveation_speed, application::read_action_float(foveation_distance).value_or(std::pair{0, 0}).second * predicted_display_period);
 
-	override_foveation_pitch = std::clamp<float>(override_foveation_pitch + delta_pitch, -M_PI / 3, M_PI / 3);
-	override_foveation_distance = std::clamp<float>(override_foveation_distance * delta_distance, 0.5, 100);
+	override_foveation_pitch = std::clamp<float>(override_foveation_pitch + delta_pitch, constants::stream::gui_min_foveation_pitch, constants::stream::gui_max_foveation_pitch);
+	override_foveation_distance = std::clamp<float>(override_foveation_distance * delta_distance, constants::stream::gui_min_foveation_distance, constants::stream::gui_max_foveation_distance);
 
 	bool ok = application::read_action_bool(foveation_ok).value_or(std::pair{0, false}).second;
 	bool cancel = application::read_action_bool(foveation_cancel).value_or(std::pair{0, false}).second;
@@ -635,6 +636,24 @@ void scenes::stream::draw_gui(XrTime predicted_display_time, XrDuration predicte
 	if (auto new_status = next_gui_status.load(); new_status != gui_status)
 	{
 		spdlog::info("Switch tab from {} to {}", magic_enum::enum_name(gui_status), magic_enum::enum_name(new_status));
+
+		if (not is_gui_interactable() and is_interactable(new_status))
+		{
+			if (auto head_position = application::locate_controller(application::space(xr::spaces::view), application::space(xr::spaces::world), predicted_display_time))
+			{
+				world_gui_orientation = head_position->second * head_gui_orientation;
+				world_gui_position = head_position->first + glm::mat3_cast(head_position->second) * head_gui_position;
+			}
+		}
+		else if (is_gui_interactable() and not is_interactable(new_status))
+		{
+			if (auto head_position = application::locate_controller(application::space(xr::spaces::view), application::space(xr::spaces::world), predicted_display_time))
+			{
+				head_gui_orientation = glm::conjugate(head_position->second) * world_gui_orientation;
+				head_gui_position = glm::mat3_cast(glm::conjugate(head_position->second)) * (world_gui_position - head_position->first);
+			}
+		}
+
 		stored_gui_status = gui_status;
 		gui_status = new_status;
 		gui_status_last_change = predicted_display_time;
@@ -671,7 +690,7 @@ void scenes::stream::draw_gui(XrTime predicted_display_time, XrDuration predicte
 		case stream_tab::application_launcher:
 			break;
 	}
-	imgui_ctx->set_controllers_enabled(interactable);
+	imgui_ctx->set_controllers_enabled(interactable and not recentering_context);
 	if (interactable)
 	{
 		if (system.hand_tracking_supported())
@@ -729,12 +748,16 @@ void scenes::stream::draw_gui(XrTime predicted_display_time, XrDuration predicte
 
 			case stream_tab::overlay_only:
 			case stream_tab::compact:
+				imgui_ctx->layers()[0].orientation = head_position->second * head_gui_orientation;
+				imgui_ctx->layers()[0].position = head_position->first + M * head_gui_position;
+				break;
+
 			case stream_tab::stats:
 			case stream_tab::settings:
 			case stream_tab::applications:
 			case stream_tab::application_launcher:
-				imgui_ctx->layers()[0].orientation = head_position->second * head_gui_orientation;
-				imgui_ctx->layers()[0].position = head_position->first + M * head_gui_position;
+				imgui_ctx->layers()[0].orientation = world_gui_orientation;
+				imgui_ctx->layers()[0].position = world_gui_position;
 				break;
 		}
 	}
@@ -942,14 +965,14 @@ void scenes::stream::draw_gui(XrTime predicted_display_time, XrDuration predicte
 			}
 
 			if (state)
-				update_gui_position(controller);
+				update_gui_position(controller, predicted_display_period * 1e-9f);
 			else
 				recentering_context.reset();
 		}
 		else if (auto state = application::read_action_bool(recenter_left); state and state->second)
-			update_gui_position(xr::spaces::aim_left);
+			update_gui_position(xr::spaces::aim_left, predicted_display_period * 1e-9f);
 		else if (auto state = application::read_action_bool(recenter_right); state and state->second)
-			update_gui_position(xr::spaces::aim_right);
+			update_gui_position(xr::spaces::aim_right, predicted_display_period * 1e-9f);
 		else
 			recentering_context.reset();
 
