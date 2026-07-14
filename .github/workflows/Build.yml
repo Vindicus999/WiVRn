@@ -6,12 +6,12 @@ on:
 
 env:
   BUILD_TYPE: Release
-  SERVER_DEPS: libx264-dev libavcodec-dev libavutil-dev libbsd-dev libavahi-client-dev libavahi-glib-dev libeigen3-dev nlohmann-json3-dev librsvg2-dev libdrm-dev libglib2.0-dev-bin libpipewire-0.3-dev libpulse-dev libcli11-dev libnotify-dev libarchive-dev libudev-dev
+  SERVER_DEPS: libx264-dev libavcodec-dev libavutil-dev libbsd-dev libavahi-client-dev libavahi-glib-dev libeigen3-dev nlohmann-json3-dev librsvg2-dev libdrm-dev libglib2.0-dev-bin libpipewire-0.3-dev libcli11-dev libnotify-dev libarchive-dev libudev-dev
 
 jobs:
   build-linux:
     name: Linux
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     if: ${{ vars.APK_ONLY == '' }}
 
     strategy:
@@ -20,11 +20,17 @@ jobs:
         config:
           - preset: 'client-no-system-boost'
             packages: libharfbuzz-dev libfreetype-dev libavcodec-dev libavutil-dev libswscale-dev librsvg2-bin gettext libcurl4-openssl-dev libfontconfig-dev
-        # dashboard requires a more recent Ubuntu, have it out of this job
+          - preset: 'dashboard'
+            packages: extra-cmake-modules libarchive-dev libboost-all-dev libkf6coreaddons-dev libkf6qqc2desktopstyle-dev libkf6iconthemes-dev libkirigami-dev librsvg2-dev nlohmann-json3-dev qcoro-qt6-dev qml6-module-org-kde-kirigamiaddons-formcard
           - preset: 'dissector-no-system-boost'
             packages: libboost-all-dev wireshark-dev
           - preset: 'server'
             packages: libboost-all-dev libsystemd-dev
+        # tracing is opt-in and rarely built; build it here so the instrumentation and the
+        # Perfetto SDK glue don't bitrot (WIVRN_TRACE_MONADO needs percetto, not packaged in CI)
+          - preset: 'server-tracing'
+            packages: libboost-all-dev libsystemd-dev
+            perfetto: true
           - preset: 'server-no-systemd'
             packages: libboost-all-dev
           - preset: 'server-no-system-boost'
@@ -70,6 +76,18 @@ jobs:
         vulkan-components: Vulkan-Headers, Vulkan-Loader, Glslang, SPIRV-Reflect, SPIRV-Tools
         vulkan-use-cache: true
 
+    - name: Fetch Perfetto SDK
+      if: ${{ matrix.config.perfetto }}
+      # The amalgamated SDK is two files; install them where server/CMakeLists.txt looks.
+      env:
+        PERFETTO_TAG: v51.0
+      run: |
+        sudo mkdir -p /usr/share/perfetto/sdk
+        for f in perfetto.h perfetto.cc; do
+          sudo curl -fsSL -o /usr/share/perfetto/sdk/$f \
+            https://raw.githubusercontent.com/google/perfetto/${PERFETTO_TAG}/sdk/$f
+        done
+
     - name: Configure CMake
       # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
       # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
@@ -107,47 +125,6 @@ jobs:
         draft: true
         files: server-build-deps.tar.xz
 
-  build-dashboard:
-    #FIXME: merge with the matrixed build once Ubuntu gets updated
-    name: Linux Dashboard
-    runs-on: ubuntu-24.04
-    container: ubuntu:plucky
-    if: ${{ vars.APK_ONLY == '' }}
-
-    steps:
-    - uses: actions/checkout@v6
-
-    - name: Prepare
-      run: |
-        apt-get update
-        apt-get install --yes curl wget sudo jq cmake gcc g++ git pkgconf libboost-all-dev libkirigami-dev gettext libarchive-dev nlohmann-json3-dev qcoro-qt6-dev libkf6i18n-dev libkf6coreaddons-dev libkf6qqc2desktopstyle-dev libkf6iconthemes-dev libvulkan-dev libssl-dev librsvg2-dev extra-cmake-modules qml6-module-org-kde-kirigamiaddons-formcard
-
-    - uses: actions/cache@v5
-      with:
-        key: cmake-linux-dashboard
-        path: |
-          ${{github.workspace}}/cmake-fetch/*-subbuild/*-populate-prefix/src/*.tar.*
-          ${{github.workspace}}/cmake-fetch/*-subbuild/*-populate-prefix/src/*.zip
-          ${{github.workspace}}/cmake-fetch/*.tar.*
-          ${{github.workspace}}/cmake-fetch/*.tgz
-        restore-keys: cmake-linux-
-
-    - name: Configure CMake
-      # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
-      # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
-      run: >
-        cmake -B ${{github.workspace}}/build
-        -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
-        -DFETCHCONTENT_BASE_DIR=${{github.workspace}}/cmake-fetch
-        --preset dashboard
-        -DWIVRN_USE_SYSTEM_OPENXR=OFF
-        -DGIT_DESC=${{github.sha}}
-        -DGIT_COMMIT=${{github.sha}}
-
-    - name: Build
-      # Build your program with the given configuration
-      run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
-
   build-server-flatpak:
     name: Linux server (flatpak)
     runs-on: ubuntu-24.04
@@ -172,6 +149,11 @@ jobs:
       with:
         manifest-path: flatpak/io.github.wivrn.wivrn.yml
         bundle: wivrn-server.flatpak
+        # The manifest is regenerated on every commit with the git hash embedded,
+        # so its default (manifest-hash) cache key never hits. Key on the files
+        # that actually define the dependency set instead, so the toolchain
+        # downloads and build cache persist across commits.
+        cache-key: flatpak-builder-${{ hashFiles('flatpak/io.github.wivrn.wivrn.yml.in', 'flatpak/ct-ng-x86_64.config', 'flatpak/ct-ng-aarch64.config', 'monado-rev', 'CMakeLists.txt') }}
 
     - name: Debug bundle
       uses: actions/upload-artifact@v7
@@ -370,7 +352,7 @@ jobs:
     - name: Install dependencies
       run: |
         apt update
-        apt install --yes libcjson-dev libx264-dev libavcodec-dev libavutil-dev libswscale-dev libavfilter-dev libbsd-dev libavahi-client-dev libavahi-glib-dev libeigen3-dev glslang-tools libudev-dev libwayland-dev libx11-xcb-dev libxrandr-dev libxcb-randr0-dev libgl-dev libglx-dev mesa-common-dev libgl1-mesa-dev libglu1-mesa-dev libsystemd-dev libva-dev nlohmann-json3-dev libpulse-dev xz-utils libpipewire-0.3-dev libcli11-dev qt6-base-dev qt6-tools-dev pkexec libboost-all-dev librsvg2-bin dpkg-dev pkg-config debhelper-compat build-essential lintian cmake libnotify-dev qt6-declarative-dev extra-cmake-modules libkirigami-dev libkf6i18n-dev libkf6coreaddons-dev libkf6qqc2desktopstyle-dev libkf6iconthemes-dev jq sudo cmake gcc g++ git wget libssl-dev qcoro-qt6-dev librsvg2-dev libarchive-dev npm qml6-module-org-kde-kirigamiaddons-formcard
+        apt install --yes libcjson-dev libx264-dev libavcodec-dev libavutil-dev libswscale-dev libavfilter-dev libbsd-dev libavahi-client-dev libavahi-glib-dev libeigen3-dev glslang-tools libudev-dev libwayland-dev libx11-xcb-dev libxrandr-dev libxcb-randr0-dev libgl-dev libglx-dev mesa-common-dev libgl1-mesa-dev libglu1-mesa-dev libsystemd-dev libva-dev nlohmann-json3-dev xz-utils libpipewire-0.3-dev libcli11-dev qt6-base-dev qt6-tools-dev pkexec libboost-all-dev librsvg2-bin dpkg-dev pkg-config debhelper-compat build-essential lintian cmake libnotify-dev qt6-declarative-dev extra-cmake-modules libkirigami-dev libkf6i18n-dev libkf6coreaddons-dev libkf6qqc2desktopstyle-dev libkf6iconthemes-dev jq sudo cmake gcc g++ git wget libssl-dev qcoro-qt6-dev librsvg2-dev libarchive-dev npm qml6-module-org-kde-kirigamiaddons-formcard
 
         wget https://github.com/KhronosGroup/KTX-Software/releases/download/v4.3.2/KTX-Software-4.3.2-Linux-x86_64.deb
         sudo dpkg --install KTX-Software-4.3.2-Linux-x86_64.deb
