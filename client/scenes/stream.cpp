@@ -21,6 +21,7 @@
 #include "xr/face_tracker.h"
 #include "xr/fb_face_tracker2.h"
 #include "xr/space.h"
+#include "xr/system.h"
 #include <glm/gtc/matrix_access.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <magic_enum.hpp>
@@ -138,6 +139,27 @@ static const std::unordered_map<std::string, device_id> device_ids = {
 	{"/user/hand/right/input/aim_activate_ext/ready_ext",device_id::RIGHT_AIM_ACTIVATE_READY},
 	{"/user/hand/right/input/grasp_ext/value",      device_id::RIGHT_GRASP_VALUE},
 	{"/user/hand/right/input/grasp_ext/ready_ext",  device_id::RIGHT_GRASP_READY},
+
+	{"/user/gamepad/input/menu/click",             device_id::GAMEPAD_MENU_CLICK},
+	{"/user/gamepad/input/view/click",             device_id::GAMEPAD_VIEW_CLICK},
+	{"/user/gamepad/input/a/click",                device_id::GAMEPAD_A_CLICK},
+	{"/user/gamepad/input/b/click",                device_id::GAMEPAD_B_CLICK},
+	{"/user/gamepad/input/x/click",                device_id::GAMEPAD_X_CLICK},
+	{"/user/gamepad/input/y/click",                device_id::GAMEPAD_Y_CLICK},
+	{"/user/gamepad/input/dpad_down/click",        device_id::GAMEPAD_DPAD_DOWN_CLICK},
+	{"/user/gamepad/input/dpad_right/click",       device_id::GAMEPAD_DPAD_RIGHT_CLICK},
+	{"/user/gamepad/input/dpad_up/click",          device_id::GAMEPAD_DPAD_UP_CLICK},
+	{"/user/gamepad/input/dpad_left/click",        device_id::GAMEPAD_DPAD_LEFT_CLICK},
+	{"/user/gamepad/input/shoulder_left/click",    device_id::GAMEPAD_SHOULDER_LEFT_CLICK},
+	{"/user/gamepad/input/shoulder_right/click",   device_id::GAMEPAD_SHOULDER_RIGHT_CLICK},
+	{"/user/gamepad/input/thumbstick_left/click",  device_id::GAMEPAD_THUMBSTICK_LEFT_CLICK},
+	{"/user/gamepad/input/thumbstick_right/click", device_id::GAMEPAD_THUMBSTICK_RIGHT_CLICK},
+	{"/user/gamepad/input/trigger_left/value",     device_id::GAMEPAD_TRIGGER_LEFT_VALUE},
+	{"/user/gamepad/input/trigger_right/value",    device_id::GAMEPAD_TRIGGER_RIGHT_VALUE},
+	{"/user/gamepad/input/thumbstick_left/x",      device_id::GAMEPAD_THUMBSTICK_LEFT_X},
+	{"/user/gamepad/input/thumbstick_left/y",      device_id::GAMEPAD_THUMBSTICK_LEFT_Y},
+	{"/user/gamepad/input/thumbstick_right/x",     device_id::GAMEPAD_THUMBSTICK_RIGHT_X},
+	{"/user/gamepad/input/thumbstick_right/y",     device_id::GAMEPAD_THUMBSTICK_RIGHT_Y},
 };
 // clang-format on
 
@@ -244,6 +266,8 @@ std::shared_ptr<scenes::stream> scenes::stream::create(std::unique_ptr<wivrn_ses
 		}
 
 		info.settings.bitrate_bps = config.bitrate_bps;
+		info.settings.mirror_gamepad = config.forward_gamepad;
+		info.settings.enabled_body_parts = config.body_part_mask;
 
 		info.hand_tracking = config.check_feature(feature::hand_tracking);
 		info.eye_gaze = config.check_feature(feature::eye_gaze);
@@ -273,21 +297,25 @@ std::shared_ptr<scenes::stream> scenes::stream::create(std::unique_ptr<wivrn_ses
 			}
 		}
 
-		info.num_generic_trackers = 0;
 		if (config.check_feature(feature::body_tracking))
 		{
 			switch (self->system.body_tracker_supported())
 			{
 				case xr::body_tracker_type::none:
+					info.body_tracking = from_headset::body_type::none;
 					break;
 				case xr::body_tracker_type::fb:
-					info.num_generic_trackers = xr::fb_body_tracker::get_whitelisted_joints(config.fb_lower_body, config.fb_hip).size();
+					info.body_tracking = from_headset::body_type::fb;
 					break;
-				case xr::body_tracker_type::htc:
-					info.num_generic_trackers = application::get_generic_trackers().size();
+				case xr::body_tracker_type::meta:
+					info.body_tracking = from_headset::body_type::meta;
 					break;
 				case xr::body_tracker_type::pico:
-					info.num_generic_trackers = xr::pico_body_tracker::joint_whitelist.size();
+					info.body_tracking = from_headset::body_type::bd;
+					break;
+				case xr::body_tracker_type::htc:
+					info.body_tracking = from_headset::body_type::htc;
+					info.num_generic_trackers = application::get_generic_trackers().size();
 					break;
 			}
 		}
@@ -380,7 +408,12 @@ std::shared_ptr<scenes::stream> scenes::stream::create(std::unique_ptr<wivrn_ses
 	             std::tuple(device_id::LEFT_THUMB_HAPTIC, "/user/hand/left", "/output/haptic_thumb"),
 	             std::tuple(device_id::RIGHT_THUMB_HAPTIC, "/user/hand/right", "/output/haptic_thumb"),
 	             std::tuple(device_id::LEFT_THUMB_HAPTIC, "/user/hand/left", "/output/haptic_thumb_fb"),
-	             std::tuple(device_id::RIGHT_THUMB_HAPTIC, "/user/hand/right", "/output/haptic_thumb_fb")})
+	             std::tuple(device_id::RIGHT_THUMB_HAPTIC, "/user/hand/right", "/output/haptic_thumb_fb"),
+
+	             std::tuple(device_id::GAMEPAD_HAPTIC_LEFT, "/user/gamepad", "/output/haptic_left"),
+	             std::tuple(device_id::GAMEPAD_HAPTIC_RIGHT, "/user/gamepad", "/output/haptic_right"),
+	             std::tuple(device_id::GAMEPAD_HAPTIC_LEFT_TRIGGER, "/user/gamepad", "/output/haptic_left_trigger"),
+	             std::tuple(device_id::GAMEPAD_HAPTIC_RIGHT_TRIGGER, "/user/gamepad", "/output/haptic_right_trigger")})
 	{
 		if (auto action = application::get_action(std::string(path) + output); action.first)
 		{
@@ -470,15 +503,23 @@ void scenes::stream::on_focused()
 	        session,
 	        device,
 	        swapchain_format,
-	        1800,
+	        3600,
 	        1200);
 
 	std::vector<imgui_context::viewport> vps{
 	        {
+	                // Main window
 	                .space = xr::spaces::world,
 	                // Position and orientation are set at each frame
 	                .size = {1.2, 0.6666},
 	                .vp_origin = {0, 0},
+	                .vp_size = {1800, 1000},
+	        },
+	        {
+	                // Popup window
+	                .space = xr::spaces::world,
+	                .size = {1.2, 0.6666},
+	                .vp_origin = {1800, 0},
 	                .vp_size = {1800, 1000},
 	        },
 	        {
@@ -1336,9 +1377,10 @@ void scenes::stream::on_xr_event(const xr::event & event)
 	}
 }
 
-bool scenes::stream::forward_hid_input(from_headset::hid::input_t packet)
+bool scenes::stream::forward_hid_input(from_headset::hid::input_t packet, bool device_enabled)
 {
-	if (not hid_forwarding)
+	// hid_forwarding is whether the server permits it; device_enabled is the headset toggle.
+	if (not hid_forwarding or not device_enabled)
 		return false;
 	network_session->send_control(from_headset::hid::input{packet});
 	return true;
@@ -1346,25 +1388,25 @@ bool scenes::stream::forward_hid_input(from_headset::hid::input_t packet)
 
 bool scenes::stream::on_input_key_down(uint8_t key_code)
 {
-	return forward_hid_input(from_headset::hid::key_down{key_code});
+	return forward_hid_input(from_headset::hid::key_down{key_code}, application::get_config().forward_keyboard);
 }
 bool scenes::stream::on_input_key_up(uint8_t key_code)
 {
-	return forward_hid_input(from_headset::hid::key_up{key_code});
+	return forward_hid_input(from_headset::hid::key_up{key_code}, application::get_config().forward_keyboard);
 }
 bool scenes::stream::on_input_mouse_move(float x, float y)
 {
-	return forward_hid_input(from_headset::hid::mouse_move{x, y});
+	return forward_hid_input(from_headset::hid::mouse_move{x, y}, application::get_config().forward_mouse);
 }
 bool scenes::stream::on_input_button_down(uint8_t button)
 {
-	return forward_hid_input(from_headset::hid::button_down{button});
+	return forward_hid_input(from_headset::hid::button_down{button}, application::get_config().forward_mouse);
 }
 bool scenes::stream::on_input_button_up(uint8_t button)
 {
-	return forward_hid_input(from_headset::hid::button_up{button});
+	return forward_hid_input(from_headset::hid::button_up{button}, application::get_config().forward_mouse);
 }
 bool scenes::stream::on_input_scroll(float h, float v)
 {
-	return forward_hid_input(from_headset::hid::mouse_scroll{h, v});
+	return forward_hid_input(from_headset::hid::mouse_scroll{h, v}, application::get_config().forward_mouse);
 }

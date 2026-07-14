@@ -784,6 +784,32 @@ void scenes::lobby::gui_settings()
 		ImGui::Unindent();
 		ImGui::EndDisabled();
 	}
+	{
+		// Virtual devices: a keyboard, mouse or gamepad connected to the headset is
+		// replicated on the server through uinput. The gamepad is also exposed through
+		// OpenXR, whether or not it is mirrored to a virtual device.
+		ImGui::Text("%s", _S("Virtual devices"));
+		if (ImGui::IsItemHovered())
+			imgui_ctx->tooltip(_("Input devices connected to the headset are replicated as virtual devices on the PC.\nThe server must allow forwarded input devices; this is not available when the server runs as Flatpak.\nA gamepad is also usable without a virtual device by applications that read it through OpenXR."));
+		ImGui::Indent();
+		if (ImGui::Checkbox(_S("Keyboard"), &config.forward_keyboard))
+			config.save();
+		imgui_ctx->vibrate_on_hover();
+		if (ImGui::Checkbox(_S("Mouse"), &config.forward_mouse))
+			config.save();
+		imgui_ctx->vibrate_on_hover();
+		if (ImGui::Checkbox(_S("Gamepad"), &config.forward_gamepad))
+			config.save();
+		imgui_ctx->vibrate_on_hover();
+		ImGui::Unindent();
+
+		if (server_hid_forwarding == false and (config.forward_keyboard or config.forward_mouse or config.forward_gamepad))
+		{
+			ImGui::TextColored(constants::style::warn, ICON_FA_TRIANGLE_EXCLAMATION);
+			ImGui::SameLine();
+			ImGui::Text("%s", _S("The server does not allow forwarded input devices"));
+		}
+	}
 	if (system.hand_tracking_supported())
 	{
 		bool enabled = config.check_feature(feature::hand_tracking);
@@ -833,35 +859,19 @@ void scenes::lobby::gui_settings()
 			}
 			else
 			{
-				if (body_tracker == xr::body_tracker_type::fb)
+				if (body_tracker == xr::body_tracker_type::fb or body_tracker == xr::body_tracker_type::meta)
 					imgui_ctx->tooltip(_("Requires 'Hand and body tracking' to be enabled in the Quest movement tracking settings,\notherwise body data will be guessed from controller and headset positions"));
 			}
 		}
 
 		imgui_ctx->vibrate_on_hover();
 
-		if (body_tracker == xr::body_tracker_type::fb)
 		{
 			ImGui::BeginDisabled(not config.check_feature(feature::body_tracking));
 			ImGui::Indent();
-			if (ImGui::Checkbox(_S("Enable lower body tracking"), &config.fb_lower_body))
 			{
-				config.save();
+				gui::body_tracking_parts(system, *imgui_ctx, config);
 			}
-			imgui_ctx->vibrate_on_hover();
-			if (ImGui::IsItemHovered())
-				imgui_ctx->tooltip(_("Estimate lower body joint positions using Generative Legs\nRequires 'Hand and body tracking' to be enabled in the Quest movement tracking settings"));
-
-			ImGui::BeginDisabled(not config.fb_lower_body);
-			if (ImGui::Checkbox(_S("Enable hip tracking"), &config.fb_hip))
-			{
-				config.save();
-			}
-			imgui_ctx->vibrate_on_hover();
-			if (ImGui::IsItemHovered())
-				imgui_ctx->tooltip(_("Only takes affect with lower body tracking enabled\nMay be desired when using another source of hip tracking"));
-			ImGui::EndDisabled();
-
 			ImGui::Unindent();
 			ImGui::EndDisabled();
 		}

@@ -180,10 +180,33 @@ configuration::configuration(xr::system & system, xr::session & session)
 		if (auto val = root["mic_unprocessed_audio"]; val.is_bool())
 			mic_unprocessed_audio = val.get_bool();
 
-		if (auto val = root["fb_lower_body"]; val.is_bool())
-			fb_lower_body = val.get_bool();
-		if (auto val = root["fb_hip"]; val.is_bool())
-			fb_hip = val.get_bool();
+		if (auto val = root["forward_keyboard"]; val.is_bool())
+			forward_keyboard = val.get_bool();
+
+		if (auto val = root["forward_mouse"]; val.is_bool())
+			forward_mouse = val.get_bool();
+
+		if (auto val = root["forward_gamepad"]; val.is_bool())
+			forward_gamepad = val.get_bool();
+
+		if (auto val = root["body_parts"]; val.is_object())
+		{
+			for (const auto & [b, name]: magic_enum::enum_entries<wivrn::from_headset::body_part_mask>())
+			{
+				const auto & body_part = val[name];
+				if (!body_part.is_bool())
+					continue;
+
+				if (body_part.get_bool())
+				{
+					body_part_mask |= std::to_underlying(b);
+				}
+				else
+				{
+					body_part_mask &= ~std::to_underlying(b);
+				}
+			}
+		}
 
 		if (auto val = root["virtual_keyboard_layout"]; val.is_string())
 			virtual_keyboard_layout = val.get_string().value();
@@ -296,8 +319,24 @@ void configuration::save()
 	write_openxr_post_processing(json, openxr_post_processing);
 	json << ",\"passthrough_enabled\":" << std::boolalpha << passthrough_enabled;
 	json << ",\"mic_unprocessed_audio\":" << std::boolalpha << mic_unprocessed_audio;
-	json << ",\"fb_lower_body\":" << std::boolalpha << fb_lower_body;
-	json << ",\"fb_hip\":" << std::boolalpha << fb_hip;
+	json << ",\"forward_keyboard\":" << std::boolalpha << forward_keyboard;
+	json << ",\"forward_mouse\":" << std::boolalpha << forward_mouse;
+	json << ",\"forward_gamepad\":" << std::boolalpha << forward_gamepad;
+
+	std::stringstream body_part_ss;
+	for (const auto & [b, name]: magic_enum::enum_entries<wivrn::from_headset::body_part_mask>())
+	{
+		bool enabled = (body_part_mask & std::to_underlying(b)) != 0;
+		body_part_ss << "\"" << name << "\":" << std::boolalpha << enabled << ",";
+	}
+
+	std::string body_parts_str = body_part_ss.str();
+	if (!body_parts_str.empty())
+	{
+		body_parts_str.pop_back(); // Remove last comma
+		json << ",\"body_parts\":{" << body_parts_str << "}";
+	}
+
 	json << ",\"enable_stream_gui\":" << std::boolalpha << enable_stream_gui;
 	for (auto & [key, value]: features)
 		json << "," << key << ":" << std::boolalpha << value;

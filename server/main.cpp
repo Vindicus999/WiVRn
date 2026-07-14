@@ -9,6 +9,7 @@
 #include "openxr/openxr.h"
 #include "sleep_inhibitor.h"
 #include "util/u_trace_marker.h"
+#include "utils/wivrn_trace.h"
 
 #include "active_runtime.h"
 #include "avahi_publisher.h"
@@ -242,6 +243,8 @@ void start_server(configuration config)
 		// something is broken with Intel CCS under vaapi
 		setenv("INTEL_DEBUG", "noccs", false);
 
+		setenv("XRT_LOG", "info", false);
+
 		wivrn::ipc_server_cb server_cb;
 
 		ipc_server_main_info server_info{
@@ -415,8 +418,6 @@ gboolean headset_connected_success(void *)
 
 	if (enc_state == wivrn_connection::encryption_state::pairing)
 		set_encryption_state(wivrn_connection::encryption_state::enabled);
-
-	init_cleanup_functions();
 
 	std::cerr << "Client connected" << std::endl;
 
@@ -946,8 +947,6 @@ int inner_main(int argc, char * argv[], bool show_instructions)
 		active_runtime::cleanup_openxr();
 	listen_socket = create_listen_socket();
 
-	u_trace_marker_init();
-
 	// Initialize main loop
 	main_loop = g_main_loop_new(nullptr, false);
 	auto main_context = g_main_loop_get_context(main_loop);
@@ -1006,10 +1005,8 @@ int inner_main(int argc, char * argv[], bool show_instructions)
 	avahi_glib_poll_free(glib_poll);
 	g_main_loop_unref(main_loop);
 
-#if WIVRN_USE_SYSTEMD
 	std::error_code ec;
 	std::filesystem::remove(socket_path(), ec);
-#endif
 
 	return wivrn_exit_code::success;
 }

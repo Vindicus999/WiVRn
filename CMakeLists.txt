@@ -59,8 +59,13 @@ option(WIVRN_USE_VAAPI "Enable vaapi (AMD/Intel) hardware encoder" ON)
 option(WIVRN_USE_VULKAN_ENCODE "Enable vulkan video encoder" ON)
 option(WIVRN_USE_X264 "Enable x264 software encoder" ON)
 
+option(WIVRN_USE_PERFETTO "Enable Perfetto tracing via the Perfetto SDK (server only)" OFF)
+option(WIVRN_TRACE_MONADO "Also instrument Monado (percetto) under the same WIVRN_TRACING switch; pulls in a second Perfetto runtime, system backend only. Requires WIVRN_USE_PERFETTO" OFF)
+if(WIVRN_TRACE_MONADO AND NOT WIVRN_USE_PERFETTO)
+	message(FATAL_ERROR "WIVRN_TRACE_MONADO=ON requires WIVRN_USE_PERFETTO=ON")
+endif()
+
 option(WIVRN_USE_PIPEWIRE "Enable pipewire backend" ON)
-option(WIVRN_USE_PULSEAUDIO "Enable pulseaudio backend" OFF)
 
 set(OVR_COMPAT_SEARCH_PATH "/opt/xrizer:/usr/local/lib/OpenComposite:/usr/lib/OpenComposite:/opt/OpenComposite:/opt/opencomposite:/opt/VapoR:/usr/local/lib/VapoR"
     CACHE STRING "List of places to search for the OpenVR compatibility layer, separated by :")
@@ -147,10 +152,6 @@ if (WIVRN_BUILD_SERVER)
 
     if (WIVRN_USE_PIPEWIRE)
         pkg_check_modules(libpipewire REQUIRED IMPORTED_TARGET libpipewire-0.3)
-    endif()
-
-    if (WIVRN_USE_PULSEAUDIO)
-        pkg_check_modules(libpulse REQUIRED IMPORTED_TARGET libpulse)
     endif()
 
     pkg_check_modules(AVAHI REQUIRED IMPORTED_TARGET avahi-client avahi-glib)
@@ -322,7 +323,6 @@ if (WIVRN_BUILD_SERVER OR WIVRN_BUILD_SERVER_LIBRARY)
         message(STATUS "")
         message(STATUS "Audio backends:")
         message(STATUS "\tPipewire  : ${WIVRN_USE_PIPEWIRE}")
-        message(STATUS "\tPulseaudio: ${WIVRN_USE_PULSEAUDIO}")
         message(STATUS "")
         message(STATUS "Optional features:")
         message(STATUS "\tsystemd: ${WIVRN_USE_SYSTEMD}")

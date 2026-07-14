@@ -27,6 +27,7 @@
 #include <optional>
 #include <simdjson.h>
 #include <string>
+#include <type_traits>
 #include <openxr/openxr.h>
 
 namespace xr
@@ -68,8 +69,12 @@ public:
 	bool passthrough_enabled = false;
 	bool mic_unprocessed_audio = false;
 
-	bool fb_lower_body = false;
-	bool fb_hip = true;
+	// Input forwarding, per device. Off by default; only effective if the server permits it.
+	bool forward_keyboard = false;
+	bool forward_mouse = false;
+	bool forward_gamepad = false;
+
+	std::underlying_type_t<wivrn::from_headset::body_part_mask> body_part_mask = ~0;
 
 	bool enable_stream_gui = true;
 
