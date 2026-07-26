@@ -25,6 +25,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <magic_enum_containers.hpp>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <openxr/openxr.h>
 
@@ -54,14 +55,13 @@ public:
 	bool hand_interaction_grip_surface = true;
 	bool pico_face_tracker = false;
 	bool discard_frame = true; // can do xrBeginFrame twice to discard the first one
+	std::unordered_map<std::string, std::string> override_shader;
+	std::unordered_set<std::string> blacklisted_extensions;
 #ifndef NDEBUG
-private:
 	bool initialized_ = false;
 #endif
 
 public:
-	hmd_traits();
-
 	void init();
 
 	const char * permission_name(feature f) const

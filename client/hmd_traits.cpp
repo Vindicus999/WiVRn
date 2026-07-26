@@ -19,8 +19,11 @@
 
 #include "hmd_traits.h"
 
+#include "utils/overloaded.h"
+#include "utils/strings.h"
 #include "xr/to_string.h"
 
+#include <boost/pfr.hpp>
 #include <cassert>
 #include <cctype>
 #include <cstdlib>
@@ -30,6 +33,8 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <type_traits>
+#include <unordered_map>
 
 #include <spdlog/spdlog.h>
 
@@ -54,7 +59,11 @@ static std::optional<std::string> get_property(const char * property)
 }
 #endif
 
-static std::optional<std::string> env_string(std::string_view name)
+template <typename T>
+std::optional<T> env(std::string_view name);
+
+template <>
+std::optional<std::string> env(std::string_view name)
 {
 #ifdef __ANDROID__
 	auto android_sysprop_name = std::format("debug.wivrn.{}", name);
@@ -71,9 +80,10 @@ static std::optional<std::string> env_string(std::string_view name)
 #endif
 }
 
-static std::optional<uint32_t> env_u32(std::string_view name)
+template <>
+std::optional<uint32_t> env(std::string_view name)
 {
-	const auto value = env_string(name);
+	const auto value = env<std::string>(name);
 	if (not value)
 		return std::nullopt;
 	try
@@ -90,9 +100,10 @@ static std::optional<uint32_t> env_u32(std::string_view name)
 	}
 }
 
-static std::optional<bool> env_bool(std::string_view name)
+template <>
+std::optional<bool> env(std::string_view name)
 {
-	const auto value = env_string(name);
+	const auto value = env<std::string>(name);
 	if (not value)
 		return std::nullopt;
 	if (strcmp(value->c_str(), "1") == 0 || strcasecmp(value->c_str(), "true") == 0 || strcasecmp(value->c_str(), "yes") == 0 || strcasecmp(value->c_str(), "on") == 0)
@@ -102,7 +113,32 @@ static std::optional<bool> env_bool(std::string_view name)
 	return std::nullopt;
 }
 
-hmd_traits::hmd_traits() = default;
+template <>
+std::optional<std::unordered_map<std::string, std::string>> env(std::string_view name)
+{
+	const auto values = env<std::string>(name);
+	if (not values)
+		return std::nullopt;
+
+	std::unordered_map<std::string, std::string> map;
+	for (auto value: utils::split(*values, ","))
+	{
+		if (auto pos = value.find('='); pos != std::string::npos)
+			map.insert(std::make_pair(value.substr(0, pos), value.substr(pos + 1)));
+	}
+
+	return map;
+}
+
+template <>
+std::optional<std::unordered_set<std::string>> env(std::string_view name)
+{
+	const auto values = env<std::string>(name);
+	if (not values)
+		return std::nullopt;
+
+	return std::unordered_set<std::string>{std::from_range, utils::split(*values, ",")};
+}
 
 void hmd_traits::init()
 {
@@ -203,8 +239,32 @@ void hmd_traits::init()
 	{
 		// Accepts OpenXR 1.1 but doesn't actually implement it
 		max_openxr_api_version = XR_API_VERSION_1_0;
+
 		// Doesn't handle additive blend, so needs specific ray model
-		controller_ray_model = "assets://ray-htc.glb";
+		// Fixed in XR elite firmware version 2.0
+		bool need_htc_ray = true;
+		const auto version = get_property("ro.product.version");
+		if (version)
+		{
+			auto digits = utils::split(*version, ".");
+			if (not digits.empty())
+			{
+				try
+				{
+					auto major = std::stoi(digits[0]);
+					if (major >= 2 and model == "VIVE XR Series")
+						need_htc_ray = false;
+				}
+				catch (...)
+				{}
+			}
+		}
+		if (need_htc_ray)
+			override_shader = {
+			        {"ray.frag", "ray_htc.frag"},
+			        {"ray_skinned.vert", "ray_skinned_htc.vert"},
+			        {"ray.vert", "ray_htc.vert"},
+			};
 
 		controller_profile = "htc-vive-focus-3";
 
@@ -231,69 +291,75 @@ void hmd_traits::init()
 #endif
 
 	spdlog::info("HMD traits initialized");
-	auto log_string = [](std::string_view name, std::string & field) {
-		if (auto val = env_string(name))
-		{
-			spdlog::info("\t{} override: {} -> {}", name, field, *val);
-			field = *val;
-		}
-		else
-		{
-			spdlog::info("\t{}: {}", name, field);
-		}
-	};
-	auto log_u32 = [](std::string_view name, uint32_t & field) {
-		if (auto val = env_u32(name))
-		{
-			spdlog::info("\t{} override: {} -> {}", name, field, *val);
-			field = *val;
-		}
-		else
-		{
-			spdlog::info("\t{}: {}", name, field);
-		}
-	};
-	auto log_bool = [](std::string_view name, bool & field) {
-		if (auto val = env_bool(name))
-		{
-			spdlog::info("\t{} override: {} -> {}", name, field, *val);
-			field = *val;
-		}
-		else
-		{
-			spdlog::info("\t{}: {}", name, field);
-		}
-	};
 
-	log_string("controller_profile", controller_profile);
-	log_string("controller_ray_model", controller_ray_model);
-	if (auto val = env_string("max_openxr_api_version"))
-	{
-		XrVersion v;
-		if (val == "1.1")
-			v = XR_API_VERSION_1_1;
-		else if (val == "1.0")
-			v = XR_API_VERSION_1_0;
-		else
-		{
-			spdlog::warn("XrVersion {} not recognized", *val);
-			v = max_openxr_api_version;
-		}
-		spdlog::info("\t{} override: {} -> {}", "max_openxr_api_version", xr::to_string(max_openxr_api_version), xr::to_string(v));
-		max_openxr_api_version = v;
-	}
-	else
-	{
-		spdlog::info("\t{}: {}", "max_openxr_api_version", xr::to_string(max_openxr_api_version));
-	}
-	log_u32("panel_width_override", panel_width_override);
-	log_bool("needs_srgb_conversion", needs_srgb_conversion);
-	log_bool("view_locate", view_locate);
-	log_bool("vk_debug_ext_allowed", vk_debug_ext_allowed);
-	log_bool("bind_simple_controller", bind_simple_controller);
-	log_bool("hand_interaction_grip_surface", hand_interaction_grip_surface);
-	log_bool("pico_face_tracker", pico_face_tracker);
-	log_bool("discard_frame", discard_frame);
+	boost::pfr::for_each_field_with_name(
+	        *this,
+	        utils::overloaded{
+	                [](std::string_view name, auto & field) {
+		                if (auto val = env<std::remove_cvref_t<decltype(field)>>(name))
+		                {
+			                spdlog::info("\t{} override: {} -> {}", name, field, *val);
+			                field = *val;
+		                }
+		                else
+		                {
+			                spdlog::info("\t{}: {}", name, field);
+		                }
+	                },
+	                [](std::string_view name, XrVersion & field) {
+		                if (auto val = env<std::string>(name))
+		                {
+			                XrVersion v;
+			                if (val == "1.1")
+				                v = XR_API_VERSION_1_1;
+			                else if (val == "1.0")
+				                v = XR_API_VERSION_1_0;
+			                else
+			                {
+				                spdlog::warn("XrVersion {} not recognized", *val);
+				                v = field;
+			                }
+			                spdlog::info("\t{} override: {} -> {}", name, xr::to_string(field), xr::to_string(v));
+			                field = v;
+		                }
+		                else
+		                {
+			                spdlog::info("\t{}: {}", name, xr::to_string(field));
+		                }
+	                },
+	                [](std::string_view name, std::unordered_map<std::string, std::string> & field) {
+		                if (auto val = env<std::unordered_map<std::string, std::string>>(name))
+		                {
+			                for (const auto & [original, overridden]: *val)
+				                field.insert_or_assign(original, overridden);
+		                }
+		                std::erase_if(field, [](const std::pair<std::string, std::string> & kv) { return kv.second == ""; });
+
+		                for (const auto & [original, overridden]: field)
+		                {
+			                spdlog::info("\t{}: {} -> {}", name, original, overridden);
+		                }
+	                },
+
+	                [](std::string_view name, std::unordered_set<std::string> & field) {
+		                if (auto val = env<std::unordered_set<std::string>>(name))
+		                {
+			                for (const auto & i: *val)
+			                {
+				                if (i.starts_with("-"))
+					                field.erase(i.substr(1));
+				                else
+					                field.insert(i);
+			                }
+		                }
+
+		                for (const auto & i: field)
+		                {
+			                spdlog::info("\t{}: {}", name, i);
+		                }
+	                },
+	                [](std::string_view, hmd_permissions) {},
+	        });
 }
 
 static XrViewConfigurationView scale_view(XrViewConfigurationView view, uint32_t width)
@@ -488,11 +554,11 @@ std::pair<glm::vec3, glm::quat> hmd_traits::controller_offset(xr::spaces space) 
 		{
 			case xr::spaces::grip_left:
 			case xr::spaces::grip_right:
-				return {{0, 0, -0.03}, glm::angleAxis(glm::radians(-35.f), glm::vec3{1, 0, 0})};
+				return {{0, 0, 0}, {1, 0, 0, 0}};
 
 			case xr::spaces::aim_left:
 			case xr::spaces::aim_right:
-				return {{0, 0, 0}, {1, 0, 0, 0}};
+				return {{0, -0.045, 0.035}, {1, 0, 0, 0}};
 
 			default:
 				break;
