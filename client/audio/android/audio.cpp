@@ -80,11 +80,7 @@ int32_t wivrn::android::audio::speaker_data_cb(AAudioStream * stream, void * use
 			{
 				// Buffer underrun: add 5ms buffer
 				size_t target_buffer_size = frame_size * AAudioStream_getSampleRate(stream) * 0.005;
-#if __cpp_lib_shared_ptr_arrays >= 201707L
 				self->speaker_tmp.data.c = std::make_shared<uint8_t[]>(target_buffer_size, 0);
-#else
-				self->speaker_tmp.data.c.reset(new uint8_t[target_buffer_size]());
-#endif
 				self->speaker_tmp.payload = std::span(self->speaker_tmp.data.c.get(), target_buffer_size);
 				self->buffer_size_bytes += target_buffer_size;
 				spdlog::debug("Audio sync: underrun, add {} bytes buffer",
@@ -159,9 +155,9 @@ void wivrn::android::audio::build_microphone(AAudioStreamBuilder * builder, int3
 	AAudioStreamBuilder_setSharingMode(builder, AAUDIO_SHARING_MODE_EXCLUSIVE);
 	AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_I16);
 	if (application::get_config().mic_unprocessed_audio)
-	{
 		AAudioStreamBuilder_setInputPreset(builder, AAUDIO_INPUT_PRESET_UNPROCESSED);
-	}
+	else
+		AAudioStreamBuilder_setInputPreset(builder, AAUDIO_INPUT_PRESET_VOICE_COMMUNICATION);
 
 	AAudioStreamBuilder_setDataCallback(builder, &microphone_data_cb, this);
 	AAudioStreamBuilder_setErrorCallback(builder, &microphone_error_cb, this);
