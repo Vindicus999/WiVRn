@@ -596,6 +596,8 @@ xrt_result_t compositor::get_view_config(
 				};
 			}
 			return XRT_SUCCESS;
+		case XRT_VIEW_TYPE_QUAD:
+			return XRT_ERROR_UNSUPPORTED_VIEW_TYPE;
 	}
 	return XRT_ERROR_UNSUPPORTED_VIEW_TYPE;
 }
@@ -713,6 +715,7 @@ compositor::compositor(wivrn_session & session) :
 	        log_level);
 	vk::detail::resultCheck(vk::Result(res), "vk_init_from_given");
 
+	c_base->vk.version = vk_bundle::api_version;
 	// vk_init_from_given can't enable calibrated timestamps; do it here.
 #ifdef VK_EXT_calibrated_timestamps
 	c_base->vk.has_EXT_calibrated_timestamps = vk.has_device_ext(VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME);
