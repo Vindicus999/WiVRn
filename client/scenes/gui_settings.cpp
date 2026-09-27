@@ -21,7 +21,6 @@
 // ui:: widget for each, rebuilt every frame so dynamic options/descriptions just work
 // same pages serve the lobby and the in-stream window, gated by ctx.in_game
 
-#define IMGUI_DEFINE_MATH_OPERATORS
 #include "scenes/gui_common.h"
 
 #include "gui_settings.h"
@@ -232,7 +231,7 @@ void settings_video(const settings_context & ctx)
 		        .id = "##refresh",
 		        .label = _("Refresh rate"),
 		        .description = _("Use 'auto' to select the refresh rate based on measured application performance. May cause flicker when a change happens."),
-		        .ui = ui_kind::segmented,
+		        .ui = rates.size() < 7 ? ui_kind::segmented : ui_kind::combo,
 		        .get_int = [&config, rates] {
 			        for (size_t i = 0; i < rates.size(); ++i)
 				        if (rates[i] == config.preferred_refresh_rate)
@@ -536,6 +535,7 @@ void settings_devices(const settings_context & ctx)
 	auto & default_config = ctx.default_config;
 	std::vector<setting> list;
 
+#ifdef __ANDROID__
 	list.push_back({
 	        .id = "##keyboard",
 	        .label = _C("setting name", "Keyboard"),
@@ -555,6 +555,7 @@ void settings_devices(const settings_context & ctx)
 	        .set_bool = [&config](bool v) { config.forward_mouse = v; config.save(); },
 	        .default_bool = default_config.forward_mouse,
 	});
+#endif
 
 	list.push_back({
 	        .id = "##gamepad",
@@ -719,6 +720,19 @@ void settings_system(const settings_context & ctx)
 	        .title = _("Language"),
 	        .default_int = language_index(default_config),
 	});
+
+#ifdef __ANDROID__
+	if (application::get_hmd_traits().usb_net)
+		list.push_back({
+		        .id = "##usbnet",
+		        .label = _C("setting name", "USB networking"),
+		        .description = _("Enables connection by USB without ADB or developer mode.\nMake sure the server allows IPv6 link-local only connections."),
+		        .ui = ui_kind::toggle,
+		        .get_bool = [&config] { return config.usb_network; },
+		        .set_bool = [&config](bool v) { config.usb_network = v;config.save(); application::instance().set_usb_networking(v); },
+		        .default_bool = default_config.usb_network,
+		});
+#endif
 
 	list.push_back({
 	        .id = "##extended",

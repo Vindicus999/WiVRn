@@ -135,43 +135,52 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 	roles.gamepad = static_xdev_count;
 	static_xdevs[static_xdev_count++] = &gamepad_device.emplace(*this);
 
+	auto conf = configuration();
+
 #if WIVRN_FEATURE_STEAMVR_LIGHTHOUSE
-	auto use_steamvr_lh = configuration().use_steamvr_lh || std::getenv("WIVRN_USE_STEAMVR_LH");
-	xrt_system_devices * lhdevs = NULL;
+
+	auto use_steamvr_lh = conf.use_steamvr_lh || std::getenv("WIVRN_USE_STEAMVR_LH");
 
 	if (use_steamvr_lh)
 	{
+		if (conf.lh_stick_deadzone > 0.01f)
+			setenv("LH_STICK_DEADZONE", std::format("{:.2}", *conf.lh_stick_deadzone).c_str(), true);
+
+		if (conf.lh_max_extrapolation.has_value())
+			setenv("LH_MAX_EXTRAPOLATION_MS", std::format("{}", *conf.lh_max_extrapolation).c_str(), true);
+
 		U_LOG_W("=====================");
 		U_LOG_W("Disregard lighthousedb / chaperone related error messages from the lighthouse driver. These are irrelevant in case of WiVRn.");
 		U_LOG_W("If getting a SIGSEGV right after this, you are likely using an unsupported SteamVR version!");
 		U_LOG_W("=====================");
-		if (steamvr_lh_create_devices(nullptr, &lhdevs) == XRT_SUCCESS)
+		int original_count = static_xdev_count;
+		if (steamvr_lh_create_devices(nullptr, this) == XRT_SUCCESS)
 		{
-			for (int i = 0; i < lhdevs->static_xdev_count; i++)
+			for (int i = original_count; i < static_xdev_count; i++)
 			{
-				auto lhdev = lhdevs->static_xdevs[i];
+				auto lhdev = static_xdevs[i];
 				switch (lhdev->device_type)
 				{
 					case XRT_DEVICE_TYPE_LEFT_HAND_CONTROLLER:
-						roles.left = static_xdev_count;
+						roles.left = i;
 						static_roles.hand_tracking.unobstructed.left = nullptr;
 						static_roles.hand_tracking.conforming.left = lhdev;
 						break;
 					case XRT_DEVICE_TYPE_RIGHT_HAND_CONTROLLER:
-						roles.right = static_xdev_count;
+						roles.right = i;
 						static_roles.hand_tracking.unobstructed.right = nullptr;
 						static_roles.hand_tracking.conforming.right = lhdev;
 						break;
 					case XRT_DEVICE_TYPE_ANY_HAND_CONTROLLER:
 						if (roles.left == left_controller_index)
 						{
-							roles.left = static_xdev_count;
+							roles.left = i;
 							static_roles.hand_tracking.unobstructed.left = nullptr;
 							static_roles.hand_tracking.conforming.left = lhdev;
 						}
 						else if (roles.right == right_controller_index)
 						{
-							roles.right = static_xdev_count;
+							roles.right = i;
 							static_roles.hand_tracking.unobstructed.right = nullptr;
 							static_roles.hand_tracking.conforming.right = lhdev;
 						}
@@ -179,7 +188,6 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 					default:
 						break;
 				}
-				static_xdevs[static_xdev_count++] = lhdev;
 			}
 		}
 	}
@@ -257,7 +265,7 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 		strlcpy(xrt_system.base.properties.name, system_name.c_str(), std::size(xrt_system.base.properties.name));
 	}
 
-	if (configuration().hid_forwarding)
+	if (conf.hid_forwarding)
 	{
 		try
 		{
@@ -318,6 +326,9 @@ xrt_result_t wivrn::wivrn_session::create_session(std::unique_ptr<wivrn_connecti
 	}
 	self->system_compositor = *out_xsysc;
 
+	struct xrt_pose t_stage_local = XRT_POSE_IDENTITY;
+	t_stage_local.position.y = 1.6;
+
 	t_builder_create_space_overseer_legacy(
 	        &self->xrt_system.broadcast,
 	        &self->hmd,
@@ -328,6 +339,7 @@ xrt_result_t wivrn::wivrn_session::create_session(std::unique_ptr<wivrn_connecti
 	        self->static_xdevs,
 	        self->static_xdev_count,
 	        false,
+	        &t_stage_local,
 	        false,
 	        out_xspovrs);
 	self->space_overseer = *out_xspovrs;
@@ -349,12 +361,6 @@ xrt_result_t wivrn::wivrn_session::create_session(std::unique_ptr<wivrn_connecti
 		}
 	}
 
-	auto dump_file = std::getenv("WIVRN_DUMP_TIMINGS");
-	if (dump_file)
-	{
-		self->feedback_csv.open(dump_file);
-	}
-
 	*out_xsysd = self.release();
 	return XRT_SUCCESS;
 }
@@ -373,13 +379,27 @@ void wivrn_session::stop()
 	worker_thread = std::jthread();
 }
 
-bool wivrn_session::request_stop()
+void wivrn_session::request_stop()
 {
-	assert(mnd_ipc_server);
-	bool b = net_thread.request_stop();
+	stop_application(std::nullopt, 2l * U_TIME_1S_IN_NS);
+
+	int64_t end = os_monotonic_get_ns() + 3l * U_TIME_1S_IN_NS;
+	while (os_monotonic_get_ns() < end)
+	{
+		{
+			scoped_lock lock(xrt_system.sessions.mutex);
+			if (xrt_system.sessions.count == 0)
+			{
+				U_LOG_I("No more sessions, exiting");
+				break;
+			}
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+
+	net_thread.request_stop();
 	worker_thread.request_stop();
 	ipc_server_stop(mnd_ipc_server);
-	return b;
 }
 
 void wivrn_session::pause_session()
@@ -782,17 +802,17 @@ void wivrn_session::operator()(from_headset::feedback && feedback)
 	compositor.on_feedback(feedback, o);
 
 	if (feedback.received_first_packet)
-		dump_time("receive_begin", feedback.frame_index, o.from_headset(feedback.received_first_packet), feedback.stream_index);
+		trace::instant_feedback("receive_begin", o.from_headset(feedback.received_first_packet), feedback.frame_index, feedback.stream_index);
 	if (feedback.received_last_packet)
-		dump_time("receive_end", feedback.frame_index, o.from_headset(feedback.received_last_packet), feedback.stream_index);
+		trace::instant_feedback("receive_end", o.from_headset(feedback.received_last_packet), feedback.frame_index, feedback.stream_index);
 	if (feedback.sent_to_decoder)
-		dump_time("decode_begin", feedback.frame_index, o.from_headset(feedback.sent_to_decoder), feedback.stream_index);
+		trace::instant_feedback("decode_begin", o.from_headset(feedback.sent_to_decoder), feedback.frame_index, feedback.stream_index);
 	if (feedback.received_from_decoder)
-		dump_time("decode_end", feedback.frame_index, o.from_headset(feedback.received_from_decoder), feedback.stream_index);
+		trace::instant_feedback("decode_end", o.from_headset(feedback.received_from_decoder), feedback.frame_index, feedback.stream_index);
 	if (feedback.blitted)
-		dump_time("blit", feedback.frame_index, o.from_headset(feedback.blitted), feedback.stream_index);
+		trace::instant_feedback("blit", o.from_headset(feedback.blitted), feedback.frame_index, feedback.stream_index);
 	if (feedback.displayed)
-		dump_time("display", feedback.frame_index, o.from_headset(feedback.displayed), feedback.stream_index);
+		trace::instant_feedback("display", o.from_headset(feedback.displayed), feedback.frame_index, feedback.stream_index);
 }
 
 void wivrn_session::operator()(from_headset::battery && battery)
@@ -952,30 +972,7 @@ void wivrn_session::operator()(const from_headset::set_active_application & req)
 
 void wivrn_session::operator()(const from_headset::stop_application & req)
 {
-	assert(mnd_ipc_server);
-	scoped_lock lock(mnd_ipc_server->global_state.lock);
-	for (auto & t: mnd_ipc_server->threads)
-	{
-		if (t.ics.client_state.id == req.id)
-		{
-			if (!t.ics.xs)
-			{
-				U_LOG_W("Unable to stop app %s: no session!", t.ics.client_state.info.application_name);
-				break;
-			}
-
-			U_LOG_I("Request exit for application %s", t.ics.client_state.info.application_name);
-			xrt_result_t xret = xrt_session_request_exit(t.ics.xs);
-			if (xret != XRT_SUCCESS)
-			{
-				U_LOG_W("Failed to request exit for application %s: %s", t.ics.client_state.info.application_name, u_str_xrt_result(xret));
-			}
-
-			auto when = os_monotonic_get_ns() + 10l * U_TIME_1S_IN_NS;
-			session_loss.lock()->emplace(req.id, when);
-			break;
-		}
-	}
+	stop_application(req.id, 10l * U_TIME_1S_IN_NS);
 }
 
 void wivrn_session::operator()(audio_data && data)
@@ -1071,10 +1068,17 @@ void wivrn_session::run_net(std::stop_token stop)
 				for (auto & haptics: uinput_handler->read_rumble())
 					send_stream(std::move(haptics));
 			}
+
+			if (auto locked = net_exception.lock(); *locked)
+			{
+				std::exception_ptr ex;
+				std::swap(ex, *locked);
+				std::rethrow_exception(ex);
+			}
 		}
 		catch (const std::exception & e)
 		{
-			U_LOG_W("Exception in network thread: %s, Session paused.", e.what());
+			U_LOG_W("Network exception: %s, Session paused.", e.what());
 			pause_session();
 
 			reconnect(stop);
@@ -1145,20 +1149,14 @@ void wivrn_session::set_foveated_size(uint32_t width, uint32_t height)
 	hmd.set_foveated_size(width, height);
 }
 
-void wivrn_session::dump_time(const std::string & event, uint64_t frame, int64_t time, uint8_t stream, const char * extra)
-{
-	trace::instant_feedback(event.c_str(), time, frame, stream);
-	if (feedback_csv)
-	{
-		std::lock_guard lock(csv_mutex);
-		feedback_csv << std::quoted(event) << "," << frame << "," << time << "," << (int)stream << extra << std::endl;
-	}
-}
-
 void wivrn_session::quit_if_no_client()
 {
-	scoped_lock lock(xrt_system.sessions.mutex);
-	if (xrt_system.sessions.count == 0)
+	uint32_t count;
+	{
+		scoped_lock lock(xrt_system.sessions.mutex);
+		count = xrt_system.sessions.count;
+	}
+	if (count == 0)
 	{
 		U_LOG_I("No OpenXR client connected, exiting");
 		request_stop();
@@ -1277,6 +1275,7 @@ void wivrn_session::reconnect(std::stop_token stop)
 			}
 
 			connection->reset(stop, std::move(*tcp), [this]() { quit_if_no_client(); });
+			*net_exception.lock() = nullptr;
 
 			// validate if headset is compatible with the current session
 
@@ -1320,6 +1319,37 @@ void wivrn_session::reconnect(std::stop_token stop)
 		catch (std::exception & e)
 		{
 			U_LOG_W("Exception while connecting headset: %s", e.what());
+		}
+	}
+}
+
+void wivrn_session::stop_application(std::optional<uint32_t> id, int64_t timeout_ns)
+{
+	assert(mnd_ipc_server);
+	scoped_lock lock(mnd_ipc_server->global_state.lock);
+	for (auto & t: mnd_ipc_server->threads)
+	{
+		if (t.state == IPC_THREAD_READY || t.state == IPC_THREAD_STOPPING)
+			continue;
+
+		uint32_t client_id = t.ics.client_state.id;
+		if (not id.has_value() or client_id == *id)
+		{
+			if (!t.ics.xs)
+			{
+				U_LOG_W("Unable to stop app %s: no session!", t.ics.client_state.info.application_name);
+				continue;
+			}
+
+			U_LOG_I("Request exit for application %s", t.ics.client_state.info.application_name);
+			xrt_result_t xret = xrt_session_request_exit(t.ics.xs);
+			if (xret != XRT_SUCCESS)
+			{
+				U_LOG_W("Failed to request exit for application %s: %s", t.ics.client_state.info.application_name, u_str_xrt_result(xret));
+			}
+
+			auto when = os_monotonic_get_ns() + timeout_ns;
+			session_loss.lock()->emplace(client_id, when);
 		}
 	}
 }

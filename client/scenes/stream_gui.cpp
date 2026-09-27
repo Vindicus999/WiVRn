@@ -17,8 +17,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#define IMGUI_DEFINE_MATH_OPERATORS
-
 #include "stream.h"
 
 #include "application.h"
@@ -33,7 +31,7 @@
 #include "render/ui_widgets.h"
 #include "utils/i18n.h"
 #include "utils/ranges.h"
-#include <IconsFontAwesome6.h>
+#include <IconsFontAwesome7.h>
 #include <chrono>
 #include <cmath>
 #include <glm/ext.hpp>
@@ -227,8 +225,11 @@ void scenes::stream::gui_performance_metrics()
 			std::string title_with_units = std::string(title) + " [" + prefix + unit + "]";
 			ImPlot::SetupAxes(nullptr, title_with_units.c_str(), ImPlotAxisFlags_NoDecorations, 0);
 			ImPlot::SetupAxesLimits(0, global_metrics.size() - 1, min_v * multiplier, axis_scale[n] * multiplier, ImGuiCond_Always);
-			ImPlot::SetNextLineStyle(color);
-			ImPlot::SetNextFillStyle(color, 0.25);
+			ImPlotSpec spec;
+			spec.LineColor = color;
+			spec.FillColor = color;
+			spec.FillAlpha = 0.25;
+			spec.Flags = ImPlotLineFlags_Shaded;
 
 			for (const auto & [subtitle, data]: subplots)
 			{
@@ -237,12 +238,12 @@ void scenes::stream::gui_performance_metrics()
 				        .stride = sizeof(global_metric),
 				        .multiplier = multiplier,
 				};
-				ImPlot::PlotLineG(subtitle.c_str(), getter, &gdata, global_metrics.size(), ImPlotLineFlags_Shaded);
+				ImPlot::PlotLineG(subtitle.c_str(), getter, &gdata, global_metrics.size(), spec);
 
 				double x[] = {double(metrics_offset), double(metrics_offset)};
 				double y[] = {0, axis_scale[n] * multiplier};
-				ImPlot::SetNextLineStyle(ImVec4(1, 1, 1, 1));
-				ImPlot::PlotLine("", x, y, 2);
+				spec.LineColor = ImVec4(1, 1, 1, 1);
+				ImPlot::PlotLine("", x, y, 2, spec);
 			}
 			ImPlot::EndPlot();
 		}
@@ -336,8 +337,7 @@ void scenes::stream::gui_performance_metrics()
 
 			double x[] = {double(metrics_offset), double(metrics_offset)};
 			double y[] = {0, 1e9};
-			ImPlot::SetNextLineStyle(ImVec4(1, 1, 1, 1));
-			ImPlot::PlotLine("", x, y, 2);
+			ImPlot::PlotLine("", x, y, 2, {ImPlotProp_LineColor, ImVec4(1, 1, 1, 1)});
 
 			ImPlot::EndPlot();
 		}

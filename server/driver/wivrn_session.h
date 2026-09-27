@@ -40,7 +40,6 @@
 #include "wivrn_uinput.h"
 #include "xrt/xrt_results.h"
 #include "xrt/xrt_system.h"
-#include <fstream>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -110,9 +109,6 @@ class wivrn_session : public xrt_system_devices
 	clock_offset_estimator offset_est;
 	std::atomic<XrDuration> tracking_latency; // production to reception time
 
-	std::mutex csv_mutex;
-	std::ofstream feedback_csv;
-
 	std::unique_ptr<audio_device> audio_handle;
 
 	// when sessions shall be destroyed, key is client id, value is timestamp
@@ -120,6 +116,8 @@ class wivrn_session : public xrt_system_devices
 
 	std::jthread net_thread;
 	std::jthread worker_thread;
+
+	thread_safe<std::exception_ptr> net_exception;
 
 	wivrn_session(std::unique_ptr<wivrn_connection> connection, b_system &);
 
@@ -136,7 +134,7 @@ public:
 	void start(ipc_server *);
 	void stop();
 
-	bool request_stop();
+	void request_stop();
 	void quit_if_no_client();
 
 	clock_offset get_offset();
@@ -204,20 +202,34 @@ public:
 	template <typename T>
 	void send_stream(T && packet)
 	{
-		connection->send_stream(std::forward<T>(packet));
+		try
+		{
+			connection->send_stream(std::forward<T>(packet));
+		}
+		catch (std::exception & e)
+		{
+			*net_exception.lock() = std::current_exception();
+			throw;
+		}
 	}
 
 	template <typename T>
 	void send_control(T && packet)
 	{
-		connection->send_control(std::forward<T>(packet));
+		try
+		{
+			connection->send_control(std::forward<T>(packet));
+		}
+		catch (std::exception & e)
+		{
+			*net_exception.lock() = std::current_exception();
+			throw;
+		}
 	}
 
 	xrt_result_t push_event(const xrt_session_event &);
 
 	void set_foveated_size(uint32_t width, uint32_t height);
-
-	void dump_time(const std::string & event, uint64_t frame, int64_t time, uint8_t stream = -1, const char * extra = "");
 
 private:
 	void run_net(std::stop_token stop);
@@ -226,6 +238,9 @@ private:
 
 	void pause_session();
 	void resume_session();
+
+	// nullopt for id stops all apps
+	void stop_application(std::optional<uint32_t> id, int64_t timeout_ns);
 
 	void update_client_states(bool visible, bool focused);
 	void poll_session_loss();

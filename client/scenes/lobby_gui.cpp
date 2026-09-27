@@ -17,13 +17,12 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#define IMGUI_DEFINE_MATH_OPERATORS
-
 #include "application.h"
 #include "configuration.h"
 #include "constants.h"
 #include "gui_common.h"
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "lobby.h"
 #include "render/ui_theme.h"
 #include "render/ui_widgets.h"
@@ -31,7 +30,6 @@
 #include "utils/async.h"
 #include "utils/i18n.h"
 #include "utils/mapped_file.h"
-#include "utils/overloaded.h"
 #if WIVRN_CLIENT_DEBUG_MENU
 #include "utils/ranges.h"
 #endif
@@ -47,7 +45,6 @@
 #include <glm/geometric.hpp>
 #include <glm/gtc/matrix_access.hpp>
 #include <glm/gtc/quaternion.hpp>
-#include <imspinner.h>
 #include <magic_enum.hpp>
 #include <memory>
 #include <ranges>
@@ -58,7 +55,8 @@
 #include <utils/strings.h>
 #include <vulkan/vulkan_to_string.hpp>
 
-#include "IconsFontAwesome6.h"
+#include "IconsFontAwesome7.h"
+#include "IconsFontAwesome7Brands.h"
 
 using namespace std::chrono_literals;
 
@@ -430,7 +428,19 @@ void scenes::lobby::gui_server_list()
 			const ImVec2 chip_sz = ui::chip_size(chip_label);
 			float trailing = bh + gap + cw + (data.autoconnect ? gap + chip_sz.x : 0) + ui::metrics::list_row_pad;
 
-			const auto row = ui::begin_list_row("##row", ICON_FA_SERVER, 0, name, sub, false, trailing);
+			const auto server_icon = [](const wivrn_discover::service & service) {
+				if (not service.addresses.empty())
+				{
+					const auto & interface = service.addresses.front().interface;
+					if (interface.starts_with("usb"))
+						return ICON_FA_USB;
+					if (interface.starts_with("w"))
+						return ICON_FA_TOWER_BROADCAST;
+				}
+				return ICON_FA_SERVER;
+			}(data.service);
+
+			const auto row = ui::begin_list_row("##row", server_icon, 0, name, sub, false, trailing);
 			float x = row.max.x;
 
 			// overflow menu
@@ -733,13 +743,18 @@ void scenes::lobby::gui_debug()
 
 		if (ImPlot::BeginPlot(_S("CPU time"), plot_size, ImPlotFlags_CanvasOnly))
 		{
-			auto col = ImPlot::GetColormapColor(0);
+			auto color = ImPlot::GetColormapColor(0);
 
 			ImPlot::SetupAxes(nullptr, _S("CPU time [ms]"), ImPlotAxisFlags_NoDecorations, 0);
 			ImPlot::SetupAxesLimits(0, cpu_time.size() - 1, min_v, max_v, ImGuiCond_Always);
-			ImPlot::SetNextLineStyle(col);
-			ImPlot::SetNextFillStyle(col, 0.25);
-			ImPlot::PlotLine(_S("CPU time"), cpu_time.data(), cpu_time.size(), 1, 0, ImPlotLineFlags_Shaded, offset);
+			ImPlotSpec spec;
+			spec.LineColor = color;
+			spec.FillColor = color;
+			spec.FillAlpha = 0.25;
+			spec.Flags = ImPlotLineFlags_Shaded;
+			spec.Offset = offset;
+
+			ImPlot::PlotLine(_S("CPU time"), cpu_time.data(), cpu_time.size(), 1, 0, spec);
 			ImPlot::EndPlot();
 		}
 
@@ -747,13 +762,17 @@ void scenes::lobby::gui_debug()
 
 		if (ImPlot::BeginPlot(_S("GPU time"), plot_size, ImPlotFlags_CanvasOnly))
 		{
-			auto col = ImPlot::GetColormapColor(1);
+			auto color = ImPlot::GetColormapColor(1);
 
 			ImPlot::SetupAxes(nullptr, _S("GPU time [ms]"), ImPlotAxisFlags_NoDecorations, 0);
 			ImPlot::SetupAxesLimits(0, gpu_time.size() - 1, min_v, max_v, ImGuiCond_Always);
-			ImPlot::SetNextLineStyle(col);
-			ImPlot::SetNextFillStyle(col, 0.25);
-			ImPlot::PlotLine(_S("GPU time"), gpu_time.data(), gpu_time.size(), 1, 0, ImPlotLineFlags_Shaded, offset);
+			ImPlotSpec spec;
+			spec.LineColor = color;
+			spec.FillColor = color;
+			spec.FillAlpha = 0.25;
+			spec.Flags = ImPlotLineFlags_Shaded;
+			spec.Offset = offset;
+			ImPlot::PlotLine(_S("GPU time"), gpu_time.data(), gpu_time.size(), 1, 0, spec);
 			ImPlot::EndPlot();
 		}
 		ImPlot::PopStyleColor(5);

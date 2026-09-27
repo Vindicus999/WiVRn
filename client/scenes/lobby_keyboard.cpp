@@ -17,8 +17,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#define IMGUI_DEFINE_MATH_OPERATORS
-
 #include "lobby_keyboard.h"
 
 #include <array>
@@ -31,7 +29,7 @@
 #include <uni_algo/ranges_grapheme.h>
 #include <utility>
 
-#include "IconsFontAwesome6.h"
+#include "IconsFontAwesome7.h"
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "render/ui_theme.h"
@@ -393,7 +391,7 @@ virtual_keyboard::key_status virtual_keyboard::draw_single_key(const key & k, in
 
 	const ImU32 col = ImGui::GetColorU32(active ? ImGuiCol_ButtonActive : status.hovered ? ImGuiCol_ButtonHovered
 	                                                                                     : ImGuiCol_Button);
-	ImGui::RenderNavHighlight(bb, id);
+	ImGui::RenderNavCursor(bb, id);
 	ImGui::RenderFrame(bb.Min, bb.Max, col, true, style.FrameRounding);
 
 	ImGui::RenderTextClippedEx(

@@ -16,7 +16,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#define IMGUI_DEFINE_MATH_OPERATORS
 #include "imgui_impl.h"
 #include "implot.h"
 
@@ -183,7 +182,7 @@ static float distance_to_window(ImGuiWindow * window, ImVec2 position)
 static const std::array layout_bindings = {
         vk::DescriptorSetLayoutBinding{
                 .binding = 0,
-                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                .descriptorType = vk::DescriptorType::eSampledImage,
                 .descriptorCount = 1,
                 .stageFlags = vk::ShaderStageFlagBits::eFragment,
         }};
@@ -536,11 +535,13 @@ void imgui_context::initialize_fonts()
 		}
 	}
 
-	utils::mapped_file font_awesome_regular("assets://Font Awesome 6 Free-Regular-400.otf");
-	utils::mapped_file font_awesome_solid("assets://Font Awesome 6 Free-Solid-900.otf");
+	assert(font_awesome.empty());
+	font_awesome.emplace_back("assets://Font Awesome 7 Free-Regular-400.otf");
+	font_awesome.emplace_back("assets://Font Awesome 7 Free-Solid-900.otf");
+	font_awesome.emplace_back("assets://Font Awesome 7 Brands-Regular-400.otf");
 
 	ImFontConfig config;
-	config.FontDataOwnedByAtlas = false;
+	config.FontDataOwnedByAtlas = true;
 
 	for (auto & font: fonts)
 	{
@@ -549,10 +550,11 @@ void imgui_context::initialize_fonts()
 		config.MergeMode = true;
 	}
 
+	config.FontDataOwnedByAtlas = false;
 	config.MergeMode = true;
 	config.GlyphMinAdvanceX = 40; // Use if you want to make the icon monospaced
-	io.Fonts->AddFontFromMemoryTTF(const_cast<std::byte *>(font_awesome_regular.data()), font_awesome_regular.size(), constants::gui::font_size_small, &config);
-	io.Fonts->AddFontFromMemoryTTF(const_cast<std::byte *>(font_awesome_solid.data()), font_awesome_solid.size(), constants::gui::font_size_small, &config);
+	for (auto & fa: font_awesome)
+		io.Fonts->AddFontFromMemoryTTF(const_cast<std::byte *>(fa.data()), fa.size(), constants::gui::font_size_small, &config);
 }
 
 std::vector<imgui_context::controller_state> imgui_context::read_controllers_state(XrTime display_time)
@@ -1170,12 +1172,12 @@ imgui_context::~imgui_context()
 	ImGui::DestroyContext(context);
 }
 
-ImTextureID imgui_textures::load_texture(const std::string & filename, vk::raii::Sampler && sampler)
+ImTextureID imgui_textures::load_texture(const std::string & filename)
 {
-	return load_texture(utils::mapped_file{filename}, std::move(sampler), filename);
+	return load_texture(utils::mapped_file{filename}, filename);
 }
 
-ImTextureID imgui_textures::load_texture(const std::span<const std::byte> & bytes, vk::raii::Sampler && sampler, const std::string & name)
+ImTextureID imgui_textures::load_texture(const std::span<const std::byte> & bytes, const std::string & name)
 {
 	bool srgb = true;
 
@@ -1188,7 +1190,6 @@ ImTextureID imgui_textures::load_texture(const std::span<const std::byte> & byte
 	std::shared_ptr<vk::raii::DescriptorSet> ds = descriptor_pool.allocate();
 
 	vk::DescriptorImageInfo image_info{
-	        .sampler = *sampler,
 	        .imageView = *image->image_view,
 	        .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
 	};
@@ -1196,7 +1197,7 @@ ImTextureID imgui_textures::load_texture(const std::span<const std::byte> & byte
 	vk::WriteDescriptorSet ds_write{
 	        .dstSet = **ds,
 	        .descriptorCount = 1,
-	        .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+	        .descriptorType = vk::DescriptorType::eSampledImage,
 	        .pImageInfo = &image_info};
 
 	device.updateDescriptorSets(ds_write, nullptr);
@@ -1206,49 +1207,11 @@ ImTextureID imgui_textures::load_texture(const std::span<const std::byte> & byte
 	textures.emplace(
 	        id,
 	        texture_data{
-	                .sampler = std::move(sampler),
 	                .image = image,
 	                .descriptor_set = std::move(ds),
 	        });
 
 	return id;
-}
-
-ImTextureID imgui_textures::load_texture(const std::span<const std::byte> & bytes, const std::string & name)
-{
-	return load_texture(
-	        bytes,
-	        vk::raii::Sampler{
-	                device,
-	                vk::SamplerCreateInfo{
-	                        .magFilter = vk::Filter::eLinear,
-	                        .minFilter = vk::Filter::eLinear,
-	                        .mipmapMode = vk::SamplerMipmapMode::eLinear,
-	                        .addressModeU = vk::SamplerAddressMode::eClampToEdge,
-	                        .addressModeV = vk::SamplerAddressMode::eClampToEdge,
-	                        .addressModeW = vk::SamplerAddressMode::eClampToEdge,
-	                        .borderColor = vk::BorderColor::eFloatTransparentBlack,
-	                },
-	        },
-	        name);
-}
-
-ImTextureID imgui_textures::load_texture(const std::string & filename)
-{
-	return load_texture(
-	        filename,
-	        vk::raii::Sampler{
-	                device,
-	                vk::SamplerCreateInfo{
-	                        .magFilter = vk::Filter::eLinear,
-	                        .minFilter = vk::Filter::eLinear,
-	                        .mipmapMode = vk::SamplerMipmapMode::eLinear,
-	                        .addressModeU = vk::SamplerAddressMode::eClampToEdge,
-	                        .addressModeV = vk::SamplerAddressMode::eClampToEdge,
-	                        .addressModeW = vk::SamplerAddressMode::eClampToEdge,
-	                        .borderColor = vk::BorderColor::eFloatTransparentBlack,
-	                },
-	        });
 }
 
 void imgui_textures::free_texture(ImTextureID texture)

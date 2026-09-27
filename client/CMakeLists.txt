@@ -38,6 +38,7 @@ add_library(stb INTERFACE)
 target_include_directories(stb INTERFACE ${stb_SOURCE_DIR})
 
 if(ANDROID)
+    file(REMOVE_RECURSE ${RESOURCES_DIRECTORIES}/lib ${ANDROID_LIB_DIRECTORIES})
     add_library(wivrn MODULE)
 
     find_library(ANDROID_LIBRARY NAMES android REQUIRED)
@@ -80,6 +81,23 @@ if(ANDROID)
         "decoder/android/*.cpp"
         )
     target_sources(wivrn PRIVATE ${PLATFORM_SOURCE})
+
+    if (WIVRN_ADDRESS_SANITIZER)
+        file(MAKE_DIRECTORY
+            ${RESOURCES_DIRECTORIES}/lib/${CMAKE_ANDROID_ARCH_ABI}
+            ${ANDROID_LIB_DIRECTORIES}/${CMAKE_ANDROID_ARCH_ABI})
+        file(GLOB _asan_location
+            ${ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/*/lib/linux/libclang_rt.asan-${CMAKE_SYSTEM_PROCESSOR}-android.so
+        )
+        file(COPY
+            ${_asan_location}
+            DESTINATION ${ANDROID_LIB_DIRECTORIES}/${CMAKE_ANDROID_ARCH_ABI}
+        )
+        file(COPY_FILE
+            ${ANDROID_NDK}/wrap.sh/asan.sh
+            ${RESOURCES_DIRECTORIES}/lib/${CMAKE_ANDROID_ARCH_ABI}/wrap.sh
+        )
+    endif()
 else()
     add_executable(wivrn)
 
@@ -105,8 +123,6 @@ endif()
 # Main sources
 #
 target_compile_definitions(wivrn PRIVATE "XR_USE_TIMESPEC=1")
-
-set_target_properties(wivrn PROPERTIES CXX_VISIBILITY_PRESET hidden)
 
 file(GLOB LOCAL_SOURCE CONFIGURE_DEPENDS
     "*.cpp"
@@ -144,6 +160,7 @@ target_link_libraries(wivrn
 target_compile_definitions(wivrn PRIVATE -DXR_USE_GRAPHICS_API_VULKAN)
 target_compile_definitions(wivrn PRIVATE -DVMA_STATS_STRING_ENABLED=0)
 target_compile_definitions(wivrn PRIVATE -DGLM_ENABLE_EXPERIMENTAL)
+target_compile_definitions(wivrn PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
 
 target_include_directories(wivrn PRIVATE .)
 
@@ -214,9 +231,6 @@ if(WIVRN_USE_ANDROID_VALIDATION_LAYER)
     file(COPY
         ${FETCHCONTENT_BASE_DIR}/Vulkan-ValidationLayer/android-binaries-${VVL_VERSION}/${CMAKE_ANDROID_ARCH_ABI}
         DESTINATION ${ANDROID_LIB_DIRECTORIES})
-else()
-    # silence "Manually-specified variables were not used by the project" warning
-    set(_unused ${ANDROID_LIB_DIRECTORIES})
 endif()
 
 

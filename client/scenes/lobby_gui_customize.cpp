@@ -17,8 +17,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#define IMGUI_DEFINE_MATH_OPERATORS
-
 #include "lobby.h"
 
 #include "application.h"
@@ -41,7 +39,7 @@
 #include <spdlog/fmt/chrono.h>
 #include <spdlog/spdlog.h>
 
-#include "IconsFontAwesome6.h"
+#include "IconsFontAwesome7.h"
 
 using namespace std::chrono_literals;
 

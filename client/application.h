@@ -55,7 +55,7 @@
 class scene;
 
 #ifdef __ANDROID__
-extern "C" __attribute__((visibility("default"))) void Java_org_meumeu_wivrn_MainActivity_onNewIntent(JNIEnv * env, jobject instance, jobject intent_obj);
+extern "C" void Java_org_meumeu_wivrn_MainActivity_onNewIntent(JNIEnv * env, jobject instance, jobject intent_obj);
 #endif
 
 struct application_info
@@ -77,7 +77,7 @@ class application : public singleton<application>
 
 private:
 #ifdef __ANDROID__
-	friend __attribute__((visibility("default"))) void Java_org_meumeu_wivrn_MainActivity_onNewIntent(JNIEnv * env, jobject instance, jobject intent_obj);
+	friend void Java_org_meumeu_wivrn_MainActivity_onNewIntent(JNIEnv * env, jobject instance, jobject intent_obj);
 #endif
 
 	application_info app_info;
@@ -312,6 +312,10 @@ public:
 		return *instance().wifi;
 	}
 
+#ifdef __ANDROID__
+	void set_usb_networking(bool enabled);
+#endif
+
 	static void ignore_debug_reports_for(void * object)
 	{
 #ifndef NDEBUG
@@ -331,8 +335,9 @@ public:
 	template <typename T>
 	static void set_debug_reports_name(const T & object, std::string name)
 	{
-		// #ifndef NDEBUG
-		// if (instance().debug_utils_found)
+		if (not vk_allocator::instance().has_debug_utils)
+			return;
+
 		const vk::DebugUtilsObjectNameInfoEXT name_info{
 		        .objectType = T::objectType,
 		        .objectHandle = (uint64_t)(typename T::NativeType)object,
@@ -340,10 +345,6 @@ public:
 		};
 
 		instance().vk_device.setDebugUtilsObjectNameEXT(name_info);
-
-		// printf("set_debug_reports_name %p, %s\n", object, name.c_str());
-		// instance().debug_report_object_name[(uint64_t)object] = std::move(name);
-		// #endif
 	}
 
 	static thread_safe<vk::raii::Queue> & get_queue()

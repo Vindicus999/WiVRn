@@ -1,3 +1,23 @@
+/*
+ * WiVRn VR streaming
+ * Copyright (C) 2022-2026 Guillaume Meunier <guillaume.meunier@centraliens.net>
+ * Copyright (C) 2022-2026  Patrick Nicolas <patricknicolas@laposte.net>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+// Original copyright, from very old copy-pasted parts
 // Copyright 2022, Collabora, Ltd.
 // SPDX-License-Identifier: BSL-1.0
 /*!
@@ -9,7 +29,6 @@
 #include "openxr/openxr.h"
 #include "sleep_inhibitor.h"
 #include "util/u_trace_marker.h"
-#include "utils/wivrn_trace.h"
 
 #include "active_runtime.h"
 #include "avahi_publisher.h"
@@ -19,6 +38,7 @@
 #include "ipc_server_cb.h"
 #include "protocol_version.h"
 #include "start_application.h"
+#include "start_systemd_unit.h"
 #include "utils/overloaded.h"
 #include "version.h"
 #include "wivrn_config.h"
@@ -52,10 +72,6 @@
 
 #include <shared/ipc_protocol.h>
 #include <util/u_file.h>
-
-#if WIVRN_USE_SYSTEMD
-#include "start_systemd_unit.h"
-#endif
 
 // Insert the on load constructor to init trace marker.
 U_TRACE_TARGET_SETUP(U_TRACE_WHICH_SERVICE)
@@ -237,6 +253,9 @@ void start_server(configuration config)
 	}
 	else if (server_pid == 0)
 	{
+		if (do_fork)
+			setsid();
+
 		setenv("AMD_DEBUG", "lowlatencyenc", false);
 
 		// https://github.com/WiVRn/WiVRn/issues/695
@@ -300,7 +319,7 @@ void kill_server()
 	wivrn_ipc_socket_main_loop->send(to_monado::stop{});
 
 	// Send SIGTERM after 1s if it is still running
-	server_kill_watch = g_timeout_add(1000, [](void *) {
+	server_kill_watch = g_timeout_add(3500, [](void *) {
 		assert(server_pid > 0);
 		kill(-server_pid, SIGTERM);
 		return G_SOURCE_REMOVE; }, 0);
@@ -819,13 +838,11 @@ void on_headset_info_packet(const wivrn::from_headset::headset_info_packet & inf
 
 void on_name_acquired(GDBusConnection * connection, const gchar * name, gpointer user_data)
 {
-#if WIVRN_USE_SYSTEMD
 	try
 	{
 		children = std::make_unique<systemd_units_manager>(connection, update_fsm);
 	}
 	catch (...)
-#endif
 	{
 		children = std::make_unique<forked_children>(update_fsm);
 	}
