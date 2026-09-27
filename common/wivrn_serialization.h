@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <magic_enum.hpp>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -311,7 +312,7 @@ namespace details
 // Partition a structure into trivial portions (or single element when not trivial)
 template <
         typename T,                                               // structure to partition
-        typename Indices = std::tuple<>,                          // indices already partitionned
+        typename Indices = std::tuple<>,                          // indices already partitioned
         typename Current_Indices = std::integer_sequence<size_t>, // indices of current partition
         size_t i = 0,                                             // index of the first of remaining elements
         size_t offset = 0,                                        // offset of previous element + its size
@@ -380,7 +381,7 @@ struct trivial_bits<
 	        offset + padding + sizeof(boost::pfr::tuple_element_t<i, T>)>::types;
 };
 
-// Serialize bits of a structure, partitionned by trivial_bits
+// Serialize bits of a structure, partitioned by trivial_bits
 template <typename T, typename Bits>
 struct serialize_bits;
 
@@ -495,6 +496,20 @@ struct serialization_traits<T, std::enable_if_t<std::is_enum_v<T>>>
 	{
 		h.feed("enum");
 		h.feed(sizeof(T) * 8);
+		h.feed("{");
+
+		bool first = true;
+		for (auto [value, name]: magic_enum::enum_entries<T>())
+		{
+			if (not first)
+				h.feed(",");
+			first = false;
+
+			h.feed(name);
+			h.feed("=");
+			h.feed((std::underlying_type_t<T>)value);
+		}
+		h.feed("}");
 	}
 
 	static void serialize(T value, serialization_packet & packet)

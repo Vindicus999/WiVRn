@@ -265,7 +265,7 @@ xrt_result_t compositor::mark_frame(int64_t frame_id,
 	switch (point)
 	{
 		case XRT_COMPOSITOR_FRAME_POINT_WOKE:
-			session.dump_time("wake_up", frame_id, when_ns);
+			trace::instant_feedback("wake_up", when_ns, frame_id);
 			return XRT_SUCCESS;
 		default:
 			assert(false);
@@ -308,7 +308,7 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 	        .alpha = layer_accum.data.env_blend_mode == XRT_BLEND_MODE_ALPHA_BLEND,
 	};
 
-	session.dump_time("begin", frame.rendering.id, os_monotonic_get_ns());
+	trace::instant_feedback("begin", frame.rendering.id, os_monotonic_get_ns());
 
 	cmd_pool.reset();
 	cmd.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
@@ -596,6 +596,8 @@ xrt_result_t compositor::get_view_config(
 				};
 			}
 			return XRT_SUCCESS;
+		case XRT_VIEW_TYPE_QUAD:
+			return XRT_ERROR_UNSUPPORTED_VIEW_TYPE;
 	}
 	return XRT_ERROR_UNSUPPORTED_VIEW_TYPE;
 }
@@ -713,6 +715,7 @@ compositor::compositor(wivrn_session & session) :
 	        log_level);
 	vk::detail::resultCheck(vk::Result(res), "vk_init_from_given");
 
+	c_base->vk.version = vk_bundle::api_version;
 	// vk_init_from_given can't enable calibrated timestamps; do it here.
 #ifdef VK_EXT_calibrated_timestamps
 	c_base->vk.has_EXT_calibrated_timestamps = vk.has_device_ext(VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME);

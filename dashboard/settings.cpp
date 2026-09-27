@@ -121,6 +121,9 @@ void Settings::emitAllChanged()
 	openvrChanged();
 	debugGuiChanged();
 	steamVrLhChanged();
+	lhMaxExtrapolationEnabledChanged();
+	lhMaxExtrapolationChanged();
+	lhStickDeadzoneChanged();
 	hidForwardingChanged();
 	portChanged();
 	hostnameChanged();
@@ -416,6 +419,55 @@ void Settings::set_steamVrLh(const bool & value)
 		steamVrLhChanged();
 }
 
+bool Settings::lhMaxExtrapolationEnabled() const
+{
+	auto it = m_jsonSettings.find("lh-max-extrapolation");
+	return it != m_jsonSettings.end() and it->is_number();
+}
+
+int64_t Settings::lhMaxExtrapolation() const
+{
+	auto it = m_jsonSettings.find("lh-max-extrapolation");
+	if (it != m_jsonSettings.end() and it->is_number())
+		return static_cast<int64_t>(*it);
+	return 50;
+}
+
+void Settings::set_lhMaxExtrapolation(const int64_t & value)
+{
+	auto old = lhMaxExtrapolation();
+	if (value != -1)
+	{
+		m_jsonSettings["lh-max-extrapolation"] = value;
+	}
+	else
+	{
+		m_jsonSettings.erase("lh-max-extrapolation");
+	}
+
+	if (old != value)
+	{
+		lhMaxExtrapolationEnabledChanged();
+		lhMaxExtrapolationChanged();
+	}
+}
+
+float Settings::lhStickDeadzone() const
+{
+	auto it = m_jsonSettings.find("lh-stick-deadzone");
+	if (it != m_jsonSettings.end() and it->is_number())
+		return static_cast<float>(*it);
+	return 0.0f;
+}
+
+void Settings::set_lhStickDeadzone(const float & value)
+{
+	auto old = lhStickDeadzone();
+	m_jsonSettings["lh-stick-deadzone"] = value;
+	if (old != value)
+		lhStickDeadzoneChanged();
+}
+
 bool Settings::tcpOnly() const
 {
 	auto it = m_jsonSettings.find("tcp-only");
@@ -539,6 +591,7 @@ void Settings::restore_defaults()
 	m_jsonSettings.erase("hid-forwarding");
 	m_jsonSettings.erase("debug-gui");
 	m_jsonSettings.erase("use-steamvr-lh");
+	m_jsonSettings.erase("lh-stick-deadzone");
 	m_jsonSettings.erase("tcp-only");
 	m_jsonSettings.erase("application");
 	m_jsonSettings.erase("port");

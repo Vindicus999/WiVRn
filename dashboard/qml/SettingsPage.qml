@@ -132,6 +132,51 @@ Kirigami.ScrollablePage {
                     toolTipText: i18n("Allows the use of lighthouse-based controllers and trackers.\nRequires SteamVR to be installed.\nDevices must be be powered on before connecting to WiVRn.\nAn external tool such as motoc is needed for calibration.")
                 }
             }
+            Controls.CheckBox {
+                id: lh_max_extrapolation_enabled
+                visible: Settings.steamvr_lh_supported && steamvr_lh.checked
+                text: i18n("Clamp extrapolation for SteamVR tracked devices")
+            }
+            RowLayout {
+                visible: Settings.steamvr_lh_supported && steamvr_lh.checked && lh_max_extrapolation_enabled.checked
+                Kirigami.FormData.label: i18n("SteamVR max pose extrapolation")
+                Controls.Slider {
+                    id: lh_max_extrapolation
+                    Layout.fillWidth: true
+                    from: 0.0
+                    to: 100.0
+                    stepSize: 1.0
+                    value: Settings.lhMaxExtrapolation
+                }
+                Controls.Label {
+                    text: i18ncp("value display for SteamVR max pose extrapolation", "%1ms", "%1ms", lh_max_extrapolation.value)
+                    Layout.preferredWidth: 35
+                    Layout.alignment: Qt.AlignRight
+                }
+                Kirigami.ContextualHelpButton {
+                    toolTipText: i18n("Maximum time in milliseconds that poses may be extrapolated ahead for SteamVR tracked devices. Tune this value if you experience jittery or wobbly tracking.")
+                }
+            }
+            RowLayout {
+                visible: Settings.steamvr_lh_supported && steamvr_lh.checked
+                Kirigami.FormData.label: i18n("SteamVR joystick deadzone")
+                Controls.Slider {
+                    id: lh_stick_deadzone
+                    Layout.fillWidth: true
+                    from: 0.0
+                    to: 0.9
+                    stepSize: 0.05
+                    value: Settings.lhStickDeadzone
+                }
+                Controls.Label {
+                    text: lh_stick_deadzone.value.toFixed(2)
+                    Layout.preferredWidth: 35
+                    Layout.alignment: Qt.AlignRight
+                }
+                Kirigami.ContextualHelpButton {
+                    toolTipText: i18n("Deadzone to apply to joysticks on lighthouse-tracked controllers, such as Index.\nFor standalone controllers, deadzones may be adjusted via the headset's system settings.")
+                }
+            }
 
             Controls.CheckBox {
                 id: adb_custom
@@ -237,7 +282,7 @@ Kirigami.ScrollablePage {
                     Layout.fillWidth: true
                 }
                 Controls.Button {
-                    text: i18nc("browse to choose the OpenVR compatility to use", "Browse")
+                    text: i18nc("browse to choose the OpenVR compatibility to use", "Browse")
                     visible: openvr_text.visible
                     onClicked: openvr_browse.open()
                 }
@@ -289,6 +334,12 @@ Kirigami.ScrollablePage {
 
         Settings.debugGui = debug_gui.checked;
         Settings.steamVrLh = steamvr_lh.checked;
+        if (lh_max_extrapolation_enabled.checked) {
+            Settings.lhMaxExtrapolation = lh_max_extrapolation.value;
+        } else {
+            Settings.lhMaxExtrapolation = -1;
+        }
+        Settings.lhStickDeadzone = lh_stick_deadzone.value;
         Settings.hidForwarding = hid_forwarding.checked;
 
         DashboardSettings.auto_connect_usb = auto_connect_usb.checked;
@@ -298,6 +349,9 @@ Kirigami.ScrollablePage {
         select_game.load();
         debug_gui.checked = Settings.debugGui;
         steamvr_lh.checked = Settings.steamVrLh;
+        lh_max_extrapolation_enabled.checked = Settings.lhMaxExtrapolationEnabled;
+        lh_max_extrapolation.value = Settings.lhMaxExtrapolation;
+        lh_stick_deadzone.value = Settings.lhStickDeadzone;
         hid_forwarding.checked = Settings.hidForwarding;
 
         auto_connect_usb.checked = DashboardSettings.auto_connect_usb;

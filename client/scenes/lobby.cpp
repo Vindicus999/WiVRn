@@ -64,6 +64,10 @@
 #include "vk/renderdoc.h"
 #endif
 
+#ifdef __ANDROID__
+#include "android/usb.h"
+#endif
+
 using namespace std::chrono_literals;
 
 static bool force_autoconnect = false;
@@ -121,24 +125,19 @@ static glm::quat compute_gui_orientation(glm::vec3 head_position, glm::vec3 new_
 
 void scenes::lobby::move_gui(glm::vec3 head_position, glm::vec3 new_gui_position)
 {
+	using constants::gui::popup_position;
 	using constants::lobby::keyboard_pitch;
 	using constants::lobby::keyboard_position;
-	using constants::lobby::popup_position;
 
 	auto q = compute_gui_orientation(head_position, new_gui_position);
-	auto M = glm::mat3_cast(q); // plane-to-world transform
 
 	// Main window
 	imgui_ctx->layers()[0].position = new_gui_position;
 	imgui_ctx->layers()[0].orientation = q;
 
-	// Popup
-	imgui_ctx->layers()[1].position = new_gui_position + M * popup_position;
-	imgui_ctx->layers()[1].orientation = q;
-
-	// Keyboard
-	imgui_ctx->layers()[2].position = new_gui_position + M * keyboard_position;
-	imgui_ctx->layers()[2].orientation = q * glm::quat(cos(keyboard_pitch / 2), sin(keyboard_pitch / 2), 0, 0);
+	// Popup and keyboard track the main window
+	imgui_ctx->place_layer_relative(1, 0, popup_position);
+	imgui_ctx->place_layer_relative(2, 0, keyboard_position, glm::quat(cos(keyboard_pitch / 2), sin(keyboard_pitch / 2), 0, 0));
 }
 
 scenes::lobby::lobby() :
@@ -170,6 +169,8 @@ scenes::lobby::lobby() :
 
 	keyboard.set_layout(config.virtual_keyboard_layout);
 
+	apply_theme_settings();
+
 	if (config.first_run)
 		current_tab = tab::first_run;
 
@@ -199,6 +200,16 @@ static std::string ip_address_to_string(const in6_addr & addr)
 	char buf[100];
 	inet_ntop(AF_INET6, &addr, buf, sizeof(buf));
 	return buf;
+}
+
+static std::string ip_address_to_string(const sockaddr_in & addr)
+{
+	return ip_address_to_string(addr.sin_addr);
+}
+
+static std::string ip_address_to_string(const sockaddr_in6 & addr)
+{
+	return ip_address_to_string(addr.sin6_addr);
 }
 
 std::unique_ptr<wivrn_session> scenes::lobby::connect_to_session(wivrn_discover::service service, bool manual_connection)
@@ -242,12 +253,18 @@ std::unique_ptr<wivrn_session> scenes::lobby::connect_to_session(wivrn_discover:
 		{
 			switch (i->ai_family)
 			{
-				case AF_INET:
-					service.addresses.push_back(((sockaddr_in *)i->ai_addr)->sin_addr);
-					break;
-				case AF_INET6:
-					service.addresses.push_back(((sockaddr_in6 *)i->ai_addr)->sin6_addr);
-					break;
+				case AF_INET: {
+					auto addr = (sockaddr_in *)i->ai_addr;
+					addr->sin_port = htons(service.port);
+					service.addresses.push_back({.address = *addr});
+				}
+				break;
+				case AF_INET6: {
+					auto addr = (sockaddr_in6 *)i->ai_addr;
+					addr->sin6_port = htons(service.port);
+					service.addresses.push_back({.address = *addr});
+				}
+				break;
 			}
 		}
 
@@ -255,22 +272,22 @@ std::unique_ptr<wivrn_session> scenes::lobby::connect_to_session(wivrn_discover:
 	}
 
 	std::string error;
-	for (const std::variant<in_addr, in6_addr> & address: service.addresses)
+	for (const auto & entry: service.addresses)
 	{
-		std::string address_string = std::visit([](auto & address) {
+		std::string address_string = std::visit([](const auto & address) {
 			return ip_address_to_string(address);
 		},
-		                                        address);
+		                                        entry.address);
 
 		struct connection_cancelled
 		{};
 
 		try
 		{
-			spdlog::debug("Connection to {}", address_string);
+			spdlog::info("Connection to {}", address_string);
 
 			return std::visit([this, &service](auto & address) {
-				return std::make_unique<wivrn_session>(address, service.port, service.tcp_only, keypair, [&](int fd) {
+				return std::make_unique<wivrn_session>(address, service.tcp_only, keypair, [&](int fd) {
 					auto request = pin_request.lock();
 					request->pin_requested = true;
 					request->pin_cancelled = false;
@@ -312,7 +329,7 @@ std::unique_ptr<wivrn_session> scenes::lobby::connect_to_session(wivrn_discover:
 					return request->pin;
 				});
 			},
-			                  address);
+			                  entry.address);
 		}
 		catch (connection_cancelled)
 		{
@@ -342,6 +359,11 @@ void scenes::lobby::update_server_list()
 {
 	if (not discover)
 		return;
+
+#ifdef __ANDROID__
+	if (usb_link_properties_changed())
+		discover.emplace();
+#endif
 
 	std::vector<wivrn_discover::service> discovered_services = discover->get_services();
 
@@ -633,7 +655,7 @@ static void stick_finger_to_gui(std::array<xr::hand_tracker::joint, XR_HAND_JOIN
 	std::vector<std::pair<glm::vec3, float>> intersections; // Target position of the finger tip, distance to the GUI plane
 	for (const imgui_context::window_viewport & layer: layers)
 	{
-		// Ignore layers that are not absolutely positionned
+		// Ignore layers that are not absolutely positioned
 		if (layer.space != xr::spaces::world)
 			continue;
 
@@ -1066,20 +1088,14 @@ void scenes::lobby::render(const XrFrameState & frame_state)
 	if (composition_layer_depth_test_supported)
 		set_depth_test(true, XR_COMPARE_OP_ALWAYS_FB);
 
-	bool dim_gui = imgui_ctx->is_modal_popup_shown() and composition_layer_color_scale_bias_supported;
 	for (auto & [z_index, layer]: imgui_layers)
 	{
 		if (z_index < constants::lobby::zindex_recenter_tip)
 		{
 			add_quad_layer(layer.layerFlags, layer.space, layer.eyeVisibility, layer.subImage, layer.pose, layer.size);
 
-			if (dim_gui)
-				set_color_scale_bias(constants::lobby::dimming_scale, constants::lobby::dimming_bias);
-
 			if (composition_layer_depth_test_supported)
 				set_depth_test(true, XR_COMPARE_OP_LESS_OR_EQUAL_FB);
-
-			dim_gui = false; // Only dim the main window
 		}
 	}
 
@@ -1131,7 +1147,7 @@ void scenes::lobby::on_focused()
 	catch (std::exception & e)
 	{
 		spdlog::warn("Cannot load environment from {}: {}, reverting to default", config.environment_model, e.what());
-		config.environment_model = configuration{}.environment_model;
+		config.environment_model = application::get_default_config().environment_model;
 		lobby_entity = add_gltf(config.environment_model, layer_lobby).first;
 		config.save();
 	}
@@ -1319,7 +1335,7 @@ void scenes::lobby::on_focused()
 	                .gltf_url = "default",
 	                .builtin = true,
 	                .override_order = -1,
-	                .local_gltf_path = configuration{}.environment_model,
+	                .local_gltf_path = application::get_default_config().environment_model,
 	                .screenshot = imgui_ctx->load_texture("assets://default-environment.ktx2")});
 
 	std::ranges::sort(local_environments, std::less{});

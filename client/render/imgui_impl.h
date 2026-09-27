@@ -21,6 +21,7 @@
 #include "image_loader.h"
 #include "render/growable_descriptor_pool.h"
 #include "utils/cache.h"
+#include "utils/mapped_file.h"
 #include "utils/thread_safe.h"
 #include "wivrn_config.h"
 #include "xr/hand_tracker.h"
@@ -30,6 +31,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <imgui.h>
 #include <implot.h>
+#include <inplace_vector.hpp>
 #include <optional>
 #include <span>
 #include <unordered_map>
@@ -42,7 +44,6 @@ class imgui_textures
 {
 	struct texture_data
 	{
-		vk::raii::Sampler sampler;
 		std::shared_ptr<loaded_image> image;
 		std::shared_ptr<vk::raii::DescriptorSet> descriptor_set;
 	};
@@ -69,9 +70,7 @@ public:
 	        thread_safe<vk::raii::Queue> & queue,
 	        std::shared_ptr<image_cache_type> image_cache = {});
 	~imgui_textures();
-	ImTextureID load_texture(const std::string & filename, vk::raii::Sampler && sampler);
 	ImTextureID load_texture(const std::string & filename);
-	ImTextureID load_texture(const std::span<const std::byte> & bytes, vk::raii::Sampler && sampler, const std::string & name = "");
 	ImTextureID load_texture(const std::span<const std::byte> & bytes, const std::string & name = "");
 	void free_texture(ImTextureID);
 };
@@ -203,6 +202,7 @@ private:
 	bool show_demo_window = true;
 #endif
 
+	beman::inplace_vector::inplace_vector<utils::mapped_file, 3> font_awesome;
 	void initialize_fonts();
 
 	std::vector<controller_state> read_controllers_state(XrTime display_time);
@@ -226,6 +226,9 @@ public:
 		return layers_;
 	}
 
+	// place a satellite layer at base orientation (optionally post-rotated), offset in the base's local frame
+	void place_layer_relative(size_t layer, size_t base, glm::vec3 offset, glm::quat extra_rotation = glm::quat(1, 0, 0, 0));
+
 	std::vector<window_viewport> windows();
 
 	viewport & layer(ImVec2 position);
@@ -246,12 +249,11 @@ public:
 
 	void set_current();
 
-	bool is_modal_popup_shown() const;
-
 	void vibrate_on_hover();
 	void set_hovered_item();
 	void set_controllers_enabled(bool value);
-	void tooltip(std::string_view text);
+	// anchor, if set, positions the tooltip above that display point instead of above the last item's rect
+	void tooltip(std::string_view text, std::optional<ImVec2> anchor = std::nullopt);
 	std::array<bool, 2> is_aim_interaction() const
 	{
 		return {aim_interaction[0] == 1, aim_interaction[1] == 1};
@@ -263,16 +265,3 @@ void ScrollWhenDragging();
 void CenterTextH(const std::string & text);
 
 void CenterTextHV(const std::string & text);
-
-void InputText(const char * label, std::string & text, const ImVec2 & size, ImGuiInputTextFlags flags);
-
-bool RadioButtonWithoutCheckBox(const std::string & label, bool active, ImVec2 size_arg);
-
-template <typename T, typename U>
-static bool RadioButtonWithoutCheckBox(const std::string & label, T & v, U v_button, ImVec2 size_arg)
-{
-	const bool pressed = RadioButtonWithoutCheckBox(label, v == v_button, size_arg);
-	if (pressed)
-		v = v_button;
-	return pressed;
-}

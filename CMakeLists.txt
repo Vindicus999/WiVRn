@@ -35,7 +35,6 @@ option(WIVRN_USE_SYSTEM_FREETYPE "Use system FreeType" ON)
 option(WIVRN_USE_SYSTEM_BOOST "Use system Boost headers" ON)
 option(WIVRN_USE_SYSTEM_OPENXR "Use system OpenXR headers" ON)
 option(WIVRN_USE_SYSTEM_LIBKTX "Use system KTX-Software library" ON)
-option(WIVRN_USE_SYSTEMD "Use libsystemd" ON)
 option(WIVRN_COMPRESS_GLB "Compress textures in GLB files with gltf-transform" OFF)
 option(WIVRN_USE_ANDROID_VALIDATION_LAYER "Download the android version of the Vulkan validation layer" OFF)
 option(WIVRN_USE_ANDROID_BIN_LIBKTX "Download the prebuilt libktx for android" OFF)
@@ -49,6 +48,7 @@ option(WIVRN_BUILD_TEST "Build test binaries" OFF)
 option(WIVRN_WERROR "Treat warnings as errors" OFF)
 option(WIVRN_OPTIMIZE_SHADERS "Run spirv-opt on compiled shaders" ON)
 option(WIVRN_DEBUG_SHADERS "Compile shaders with debug information" OFF)
+option(WIVRN_ADDRESS_SANITIZER "Use address sanitizer" OFF)
 
 if(WIVRN_OPTIMIZE_SHADERS AND WIVRN_DEBUG_SHADERS)
     message(FATAL_ERROR "WIVRN_OPTIMIZE_SHADERS and WIVRN_DEBUG_SHADERS are incompatible")
@@ -123,8 +123,8 @@ endif()
 
 if (WIVRN_BUILD_SERVER)
     find_program(GDBUS_CODEGEN gdbus-codegen REQUIRED)
-    if (Vulkan_VERSION  VERSION_LESS "1.3.261")
-        message(FATAL_ERROR "Vulkan version must be at least 1.3.261, found ${Vulkan_VERSION}")
+    if (Vulkan_VERSION  VERSION_LESS "1.4.304")
+        message(FATAL_ERROR "Vulkan version must be at least 1.4.304, found ${Vulkan_VERSION}")
     endif()
 
     if (NOT WIVRN_USE_NVENC AND NOT WIVRN_USE_VAAPI AND NOT WIVRN_USE_X264 AND NOT WIVRN_USE_VULKAN_ENCODE)
@@ -136,18 +136,8 @@ if (WIVRN_BUILD_SERVER)
         pkg_check_modules(LIBDRM REQUIRED IMPORTED_TARGET libdrm)
     endif()
 
-    if (WIVRN_USE_VULKAN_ENCODE)
-        if (Vulkan_VERSION VERSION_LESS 1.3.283)
-            message(FATAL_ERROR "Vulkan video encode requires 1.3.283, found ${Vulkan_VERSION}")
-        endif()
-    endif()
-
     if (WIVRN_USE_X264)
         pkg_check_modules(X264 REQUIRED IMPORTED_TARGET x264)
-    endif()
-
-    if (WIVRN_USE_SYSTEMD)
-        pkg_check_modules(SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
     endif()
 
     if (WIVRN_USE_PIPEWIRE)
@@ -259,17 +249,17 @@ set(KTX_VERSION_FULL "v${KTX_VERSION}")
 FetchContent_Declare(libktx        EXCLUDE_FROM_ALL SYSTEM URL https://github.com/KhronosGroup/KTX-Software/archive/refs/tags/${KTX_VERSION_FULL}.tar.gz
                                    URL_HASH SHA256=9412cb45045a503005acd47d98f9e8b47154634a50b4df21e17a1dfa8971d323
                                    )
-FetchContent_Declare(implot        EXCLUDE_FROM_ALL SYSTEM URL https://github.com/epezent/implot/archive/3da8bd34299965d3b0ab124df743fe3e076fa222.zip
-                                   URL_HASH SHA256=e9b439a94aa6f09fcf12ed9c2cd784efe5e99e96242122aa683e690b29f7a59f)
+FetchContent_Declare(implot        EXCLUDE_FROM_ALL SYSTEM URL https://github.com/epezent/implot/releases/download/v1.0/implot-v1.0.tar.gz
+                                   URL_HASH SHA256=20ca14d5a46f36a650746096c74eba8bea99c9432cd3c877343b96b17a6ae566)
 file(GLOB IMGUI_PATCHES CONFIGURE_DEPENDS patches/imgui/*)
-FetchContent_Declare(imgui         EXCLUDE_FROM_ALL SYSTEM URL https://github.com/ocornut/imgui/archive/refs/tags/v1.92.5.tar.gz
-                                   URL_HASH SHA256=0eb50fe9aeba1a51f96b5843c7f630a32ed2e9362d693c61b87e4fa870cf826d
+FetchContent_Declare(imgui         EXCLUDE_FROM_ALL SYSTEM URL https://github.com/ocornut/imgui/archive/refs/tags/v1.92.9.tar.gz
+                                   URL_HASH SHA256=af97ed649182c39314320514a672b82008ab462b9293fe23d37b30bfa5d05519
                                    PATCH_COMMAND    ${CMAKE_CURRENT_LIST_DIR}/patches/apply.sh ${IMGUI_PATCHES}
 )
 FetchContent_Declare(uni-algo      EXCLUDE_FROM_ALL SYSTEM URL https://github.com/uni-algo/uni-algo/archive/v1.2.0.tar.gz
                                    URL_HASH SHA256=f2a1539cd8635bc6088d05144a73ecfe7b4d74ee0361fabed6f87f9f19e74ca9)
-FetchContent_Declare(entt          EXCLUDE_FROM_ALL SYSTEM URL https://github.com/skypjack/entt/archive/refs/tags/v3.16.0.tar.gz
-                                   URL_HASH SHA256=7d7b4037b737992342049ffab14f22fa10243e01664f8c3a0657aa247ac52f71)
+FetchContent_Declare(entt          EXCLUDE_FROM_ALL SYSTEM URL https://github.com/skypjack/entt/archive/refs/tags/v4.0.0.tar.gz
+                                   URL_HASH SHA256=32a2ff2c72cb047dfd57306006ef238820b70da7c6ce4e7e8a507ac63365212e)
 FetchContent_Declare(curl          EXCLUDE_FROM_ALL SYSTEM URL https://github.com/curl/curl/releases/download/curl-8_17_0/curl-8.17.0.tar.xz
                                    URL_HASH SHA256=955f6e729ad6b3566260e8fef68620e76ba3c31acf0a18524416a185acf77992)
 FetchContent_Declare(spirv-reflect EXCLUDE_FROM_ALL SYSTEM URL https://github.com/KhronosGroup/SPIRV-Reflect/archive/refs/tags/vulkan-sdk-1.4.328.1.tar.gz
@@ -312,6 +302,7 @@ if (WIVRN_BUILD_CLIENT)
 endif()
 
 if (WIVRN_BUILD_SERVER OR WIVRN_BUILD_SERVER_LIBRARY)
+    find_package(Python3 REQUIRED Interpreter)
     add_subdirectory(server)
 
     if (WIVRN_BUILD_SERVER)
@@ -323,9 +314,6 @@ if (WIVRN_BUILD_SERVER OR WIVRN_BUILD_SERVER_LIBRARY)
         message(STATUS "")
         message(STATUS "Audio backends:")
         message(STATUS "\tPipewire  : ${WIVRN_USE_PIPEWIRE}")
-        message(STATUS "")
-        message(STATUS "Optional features:")
-        message(STATUS "\tsystemd: ${WIVRN_USE_SYSTEMD}")
     endif()
 endif()
 
@@ -353,6 +341,11 @@ foreach(TARGET_NAME wivrn wivrn-server wivrn-dashboard wivrn-common wivrn-dissec
 
         if (WIVRN_WERROR)
             target_compile_options(${TARGET_NAME} PRIVATE -Werror)
+        endif()
+
+        if (WIVRN_ADDRESS_SANITIZER AND NOT ${TARGET_NAME} STREQUAL wivrn-dissector)
+            target_compile_options(${TARGET_NAME} PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+            target_link_options(${TARGET_NAME} PRIVATE -fsanitize=address)
         endif()
 
     endif()

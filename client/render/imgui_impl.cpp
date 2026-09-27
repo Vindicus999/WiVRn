@@ -16,7 +16,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#define IMGUI_DEFINE_MATH_OPERATORS
 #include "imgui_impl.h"
 #include "implot.h"
 
@@ -24,6 +23,7 @@
 #include "constants.h"
 #include "image_loader.h"
 #include "openxr/openxr.h"
+#include "ui_theme.h"
 #include "utils/mapped_file.h"
 #include "utils/ranges.h"
 #include "utils/strings.h"
@@ -182,7 +182,7 @@ static float distance_to_window(ImGuiWindow * window, ImVec2 position)
 static const std::array layout_bindings = {
         vk::DescriptorSetLayoutBinding{
                 .binding = 0,
-                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                .descriptorType = vk::DescriptorType::eSampledImage,
                 .descriptorCount = 1,
                 .stageFlags = vk::ShaderStageFlagBits::eFragment,
         }};
@@ -535,11 +535,13 @@ void imgui_context::initialize_fonts()
 		}
 	}
 
-	utils::mapped_file font_awesome_regular("assets://Font Awesome 6 Free-Regular-400.otf");
-	utils::mapped_file font_awesome_solid("assets://Font Awesome 6 Free-Solid-900.otf");
+	assert(font_awesome.empty());
+	font_awesome.emplace_back("assets://Font Awesome 7 Free-Regular-400.otf");
+	font_awesome.emplace_back("assets://Font Awesome 7 Free-Solid-900.otf");
+	font_awesome.emplace_back("assets://Font Awesome 7 Brands-Regular-400.otf");
 
 	ImFontConfig config;
-	config.FontDataOwnedByAtlas = false;
+	config.FontDataOwnedByAtlas = true;
 
 	for (auto & font: fonts)
 	{
@@ -548,10 +550,11 @@ void imgui_context::initialize_fonts()
 		config.MergeMode = true;
 	}
 
+	config.FontDataOwnedByAtlas = false;
 	config.MergeMode = true;
 	config.GlyphMinAdvanceX = 40; // Use if you want to make the icon monospaced
-	io.Fonts->AddFontFromMemoryTTF(const_cast<std::byte *>(font_awesome_regular.data()), font_awesome_regular.size(), constants::gui::font_size_small, &config);
-	io.Fonts->AddFontFromMemoryTTF(const_cast<std::byte *>(font_awesome_solid.data()), font_awesome_solid.size(), constants::gui::font_size_small, &config);
+	for (auto & fa: font_awesome)
+		io.Fonts->AddFontFromMemoryTTF(const_cast<std::byte *>(fa.data()), fa.size(), constants::gui::font_size_small, &config);
 }
 
 std::vector<imgui_context::controller_state> imgui_context::read_controllers_state(XrTime display_time)
@@ -933,6 +936,28 @@ std::vector<std::pair<int, XrCompositionLayerQuad>> imgui_context::end_frame()
 		}
 	}
 
+	if (auto modal_popup = ImGui::GetTopMostAndVisiblePopupModal(); modal_popup != nullptr)
+	{
+		ImDrawList * draw_list = ImGui::GetForegroundDrawList();
+		for (ImGuiWindow * window: context->Windows)
+		{
+			if (window == modal_popup or window->ParentWindow != nullptr or not window->Active or window->Hidden or window->IsFallbackWindow)
+				continue;
+
+			static const auto virtual_keyboard_id = ImHashStr("VirtualKeyboard");
+			if (window->ID == virtual_keyboard_id)
+				continue;
+
+			ImRect window_rect{
+			        window->Pos.x,
+			        window->Pos.y,
+			        window->Pos.x + window->Size.x,
+			        window->Pos.y + window->Size.y};
+
+			draw_list->AddRectFilled(window_rect.Min, window_rect.Max, ImGui::ColorConvertFloat4ToU32(wivrn::ui::current().dimming), window->WindowRounding);
+		}
+	}
+
 	ImGui::Render();
 
 	current_command_buffer = (current_command_buffer + 1) % command_buffers.size();
@@ -1147,12 +1172,12 @@ imgui_context::~imgui_context()
 	ImGui::DestroyContext(context);
 }
 
-ImTextureID imgui_textures::load_texture(const std::string & filename, vk::raii::Sampler && sampler)
+ImTextureID imgui_textures::load_texture(const std::string & filename)
 {
-	return load_texture(utils::mapped_file{filename}, std::move(sampler), filename);
+	return load_texture(utils::mapped_file{filename}, filename);
 }
 
-ImTextureID imgui_textures::load_texture(const std::span<const std::byte> & bytes, vk::raii::Sampler && sampler, const std::string & name)
+ImTextureID imgui_textures::load_texture(const std::span<const std::byte> & bytes, const std::string & name)
 {
 	bool srgb = true;
 
@@ -1165,7 +1190,6 @@ ImTextureID imgui_textures::load_texture(const std::span<const std::byte> & byte
 	std::shared_ptr<vk::raii::DescriptorSet> ds = descriptor_pool.allocate();
 
 	vk::DescriptorImageInfo image_info{
-	        .sampler = *sampler,
 	        .imageView = *image->image_view,
 	        .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
 	};
@@ -1173,7 +1197,7 @@ ImTextureID imgui_textures::load_texture(const std::span<const std::byte> & byte
 	vk::WriteDescriptorSet ds_write{
 	        .dstSet = **ds,
 	        .descriptorCount = 1,
-	        .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+	        .descriptorType = vk::DescriptorType::eSampledImage,
 	        .pImageInfo = &image_info};
 
 	device.updateDescriptorSets(ds_write, nullptr);
@@ -1183,49 +1207,11 @@ ImTextureID imgui_textures::load_texture(const std::span<const std::byte> & byte
 	textures.emplace(
 	        id,
 	        texture_data{
-	                .sampler = std::move(sampler),
 	                .image = image,
 	                .descriptor_set = std::move(ds),
 	        });
 
 	return id;
-}
-
-ImTextureID imgui_textures::load_texture(const std::span<const std::byte> & bytes, const std::string & name)
-{
-	return load_texture(
-	        bytes,
-	        vk::raii::Sampler{
-	                device,
-	                vk::SamplerCreateInfo{
-	                        .magFilter = vk::Filter::eLinear,
-	                        .minFilter = vk::Filter::eLinear,
-	                        .mipmapMode = vk::SamplerMipmapMode::eLinear,
-	                        .addressModeU = vk::SamplerAddressMode::eClampToEdge,
-	                        .addressModeV = vk::SamplerAddressMode::eClampToEdge,
-	                        .addressModeW = vk::SamplerAddressMode::eClampToEdge,
-	                        .borderColor = vk::BorderColor::eFloatTransparentBlack,
-	                },
-	        },
-	        name);
-}
-
-ImTextureID imgui_textures::load_texture(const std::string & filename)
-{
-	return load_texture(
-	        filename,
-	        vk::raii::Sampler{
-	                device,
-	                vk::SamplerCreateInfo{
-	                        .magFilter = vk::Filter::eLinear,
-	                        .minFilter = vk::Filter::eLinear,
-	                        .mipmapMode = vk::SamplerMipmapMode::eLinear,
-	                        .addressModeU = vk::SamplerAddressMode::eClampToEdge,
-	                        .addressModeV = vk::SamplerAddressMode::eClampToEdge,
-	                        .addressModeW = vk::SamplerAddressMode::eClampToEdge,
-	                        .borderColor = vk::BorderColor::eFloatTransparentBlack,
-	                },
-	        });
 }
 
 void imgui_textures::free_texture(ImTextureID texture)
@@ -1244,11 +1230,6 @@ void imgui_context::set_controllers_enabled(bool value)
 	controllers_enabled = value;
 }
 
-bool imgui_context::is_modal_popup_shown() const
-{
-	return ImGui::GetTopMostAndVisiblePopupModal() != nullptr;
-}
-
 imgui_context::viewport & imgui_context::layer(ImVec2 position)
 {
 	for (auto & layer: layers_)
@@ -1260,30 +1241,42 @@ imgui_context::viewport & imgui_context::layer(ImVec2 position)
 	return layers_.front();
 }
 
-void imgui_context::tooltip(std::string_view text)
+void imgui_context::place_layer_relative(size_t layer, size_t base, glm::vec3 offset, glm::quat extra_rotation)
+{
+	const viewport & b = layers_[base];
+	viewport & l = layers_[layer];
+	l.orientation = b.orientation * extra_rotation;
+	l.position = b.position + glm::mat3_cast(b.orientation) * offset;
+}
+
+void imgui_context::tooltip(std::string_view text, std::optional<ImVec2> anchor)
 {
 	// FIXME: this is incorrect if we use the docking branch of imgui
 	ImGuiViewport * viewport = ImGui::GetMainViewport();
-	auto & current_layer = layer(ImGui::GetMousePos());
+	auto & current_layer = layer(anchor.value_or(ImGui::GetMousePos()));
 
 	assert(std::ranges::contains(layers_, true, &viewport::tooltip_viewport));
 	auto & tooltip_layer = *std::ranges::find(layers_, true, &viewport::tooltip_viewport);
 
-	// Get the item position before drawing the tooltip (top center)
-	ImVec2 item_position{
+	// anchor above the given display point, or above the last item's rect (top center)
+	ImVec2 item_position = anchor.value_or(ImVec2{
 	        (ImGui::GetItemRectMin().x + ImGui::GetItemRectMax().x) / 2,
 	        ImGui::GetItemRectMin().y,
-	};
+	});
 
 	auto pos_backup = viewport->Pos;
 	auto size_backup = viewport->Size;
 	viewport->Pos = ImVec2(tooltip_layer.vp_origin.x, tooltip_layer.vp_origin.y);
 	viewport->Size = ImVec2(tooltip_layer.vp_size.x, tooltip_layer.vp_size.y);
 
-	// Draw the tooltip in the tooltip layer
+	// Draw the tooltip in the tooltip layer, themed
 	// Clamp position to avoid overflowing on the left or the right
-	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, constants::style::tooltip_padding);
-	ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, constants::style::tooltip_rounding);
+	const wivrn::ui::theme & t = wivrn::ui::current();
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, wivrn::ui::metrics::tooltip_padding);
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, t.card_rounding);
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, t.border_size);
+	ImGui::PushStyleColor(ImGuiCol_PopupBg, t.card);
+	ImGui::PushStyleColor(ImGuiCol_Border, t.border);
 
 	auto & style = ImGui::GetStyle();
 	const ImVec2 text_size = ImGui::CalcTextSize(text.data(), text.data() + text.size(), true);
@@ -1293,12 +1286,13 @@ void imgui_context::tooltip(std::string_view text)
 	ImGui::SetNextWindowSizeConstraints({0, 0}, viewport->Size);
 	if (ImGui::BeginTooltip())
 	{
-		ImGui::PushStyleColor(ImGuiCol_Text, 0xffffffff);
+		ImGui::PushStyleColor(ImGuiCol_Text, t.col(t.text));
 		ImGui::TextUnformatted(text.data(), text.data() + text.size());
 		ImGui::PopStyleColor();
 		ImGui::EndTooltip();
 	}
-	ImGui::PopStyleVar(2);
+	ImGui::PopStyleColor(2);
+	ImGui::PopStyleVar(3);
 
 	viewport->Pos = pos_backup;
 	viewport->Size = size_backup;
@@ -1308,7 +1302,7 @@ void imgui_context::tooltip(std::string_view text)
 	auto M = glm::mat3_cast(tooltip_orientation);
 
 	float pixel_size = current_layer.size.y / current_layer.vp_size.y;
-	glm::vec3 tooltip_position_centre = rw_from_vp(item_position) + M * (glm::vec3(0, tooltip_size.y / 2, 0) * pixel_size + constants::style::tooltip_distance);
+	glm::vec3 tooltip_position_centre = rw_from_vp(item_position) + M * (glm::vec3(0, tooltip_size.y / 2, 0) * pixel_size + constants::gui::tooltip_distance);
 
 	// Position the tooltip layer
 	tooltip_layer.position = tooltip_position_centre;
@@ -1329,9 +1323,15 @@ void ScrollWhenDragging()
 	static int active_id;
 	static ImVec2 cumulated_delta;
 
+	// don't drag while a popup is open or just closed: the ray snaps back and synthesises a click
+	static bool popup_was_open;
+	const bool popup_open = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+
 	bool HoveredIdAllowOverlap_backup = std::exchange(g.HoveredIdAllowOverlap, true);
 	bool ActiveIdAllowOverlap_backup = std::exchange(g.ActiveIdAllowOverlap, true);
-	if (active_id == 0 and ImGui::ItemHoverable(window->Rect(), 0, g.CurrentItemFlags) and ImGui::IsMouseClicked(mouse_button, ImGuiInputFlags_None, /*id*/ ImGuiKeyOwner_Any))
+	// start only over this window or a child card, and only with no active widget
+	const bool over = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+	if (active_id == 0 and g.ActiveId == 0 and not popup_open and not popup_was_open and over and ImGui::IsMouseClicked(mouse_button, ImGuiInputFlags_None, /*id*/ ImGuiKeyOwner_Any))
 	{
 		active_id = id;
 
@@ -1357,6 +1357,8 @@ void ScrollWhenDragging()
 
 	g.HoveredIdAllowOverlap = HoveredIdAllowOverlap_backup;
 	g.ActiveIdAllowOverlap = ActiveIdAllowOverlap_backup;
+
+	popup_was_open = popup_open;
 }
 
 void CenterTextH(const std::string & text)
@@ -1396,63 +1398,4 @@ void CenterTextHV(const std::string & text)
 		ImGui::Text("%s", i.c_str());
 	}
 	ImGui::PopStyleVar();
-}
-
-void InputText(const char * label, std::string & text, const ImVec2 & size, ImGuiInputTextFlags flags)
-{
-	auto callback = [](ImGuiInputTextCallbackData * data) -> int {
-		std::string & text = *reinterpret_cast<std::string *>(data->UserData);
-
-		if (data->EventFlag == ImGuiInputTextFlags_CallbackResize)
-		{
-			assert(text.data() == data->Buf);
-			text.resize(data->BufTextLen);
-			data->Buf = text.data();
-		}
-
-		return 0;
-	};
-
-	ImGui::InputTextEx(label, nullptr, text.data(), text.size() + 1, size, flags | ImGuiInputTextFlags_CallbackResize, callback, &text);
-}
-
-bool RadioButtonWithoutCheckBox(const std::string & label, bool active, ImVec2 size_arg)
-{
-	ImGuiWindow * window = ImGui::GetCurrentWindow();
-	if (window->SkipItems)
-		return false;
-
-	ImGuiContext & g = *GImGui;
-	const ImGuiStyle & style = g.Style;
-	const ImGuiID id = window->GetID(label.c_str());
-	const ImVec2 label_size = ImGui::CalcTextSize(label.c_str(), NULL, true);
-
-	const ImVec2 pos = window->DC.CursorPos;
-
-	ImVec2 size = ImGui::CalcItemSize(size_arg, label_size.x + style.FramePadding.x * 2.0f, label_size.y + style.FramePadding.y * 2.0f);
-
-	const ImRect bb(pos, pos + size);
-	ImGui::ItemSize(bb, style.FramePadding.y);
-	if (!ImGui::ItemAdd(bb, id))
-		return false;
-
-	bool hovered, held;
-	bool pressed = ImGui::ButtonBehavior(bb, id, &hovered, &held);
-
-	ImGuiCol_ col;
-	if ((held && hovered) || active)
-		col = ImGuiCol_ButtonActive;
-	else if (hovered)
-		col = ImGuiCol_ButtonHovered;
-	else
-		col = ImGuiCol_Button;
-
-	ImGui::RenderNavHighlight(bb, id);
-	ImGui::RenderFrame(bb.Min, bb.Max, ImGui::GetColorU32(col), true, style.FrameRounding);
-
-	ImVec2 TextAlign{0, 0.5f};
-	ImGui::RenderTextClipped(bb.Min + style.FramePadding, bb.Max - style.FramePadding, label.c_str(), NULL, &label_size, TextAlign, &bb);
-
-	IMGUI_TEST_ENGINE_ITEM_INFO(id, label.c_str(), g.LastItemData.StatusFlags);
-	return pressed;
 }

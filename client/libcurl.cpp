@@ -65,7 +65,7 @@ void libcurl::curl_thread_fn()
 {
 #ifdef __ANDROID__
 	// For Android, read all the certificates at start-up, the file names are not
-	// in the correct format for the current verion of OpenSSL.
+	// in the correct format for the current version of OpenSSL.
 	// See https://stackoverflow.com/questions/25253823/how-to-make-ssl-peer-verify-work-on-android
 	std::string ca_bundle;
 	for (const std::filesystem::directory_entry & entry: std::filesystem::directory_iterator{"/system/etc/security/cacerts"})
@@ -158,8 +158,10 @@ void libcurl::curl_thread_fn()
 
 						if (msg->data.result == CURLE_OK)
 						{
-							xfer.current_state = state::done;
-							xfer.finish();
+							if (xfer.finish())
+								xfer.current_state = state::done;
+							else
+								xfer.current_state = state::error;
 						}
 						else
 						{
@@ -299,17 +301,21 @@ size_t libcurl::transfer_file::write(void * data, size_t size) noexcept
 	return size;
 }
 
-void libcurl::transfer_file::finish() noexcept
+bool libcurl::transfer_file::finish() noexcept
 {
 	stream.close();
-	std::filesystem::rename(temporary_path, final_path);
+	std::error_code ec{};
+	std::filesystem::rename(temporary_path, final_path, ec);
+	if (ec)
+		return false;
 
 	curl_off_t remote_timestamp;
 	if (curl_easy_getinfo(curl, CURLINFO_FILETIME_T, &remote_timestamp) == CURLE_OK)
 	{
 		auto time = std::chrono::file_clock::from_sys(std::chrono::system_clock::from_time_t(remote_timestamp));
-		std::filesystem::last_write_time(final_path, time);
+		std::filesystem::last_write_time(final_path, time, ec); // ignore errors
 	}
+	return true;
 }
 
 void libcurl::transfer_file::cancel() noexcept
@@ -343,8 +349,9 @@ size_t libcurl::transfer_buffer::write(void * data, size_t size) noexcept
 	return size;
 }
 
-void libcurl::transfer_buffer::finish() noexcept
+bool libcurl::transfer_buffer::finish() noexcept
 {
+	return true;
 }
 
 void libcurl::transfer_buffer::cancel() noexcept

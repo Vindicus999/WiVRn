@@ -43,6 +43,7 @@ We recommend using native packages if available for your distribution:
 - [Fedora](https://packages.fedoraproject.org/pkgs/wivrn/wivrn/)
 - [Gentoo Guru](https://gitweb.gentoo.org/repo/proj/guru.git/tree/media-libs/wivrn)
 - [NixOS](https://search.nixos.org/packages?show=wivrn)
+- [Ubuntu PPA](https://launchpad.net/~lvra/+archive/ubuntu/wivrn)
 
 For OpenVR and Steam compatibility, you also need a compatibility library such as [xrizer](https://github.com/Supreeeme/xrizer/) or [OpenComposite](https://gitlab.com/znixian/OpenOVR/).
 
@@ -169,9 +170,10 @@ If the server list is empty in the headset app:
 
 <details><summary>How do I see server logs when using the dashboard?</summary>
 
-- Click Troubleshoot > Open server logs, or
-- Navigate to `${XDG_STATE_HOME}/wivrn/wivrn-dashboard` (with fallback to `${HOME}/.local/state` for `${XDG_STATE_HOME}`, or
-- For flatpak, navigate to `${HOME}/.var/app/io.github.wivrn.wivrn/.local/state/wivrn/wivrn-dashboard`.</details>
+- Click **Troubleshoot > Open server logs**
+- Or, navigate to `${XDG_STATE_HOME}/wivrn/wivrn-dashboard`
+  - In other words, on common setups, the dashboard writes logs to `~/.local/state/wivrn/wivrn-dashboard`
+  - For WiVRn Flatpak, the dashboard writes logs to `~/.var/app/io.github.wivrn.wivrn/.local/state/wivrn/wivrn-dashboard`</details>
 
 <details><summary>My NVIDIA GPU P-State is limited to P2 instead of reaching the highest P0 while using the NVIDIA NVENC encoder</summary>
     
