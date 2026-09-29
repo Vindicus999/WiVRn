@@ -187,7 +187,7 @@ jobs:
 
     - name: Rename Steam Frame package
       run: |
-        tree -FB
+        tree -F
 
     # - name: Zip APK debug artifacts
     #   run: |
