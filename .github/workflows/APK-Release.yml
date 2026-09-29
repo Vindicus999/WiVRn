@@ -6,6 +6,7 @@ on:
 
 env:
   BUILD_TYPE: RelWithDebInfo
+  CSS: images/wivrn-${{(github.ref_type == 'tag' && 'release') || 'nightly'}}.css
 
 jobs:
   build-steam-frame:
