@@ -184,6 +184,10 @@ jobs:
         pattern: 'symbols-*'
         merge-multiple: false
 
+    - name: Rename Steam Frame package
+      run: |
+        mv install/usr/*.zip install/usr/
+
     - name: Zip APK debug artifacts
       run: |
         cd symbols
@@ -199,6 +203,6 @@ jobs:
         prerelease: false
         fail_on_unmatched_files: true
         files: |
-          wivrn-frame-client.zip
+          install/usr/wivrn-frame-client.zip
           apk/*.apk
           debug-symbols.zip
