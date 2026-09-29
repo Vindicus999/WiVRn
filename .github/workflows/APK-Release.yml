@@ -8,6 +8,75 @@ env:
   BUILD_TYPE: RelWithDebInfo
 
 jobs:
+  build-steam-frame:
+    name: Steam Frame
+    runs-on: ubuntu-24.04-arm
+    if: ${{ vars.APK_ONLY != '' }}
+    container:
+      image: registry.gitlab.steamos.cloud/steamrt/steamrt4/sdk/arm64:4.0.20260805.254769
+      volumes:
+        - ${{github.workspace}}/install:/tmp/install
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        repository: 'Vindicus999/WiVRn'
+        ref: ${{ github.sha }}
+        fetch-depth: 0
+        fetch-tags: true
+
+    - name: Apt dependencies
+      uses: awalsh128/cache-apt-pkgs-action@v1.6.1
+      with:
+        packages: librsvg2-bin npm
+
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2.23
+      with:
+        key: steam-frame
+        job-summary: ""
+
+    - uses: actions/cache@v5
+      with:
+        key: cmake-frame
+        path: |
+          ${{github.workspace}}/cmake-fetch/*-subbuild/*-populate-prefix/src/*.tar.*
+          ${{github.workspace}}/cmake-fetch/*-subbuild/*-populate-prefix/src/*.zip
+          ${{github.workspace}}/cmake-fetch/*.tar.*
+          ${{github.workspace}}/cmake-fetch/*.tgz
+          ${{github.workspace}}/cmake-fetch/*-src/.git
+
+    - name: Install dependencies
+      run: |
+        wget https://github.com/KhronosGroup/KTX-Software/releases/download/v4.4.2/KTX-Software-4.4.2-Linux-arm64.deb
+        sudo dpkg --install KTX-Software-4.4.2-Linux-arm64.deb
+        npm install --global @gltf-transform/cli@4.1.1
+
+    - name: Configure CMake
+      run: >
+        cmake -B "$GITHUB_WORKSPACE/build"
+        -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+        -DWIVRN_CSS=${{env.CSS}}
+        -DFETCHCONTENT_BASE_DIR="$GITHUB_WORKSPACE/cmake-fetch"
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+        -DCMAKE_INSTALL_PREFIX=/usr
+        --preset frame
+
+    - name: Build
+      run: |
+        git config --global --add safe.directory "$GITHUB_WORKSPACE"
+        cd "$GITHUB_WORKSPACE/build"
+        DESTDIR="$GITHUB_WORKSPACE/install" ninja install
+
+    - name: Archive
+      uses: actions/upload-artifact@v7
+      with:
+        name: wivrn-frame-client.zip
+        path: install/usr
+        if-no-files-found: error
+        retention-days: 30
+
   build-android-only:
     name: Android
     runs-on: ubuntu-24.04
@@ -25,18 +94,16 @@ jobs:
         ref: ${{ github.sha }}
         fetch-depth: 0
 
-    # Gradle distribution and the Android plugin's dependencies.
-    - uses: actions/cache@v5
+    - name: Prepare Vulkan SDK
+      uses: humbletim/setup-vulkan-sdk@286ed76c72de45dbf50c515779cf4ca2f6aa3944
       with:
-        key: gradle-android-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties', 'build.gradle') }}
-        path: |
-          ~/.gradle/caches
-          ~/.gradle/wrapper
-        restore-keys: gradle-android-
+        vulkan-query-version: 1.3.296.0
+        vulkan-components: Glslang, SPIRV-Tools
+        vulkan-use-cache: true
 
     - name: Install dependencies
       run: |
-        sudo apt-get update && sudo apt-get install glslang-tools spirv-tools librsvg2-bin gettext npm
+        sudo apt-get update && sudo apt-get install glslang-tools librsvg2-bin gettext npm
         wget https://github.com/KhronosGroup/KTX-Software/releases/download/v4.4.0/KTX-Software-4.4.0-Linux-x86_64.deb
         sudo dpkg --install KTX-Software-4.4.0-Linux-x86_64.deb
         npm install --global @gltf-transform/cli@4.1.1
@@ -74,7 +141,7 @@ jobs:
         find debug -name libopenxr_loader.so -delete
 
     - name: Archive APK
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@v4
       with:
         name: apk-${{ (github.event_name == 'pull_request' && matrix.buildtype == 'Release') && 'Release-unsigned' || matrix.buildtype }}
         path: apk/*.apk
@@ -82,7 +149,7 @@ jobs:
 
     - name: Archive debug symbols
       if: ${{ matrix.buildtype != 'Release' }}
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@v4
       with:
         name: symbols-${{ matrix.buildtype }}
         path: debug/**/*.so
@@ -91,27 +158,26 @@ jobs:
   release:
     name: Create APK release
     runs-on: ubuntu-24.04
-    needs: build-android-only
+    needs: [build-android-only, build-steam-frame]
     if: ${{ vars.APK_ONLY != '' }}
 
     steps:
     - name: Download APK artifacts
-      uses: actions/download-artifact@v8
+      uses: actions/download-artifact@v4
       with:
         path: apk
         pattern: 'apk-*'
         merge-multiple: true
 
-    # - name: Rename APK artifacts
-    #   run: |
-    #     cd apk
-    #     for f in *.apk; do
-    #       BASENAME=`echo ${f}|awk -F '-APK-' '{print $2}'`
-    #       mv "${f}" "org.meumeu.wivrn-${BASENAME}"
-    #     done
+    - name: Download Steam Frame artifact
+      uses: actions/download-artifact@v4
+      with:
+        path: install/usr
+        pattern: 'wivrn-frame-client.zip'
+        merge-multiple: true
 
     - name: Download APK debug artifacts
-      uses: actions/download-artifact@v8
+      uses: actions/download-artifact@v4
       with:
         path: symbols
         pattern: 'symbols-*'
@@ -123,7 +189,7 @@ jobs:
         zip -r ../debug-symbols.zip .
 
     - name: APK Release
-      uses: softprops/action-gh-release@v3
+      uses: softprops/action-gh-release@v2
       with:
         token: ${{ secrets.DOWNSTREAM_GITHUB_TOKEN }}
         tag_name: "apk-${{ github.sha }}"
@@ -132,5 +198,6 @@ jobs:
         prerelease: false
         fail_on_unmatched_files: true
         files: |
+          install/usr/wivrn-frame-client.zip
           apk/*.apk
           debug-symbols.zip
