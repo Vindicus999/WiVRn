@@ -203,6 +203,6 @@ jobs:
         prerelease: false
         fail_on_unmatched_files: true
         files: |
-          install/usr/wivrn-frame-client.zip
+          wivrn-frame-client.zip
           apk/*.apk
           debug-symbols.zip
