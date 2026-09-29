@@ -87,7 +87,7 @@ jobs:
         buildtype: ['Release', 'Debug', 'DebugWithValidationLayer']
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         # Checkout from upstream instead of WiVRn-APK to ensure the GIT_DESC variable is set correctly
         repository: 'Vindicus999/WiVRn'
@@ -158,7 +158,7 @@ jobs:
   release:
     name: Create APK release
     runs-on: ubuntu-24.04
-    needs: build-android-only
+    needs: [build-android-only, build-steam-frame]
     if: ${{ vars.APK_ONLY != '' }}
 
     steps:
@@ -169,13 +169,12 @@ jobs:
         pattern: 'apk-*'
         merge-multiple: true
 
-    # - name: Rename APK artifacts
-    #   run: |
-    #     cd apk
-    #     for f in *.apk; do
-    #       BASENAME=`echo ${f}|awk -F '-APK-' '{print $2}'`
-    #       mv "${f}" "org.meumeu.wivrn-${BASENAME}"
-    #     done
+    - name: Download Steam Frame artifact
+      uses: actions/download-artifact@v4
+      with:
+        path: install/usr
+        pattern: 'wivrn-frame-client.zip'
+        merge-multiple: true
 
     - name: Download APK debug artifacts
       uses: actions/download-artifact@v4
@@ -199,6 +198,6 @@ jobs:
         prerelease: false
         fail_on_unmatched_files: true
         files: |
-          wivrn-frame-client.zip
+          install/usr/wivrn-frame-client.zip
           apk/*.apk
           debug-symbols.zip
