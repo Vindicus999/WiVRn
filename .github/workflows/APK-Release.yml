@@ -12,7 +12,7 @@ jobs:
   build-android-only:
     name: Android
     runs-on: ubuntu-24.04
-    if: ${{ vars.APK_ONLY != '' }}
+    if: ${{ vars.APK_ONLY == '' }}
 
     strategy:
       matrix:
@@ -90,7 +90,7 @@ jobs:
   build-steam-frame:
     name: Steam Frame
     runs-on: ubuntu-24.04-arm
-    if: ${{ vars.APK_ONLY == '' }}
+    if: ${{ vars.APK_ONLY != '' }}
     container:
       image: registry.gitlab.steamos.cloud/steamrt/steamrt4/sdk/arm64:4.0.20260805.254769
       volumes:
