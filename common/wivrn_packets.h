@@ -222,6 +222,14 @@ enum video_codec
 	raw,
 };
 
+struct video_codec_capability
+{
+	video_codec codec;
+	bool supports_10bit;
+
+	bool operator==(const video_codec_capability &) const = default;
+};
+
 enum class stream_tab : uint8_t
 {
 	hidden,
@@ -338,7 +346,6 @@ struct headset_info_packet
 	};
 	std::optional<audio_description> speaker;
 	std::optional<audio_description> microphone;
-	std::array<XrFovf, 2> fov;
 	bool hand_tracking;
 	bool eye_gaze;
 	bool palm_pose;
@@ -348,8 +355,8 @@ struct headset_info_packet
 	body_type body_tracking;
 	// htc body only
 	uint32_t num_generic_trackers;
-	std::vector<video_codec> supported_codecs; // from preferred to least preferred
-	std::optional<uint8_t> bit_depth;
+	std::vector<video_codec_capability> supported_codecs; // from preferred to least preferred
+	std::optional<uint8_t> bit_depth;                     // explicit preference
 	std::string system_name;
 
 	// Used for the application list

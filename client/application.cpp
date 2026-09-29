@@ -900,7 +900,7 @@ void application::initialize_vulkan()
 	optional_device_extensions.emplace(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
 	optional_device_extensions.emplace(VK_EXT_FRAGMENT_DENSITY_MAP_EXTENSION_NAME);
 
-#ifdef WIVRN_USE_V4L2
+#if WIVRN_USE_V4L2
 	// V4L2 decoders expose their output through DMA-buf
 	optional_device_extensions.emplace(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
 	optional_device_extensions.emplace(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
@@ -1393,6 +1393,7 @@ void application::initialize()
 	        XR_META_BODY_TRACKING_FIDELITY_EXTENSION_NAME,
 	        XR_META_BODY_TRACKING_FULL_BODY_EXTENSION_NAME,
 	        XR_META_LOCAL_DIMMING_EXTENSION_NAME,
+	        XR_META_BOUNDARY_VISIBILITY_EXTENSION_NAME,
 	};
 
 	for (const auto & i: interaction_profiles)
@@ -1477,6 +1478,8 @@ void application::initialize()
 
 	config.emplace(xr_system_id, xr_session, application::get_config_path() / "client.json");
 	default_config.emplace(xr_system_id, xr_session);
+
+	xr_session.set_passthrough_boundary_enabled(config->passthrough_boundary_enabled);
 
 #ifdef __ANDROID__
 	set_usb_networking(config->usb_network);
@@ -2122,6 +2125,11 @@ void application::poll_events()
 					spdlog::info("    XR_PASSTHROUGH_STATE_CHANGED_RECOVERABLE_ERROR_BIT_FB");
 				if (e.passthrough_state_changed.flags & XR_PASSTHROUGH_STATE_CHANGED_RESTORED_ERROR_BIT_FB)
 					spdlog::info("    XR_PASSTHROUGH_STATE_CHANGED_RESTORED_ERROR_BIT_FB");
+			}
+			break;
+			case XR_TYPE_EVENT_DATA_BOUNDARY_VISIBILITY_CHANGED_META: {
+				spdlog::info("Boundary visibility changed to {}", magic_enum::enum_name(e.boundary_visibility_changed.boundaryVisibility));
+				xr_session.on_boundary_visibility_changed(e.boundary_visibility_changed.boundaryVisibility);
 			}
 			break;
 			default:
