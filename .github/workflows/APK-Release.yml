@@ -90,7 +90,7 @@ jobs:
     steps:
     - uses: actions/checkout@v6
       with:
-        Checkout from upstream instead of WiVRn-APK to ensure the GIT_DESC variable is set correctly
+        # Checkout from upstream instead of WiVRn-APK to ensure the GIT_DESC variable is set correctly
         repository: 'Vindicus999/WiVRn'
         ref: ${{ github.sha }}
         fetch-depth: 0
