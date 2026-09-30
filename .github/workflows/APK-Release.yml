@@ -207,5 +207,4 @@ jobs:
         files: |
           apk/*.apk
           debug-symbols.zip
-          install/usr/wivrn-frame-client.zip
 
