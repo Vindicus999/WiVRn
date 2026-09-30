@@ -12,7 +12,7 @@ jobs:
   build-android-only:
     name: Android
     runs-on: ubuntu-24.04
-    if: ${{ vars.APK_ONLY == '' }}
+    if: ${{ vars.APK_ONLY != '' }}
 
     strategy:
       matrix:
@@ -161,12 +161,12 @@ jobs:
     if: ${{ vars.APK_ONLY != '' }}
 
     steps:
-    # - name: Download APK artifacts
-    #   uses: actions/download-artifact@v4
-    #   with:
-    #     path: apk
-    #     pattern: 'apk-*'
-    #     merge-multiple: true
+    - name: Download APK artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: apk
+        pattern: 'apk-*'
+        merge-multiple: true
 
     # - name: Rename APK artifacts
     #   run: |
@@ -176,17 +176,17 @@ jobs:
     #       mv "${f}" "org.meumeu.wivrn-${BASENAME}"
     #     done
 
-    # - name: Download APK debug artifacts
-    #   uses: actions/download-artifact@v4
-    #   with:
-    #     path: symbols
-    #     pattern: 'symbols-*'
-    #     merge-multiple: false
+    - name: Download APK debug artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: symbols
+        pattern: 'symbols-*'
+        merge-multiple: false
 
-    # - name: Zip APK debug artifacts
-    #   run: |
-    #     cd symbols
-    #     zip -r ../debug-symbols.zip .
+    - name: Zip APK debug artifacts
+      run: |
+        cd symbols
+        zip -r ../debug-symbols.zip .
 
     - name: Download Steam Frame artifacts
       uses: actions/download-artifact@v4
