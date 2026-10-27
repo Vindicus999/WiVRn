@@ -348,6 +348,9 @@ const std::vector<config_field> & configuration::config_fields()
 	        scalar("codec", &configuration::codec),
 	        scalar("bit_depth", &configuration::bit_depth),
 	        scalar("usb_network", &configuration::usb_network),
+	        scalar("height_offset_standing", &configuration::height_offset_standing),
+	        scalar("height_offset_seated", &configuration::height_offset_seated),
+	        scalar("default_posture", &configuration::default_posture),
 	};
 	return fields;
 }
@@ -389,6 +392,19 @@ void configuration::save()
 	json << ",\"openxr_post_processing\":{\"super_sampling\":" << openxr_post_processing.super_sampling;
 	json << ",\"sharpening\":" << openxr_post_processing.sharpening << "}";
 
+	{
+		bool first = true;
+		json << ",\"body_parts\": {";
+		for (const auto & [b, name]: magic_enum::enum_entries<wivrn::from_headset::body_part_mask>())
+		{
+			if (not first)
+				json << ",";
+			first = false;
+			json << '"' << name << "\":" << std::boolalpha << bool(body_part_mask & std::to_underlying(b));
+		}
+		json << "}";
+	}
+
 	// feature flags, keyed by enum name
 	for (auto & [key, value]: features)
 		json << "," << key << ":" << std::boolalpha << value;
@@ -413,4 +429,28 @@ float configuration::get_default_stream_scale() const
 	if (check_feature(feature::eye_gaze))
 		return 0.3;
 	return 0.5;
+}
+
+float configuration::get_height_offset() const
+{
+	std::lock_guard lock(mutex);
+	return default_posture == posture::seated ? height_offset_seated : height_offset_standing;
+}
+
+void configuration::set_height_offset(float value)
+{
+	std::lock_guard lock(mutex);
+	(default_posture == posture::seated ? height_offset_seated : height_offset_standing) = value;
+}
+
+posture configuration::get_posture() const
+{
+	std::lock_guard lock(mutex);
+	return default_posture;
+}
+
+void configuration::set_posture(posture p)
+{
+	std::lock_guard lock(mutex);
+	default_posture = p;
 }

@@ -123,11 +123,15 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 		static_roles.face = &hmd;
 
 	roles.left = left_controller_index = static_xdev_count++;
-	static_roles.hand_tracking.unobstructed.left = static_xdevs[left_controller_index] = &left_controller;
+	static_roles.hand_tracking.conforming.left =
+	        static_roles.hand_tracking.unobstructed.left =
+	                static_xdevs[left_controller_index] = &left_controller;
 	static_xdevs[left_hand_interaction_index = static_xdev_count++] = &left_hand_interaction;
 
 	roles.right = right_controller_index = static_xdev_count++;
-	static_roles.hand_tracking.unobstructed.right = static_xdevs[right_controller_index] = &right_controller;
+	static_roles.hand_tracking.conforming.right =
+	        static_roles.hand_tracking.unobstructed.right =
+	                static_xdevs[right_controller_index] = &right_controller;
 	static_xdevs[right_hand_interaction_index = static_xdev_count++] = &right_hand_interaction;
 
 	// Expose a gamepad forwarded from the headset as a native OpenXR device (/user/gamepad).
@@ -370,7 +374,6 @@ void wivrn_session::start(ipc_server * server)
 	assert(not net_thread.joinable());
 	mnd_ipc_server = server;
 	net_thread = std::jthread([this](auto stop_token) { return run_net(stop_token); });
-	resume_session();
 }
 
 void wivrn_session::stop()
@@ -469,7 +472,7 @@ void wivrn_session::resume_session()
 
 	worker_thread = std::jthread([this](std::stop_token stop) { return run_worker(stop); });
 	update_client_states(true, true);
-	hmd.update_presence(false, os_monotonic_get_ns());
+	hmd.update_presence(true, os_monotonic_get_ns());
 }
 
 clock_offset wivrn_session::get_offset()
@@ -672,7 +675,6 @@ void wivrn_session::operator()(const from_headset::tracking & tracking)
 
 	if (eye_tracker)
 		eye_tracker->update_tracking(tracking, offset);
-	compositor.update_tracking(tracking);
 
 	if (android_face_tracker)
 		android_face_tracker->update_tracking(tracking, offset);
@@ -682,9 +684,9 @@ void wivrn_session::operator()(const from_headset::tracking & tracking)
 		htc_face_tracker->update_tracking(tracking, offset);
 }
 
-void wivrn_session::operator()(from_headset::override_foveation_center && foveation_center)
+void wivrn_session::operator()(const from_headset::foveation & packet)
 {
-	compositor.update_foveation_center_override(foveation_center);
+	compositor.update_foveation(packet);
 }
 
 void wivrn_session::operator()(from_headset::derived_pose && derived)
@@ -832,6 +834,10 @@ void wivrn_session::operator()(from_headset::visibility_mask_changed && mask)
 	        },
 	};
 	auto result = xrt_session_event_sink_push(&xrt_system.broadcast, &event);
+	if (result != XRT_SUCCESS)
+	{
+		U_LOG_W("failed to push visibility mask changed event");
+	}
 }
 
 void wivrn_session::operator()(from_headset::session_state_changed && event)
@@ -1059,6 +1065,7 @@ struct refresh_rate_adjuster
 
 void wivrn_session::run_net(std::stop_token stop)
 {
+	resume_session();
 	while (not stop.stop_requested())
 	{
 		try
