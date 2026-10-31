@@ -45,13 +45,6 @@ class wivrn_hmd : public xrt_device
 {
 	beman::inplace_vector::inplace_vector<xrt_input, 2> inputs_array;
 	xrt_hmd_parts hmd_parts{};
-	xrt_tracking_origin tracking_origin{
-	        .name = "WiVRn origin",
-	        .type = XRT_TRACKING_TYPE_OTHER,
-	        .initial_offset = {
-	                .orientation = {0, 0, 0, 1},
-	        },
-	};
 
 	view_list views;
 	thread_safe<from_headset::battery> battery{};
