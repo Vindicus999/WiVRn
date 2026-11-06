@@ -638,6 +638,10 @@ layer_squasher::do_layers(
 	for (auto [v, r]: std::ranges::zip_view(viewports, rect))
 		r = {.extent = {.w = int(v.w), .h = int(v.h)}};
 
+	std::array<xrt_rect, 2> rect;
+	for (auto [v, r]: std::ranges::zip_view(viewports, rect))
+		r = {.extent = {.w = int(v.w), .h = int(v.h)}};
+
 	return {poses.world_poses, fovs, rect};
 }
 
@@ -817,6 +821,8 @@ xrt_fov layer_squasher::do_quad_layer(const comp_layer & layer,
 	                     .angle_right = -M_PI,
 	                     .angle_up = -M_PI,
 	                     .angle_down = M_PI};
+	if (normal_view_space.z < 0)
+		return layer_fov; // back face is not visible
 	for (auto & c: corners)
 	{
 		math_matrix_4x4_transform_vec3(&quad_pose, &c, &c);
@@ -893,7 +899,7 @@ xrt_fov layer_squasher::do_cylinder_layer(const comp_layer & layer,
 	math_matrix_4x4_multiply(&v, &quad_pose, &quad_pose);
 
 	const float w = sin(c.central_angle / 2) * c.radius;
-	const float h = c.radius * c.central_angle / (2 * c.aspect_ratio);
+	const float h = c.radius * c.central_angle / 2 * c.aspect_ratio;
 	const float d = c.radius * cos(c.central_angle / 2);
 	std::array corners{
 	        xrt_vec3{-w, -h, -c.radius},
